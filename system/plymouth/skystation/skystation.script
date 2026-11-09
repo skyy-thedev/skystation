@@ -1,29 +1,100 @@
-# SkyStation: tela de boot (Plymouth, linguagem "script").
-# Fundo azul-noite (o mesmo do launcher, para a troca ser imperceptível),
-# logo pulsando suavemente e três pontos de "carregando".
+# SkyStation: animação de boot (Plymouth, linguagem "script").
+# Camadas: fundo azul-noite (o mesmo do launcher) + duas ondas que deslizam em sentidos opostos
+# + brilho que "respira" atrás da logo + partículas subindo + três pontos de carregando.
+# Cada onda é uma imagem com DUAS voltas completas (largura 2W depois de escalada): deslocando-a
+# de 0 a W e recomeçando, a tela sempre mostra o miolo da imagem e nunca uma emenda.
 
-Window.SetBackgroundTopColor(0.024, 0.035, 0.094);
-Window.SetBackgroundBottomColor(0.063, 0.086, 0.204);
+W = Window.GetWidth();
+H = Window.GetHeight();
+X0 = Window.GetX();
+Y0 = Window.GetY();
+Window.SetBackgroundTopColor(0.016, 0.031, 0.090);
+Window.SetBackgroundBottomColor(0.051, 0.102, 0.290);
 
+# ---- ondas
+wa.image = Image("wave-a.png");
+wa.h = Math.Int(wa.image.GetHeight() * 2 * W / wa.image.GetWidth());
+wa.image = wa.image.Scale(2 * W, wa.h);
+wa.s1 = Sprite(wa.image);
+wa.y = Y0 + Math.Int(H * 0.60 - wa.h / 2);
+
+wb.image = Image("wave-b.png");
+wb.h = Math.Int(wb.image.GetHeight() * 2 * W / wb.image.GetWidth());
+wb.image = wb.image.Scale(2 * W, wb.h);
+wb.s1 = Sprite(wb.image);
+wb.y = Y0 + Math.Int(H * 0.60 - wb.h / 2);
+
+# ---- logo e brilho
 logo.image = Image("logo.png");
 logo.sprite = Sprite(logo.image);
-logo.x = Window.GetX() + Window.GetWidth() / 2 - logo.image.GetWidth() / 2;
-logo.y = Window.GetY() + Window.GetHeight() / 2 - logo.image.GetHeight() / 2 - 20;
-logo.sprite.SetPosition(logo.x, logo.y, 1);
+logo.x = X0 + Math.Int(W / 2 - logo.image.GetWidth() / 2);
+logo.y = Y0 + Math.Int(H / 2 - logo.image.GetHeight() / 2 - 20);
+logo.sprite.SetOpacity(0);
 
+glow.size = Math.Int(H * 0.95);
+glow.image = Image("glow.png").Scale(glow.size, glow.size);
+glow.sprite = Sprite(glow.image);
+glow.sprite.SetPosition(X0 + Math.Int(W / 2 - glow.size / 2), Y0 + Math.Int(H / 2 - 20 - glow.size / 2), 3);
+glow.sprite.SetOpacity(0);
+
+# ---- partículas (posições "aleatórias" fixas, calculadas com seno)
+spark.image = Image("spark.png");
+NS = 28;
+for (i = 0; i < NS; i++) {
+    sp[i] = Sprite(spark.image);
+    r1 = Math.Sin(i * 12.9898) * 43758.5453;
+    r1 = r1 - Math.Int(r1);
+    if (r1 < 0) { r1 = r1 + 1; }
+    r2 = Math.Sin(i * 78.233) * 24634.6345;
+    r2 = r2 - Math.Int(r2);
+    if (r2 < 0) { r2 = r2 + 1; }
+    spx[i] = X0 + r1 * W;
+    spy[i] = r2 * H;
+    spv[i] = 0.15 + r1 * 0.35;
+    spp[i] = r2 * 6.28;
+    sp[i].SetOpacity(0);
+}
+
+# ---- três pontos de carregando
 dot.image = Image("dot.png");
 for (i = 0; i < 3; i++) {
     dots[i] = Sprite(dot.image);
-    dots[i].SetPosition(Window.GetX() + Window.GetWidth() / 2 - 40 + i * 34,
-                        logo.y + logo.image.GetHeight() + 30, 2);
+    dots[i].SetPosition(X0 + W / 2 - 40 + i * 34, Y0 + Math.Int(H * 0.84), 6);
+    dots[i].SetOpacity(0);
 }
 
 t = 0;
 fun refresh_callback () {
-    t++;
-    logo.sprite.SetOpacity(0.75 + 0.25 * Math.Sin(t / 25));
+    global.t = global.t + 1;   # variáveis globais alteradas dentro de função precisam de "global."
+    fade = Math.Min(t / 45, 1);                      # tudo entra suave (~0,9 s)
+    bob = Math.Sin(t / 70) * 6;
+
+    oa = t * 0.9;
+    oa = oa - Math.Int(oa / W) * W;
+    wa.s1.SetPosition(X0 - oa, wa.y + bob, 2);
+    wa.s1.SetOpacity(fade);
+
+    ob = t * 0.5;
+    ob = ob - Math.Int(ob / W) * W;
+    wb.s1.SetPosition(X0 + ob - W, wb.y - bob, 1);
+    wb.s1.SetOpacity(fade * 0.6);
+
+    # logo: aparece subindo 14 px entre 0,3 s e 1,3 s
+    k = Math.Min(Math.Max((t - 15) / 50, 0), 1);
+    e = 1 - (1 - k) * (1 - k) * (1 - k);
+    logo.sprite.SetPosition(logo.x, logo.y + (1 - e) * 14, 5);
+    logo.sprite.SetOpacity(e);
+    glow.sprite.SetOpacity(e * (0.30 + 0.12 * Math.Sin(t / 28)));
+
+    for (i = 0; i < NS; i++) {
+        y = spy[i] - t * spv[i];
+        y = y - Math.Int(y / H) * H;
+        if (y < 0) { y = y + H; }
+        sp[i].SetPosition(spx[i], Y0 + y, 4);
+        sp[i].SetOpacity(fade * (0.35 + 0.35 * Math.Sin(t / 25 + spp[i])));
+    }
     for (i = 0; i < 3; i++) {
-        dots[i].SetOpacity(0.25 + 0.75 * Math.Max(0, Math.Sin(t / 10 - i * 0.9)));
+        dots[i].SetOpacity(e * (0.25 + 0.75 * Math.Max(0, Math.Sin(t / 10 - i * 0.9))));
     }
 }
 Plymouth.SetRefreshFunction(refresh_callback);

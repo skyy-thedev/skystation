@@ -9,7 +9,7 @@ extends Control
 signal closed
 
 const SKY_CONFIG := "/opt/skystation/bin/sky-config"
-const CYAN := Color("4fd1ff")
+var CYAN := Color("4fd1ff")  # o launcher troca pela cor do tema
 const WHITE := Color("eef2ff")
 const MUTED := Color("94a3c8")
 const DIM := Color("5a6891")
@@ -51,9 +51,11 @@ func _ready() -> void:
 	visible = false
 
 
-func open() -> void:
+func open(start_section: int = -1) -> void:
 	visible = true
 	column = 0
+	if start_section >= 0 and start_section < SECTIONS.size():
+		section = start_section
 	kb_open = false
 	cmd_queue.clear()
 	joy_prev = _joy_buttons()  # o "A" que abriu esta tela não pode valer aqui
@@ -425,7 +427,9 @@ func _text(t: String, pos: Vector2, fsize: int, color: Color, width: float = -1.
 func _draw() -> void:
 	var w := size.x
 	var h := size.y
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.03, 0.08, 0.97))
+	# translúcida: o fundo de ondas do launcher continua aparecendo atrás
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0.01, 0.02, 0.06, 0.62))
+	draw_rect(Rect2(0, 0, 300, size.y), Color(0, 0, 0, 0.3))
 	_text("Configurações", Vector2(48, 70), 32, WHITE)
 
 	for i in SECTIONS.size():

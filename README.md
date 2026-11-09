@@ -14,6 +14,7 @@ skystation/
 │   ├── fase5-1.sh    boot 100% SkyStation (sem Arch) + navegador
 │   ├── fase5-2.sh    codecs do navegador, Snake, PS1 com mais formatos
 │   ├── fase5-3.sh    boot com logo SkyStation e sem texto (UKI)
+│   ├── fase5-5.sh    visual novo (barra cruzada + boot animado), Bluetooth sem atraso, espaço
 │   ├── marca.sh      identidade do sistema (comando skystation-marca, reaplicado pelo pacman)
 │   ├── diag.sh       diagnóstico do boot (comando skystation-diag)
 │   ├── expandir.sh   ocupa a mídia inteira após clonar (comando skystation-expandir)
@@ -31,7 +32,9 @@ skystation/
     │                 sky-perfil (leve/potente), sky-pcsx2-ini
     ├── emu/          configuração otimizada do RetroArch e cores
     │   └── autoconfig/udev/  perfis de controle do RetroArch (libretro, MIT)
-    ├── launcher/     launcher em Godot 4 (main.gd = biblioteca, settings.gd = Configurações)
+    ├── launcher/     launcher em Godot 4: main.gd = interface em barra cruzada (categorias na
+    │                 horizontal, itens na vertical, fundo de ondas em shader, sons sintetizados),
+    │                 settings.gd = Configurações (Wi-Fi, Bluetooth, Som, Sistema)
     ├── games/        um jogo por pasta, cada um com game.json
     │   ├── sky-dodge/        jogo autoral: desvie dos meteoros (Python + pygame)
     │   ├── sky-snake/        jogo autoral: a cobrinha (recorde salvo)
@@ -76,12 +79,29 @@ Na VM também valem as pastas `roms/ps1` e `roms/ps2` dentro da pasta compartilh
 **Jogo de PC antigo:** pasta em `~/skystation/games/<nome>/` com os arquivos do jogo e um
 `game.json` com `"type": "windows"` e `"exec": "sky-wine Jogo.exe"`.
 
+## Pendrive de jogos (SKYROMS)
+
+Para guardar jogos fora do sistema (útil na mídia de 8 GB): formate um pendrive em **exFAT** com o
+rótulo **SKYROMS** e crie as pastas `ps1/` e `ps2/` (capas opcionais em `ps1/covers/Nome do Jogo.png`).
+Ao conectar, ele monta sozinho em `/mnt/skyroms` e os jogos aparecem no console; ao tirar, somem.
+Dica: `.chd` ocupa bem menos que `.bin/.cue` (converta com o `chdman` no PC).
+
+## Visual
+
+- **Temas:** Sistema → Tema de cores (Automático muda com a hora do dia: Oceano, Aurora,
+  Crepúsculo, Noite). Também no painel de opções (botão Y / Start).
+- **Sons da interface:** Sistema → Sons da interface.
+- **Modo leve:** automático quando não há GPU (VM). Para forçar: `touch ~/.config/skystation/visual.leve`.
+- **Abertura:** para pular sempre, `touch ~/.config/skystation/intro.off`.
+
 ## Controles do console
 
 | Ação | Controle | Teclado |
 |---|---|---|
 | Navegar / jogar | Direcional + A | Setas + Enter |
-| Menu (Configurações, FPS, desligar…) | Start ou Y | Esc |
+| Trocar de categoria / item | Direcional (esq/dir, cima/baixo) | Setas |
+| Painel de opções | Start ou Y | M ou Tab |
+| Voltar | B | Esc ou Backspace |
 | **Pausar o jogo (menu Home)** | **Toque no Home** ou **Select+Start** | **F12** |
 | Fechar o jogo direto (emergência) | Segurar Home ou Select+Start (1,5 s) | Segurar F12 |
 | Menu do RetroArch | — | F1 |
@@ -118,7 +138,9 @@ curl -fsSL https://raw.githubusercontent.com/skyy-thedev/skystation/main/setup/s
 - [x] Notebook real: boot pelo pendrive (imagem enxuta de 7 GB), PS1 a 60 FPS, 45 °C
 - [x] Git: projeto no GitHub; `skystation-atualizar` baixa do GitHub fora da VM
 - [x] Controle nos emuladores: perfis de ~440 controles no RetroArch (PS1) e mapeamento SDL no PCSX2 (PS2)
-- [ ] Controles Bluetooth (DS4) e porta USB que não responde
+- [x] Fase 5.5: interface em barra cruzada, boot animado, temas, sons, atualizar pelo menu,
+      pendrive de jogos SKYROMS, Bluetooth sem economia de energia, cache do pacman automático
+- [ ] Porta USB ao lado do HDMI sem energia (provável defeito físico)
 - [ ] SSD SATA no lugar do pendrive
 - [ ] Case impressa em 3D (protótipo v0.1 em hardware/case)
 - [ ] Fase 6: ISO próprio do SkyStation
