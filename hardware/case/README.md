@@ -18,3 +18,12 @@ Gerar uma peça:  `openscad -o base.stl -D 'PART="tray"' skystation-case.scad`
 (peças: tray, lid, logo, rear_io, front_io, button, tv_cap, frame_left, frame_right, foot, top_splice)
 
 Montagem: insertos de latão M3 (furo 4,2 mm), parafusos M3 6/10 mm, 4 pés de borracha 12 mm.
+
+## Pendências para a v0.2 (anotadas em 09/11)
+
+- **Antenas Wi-Fi/Bluetooth** (MAIN e AUX): ficavam na tampa do notebook. Na case, ir para o alto
+  da base ou do módulo da tela, longe de metal (PETG não bloqueia o sinal; o dissipador e a
+  blindagem da placa, sim). Prever canaletas/presilhas para os cabinhos.
+- **Segunda entrada SATA** (provável conector do drive de DVD, "slim SATA"): segundo SSD/HD para
+  jogos. Prever baia extra ou caddy + passagem do cabo.
+- **Alto-falantes** do notebook: grades de som na base (medir os alto-falantes e o cabo).
