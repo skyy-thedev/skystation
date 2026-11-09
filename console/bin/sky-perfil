@@ -1,0 +1,11 @@
+#!/bin/bash
+# SkyStation: perfil de hardware.
+#   leve     -> notebook i5-4200U (2 núcleos / 4 threads, Intel HD 4400)
+#   potente  -> PCs com 8+ threads (ex.: Ryzen 5 5500U)
+# Pode ser forçado criando ~/.config/skystation/perfil com "leve" ou "potente".
+F="$HOME/.config/skystation/perfil"
+if [ -f "$F" ]; then
+    p="$(tr -d '[:space:]' <"$F")"
+    case "$p" in leve|potente) echo "$p"; exit 0 ;; esac
+fi
+if [ "$(nproc)" -ge 8 ]; then echo potente; else echo leve; fi

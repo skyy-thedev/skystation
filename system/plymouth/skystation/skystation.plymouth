@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=SkyStation
+Description=Tela de boot do SkyStation
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/skystation
+ScriptFile=/usr/share/plymouth/themes/skystation/skystation.script

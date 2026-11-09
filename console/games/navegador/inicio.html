@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>SkyStation</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; font-family: system-ui, "DejaVu Sans", sans-serif;
+         background: radial-gradient(ellipse at 80% 10%, #1d1450 0%, transparent 55%),
+                     linear-gradient(#060918, #111838); color: #eef2ff;
+         display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  h1 { font-size: 64px; margin: 0 0 8px; letter-spacing: -1px; }
+  h1 span { color: #4fd1ff; }
+  p.sub { color: #94a3c8; margin: 0 0 36px; }
+  form { width: min(640px, 90vw); display: flex; gap: 10px; margin-bottom: 40px; }
+  input { flex: 1; font-size: 20px; padding: 14px 18px; border-radius: 14px; border: 1px solid #26335f;
+          background: #121a3a; color: #eef2ff; outline: none; }
+  input:focus { border-color: #4fd1ff; }
+  button { font-size: 18px; padding: 0 22px; border-radius: 14px; border: 0; background: #4fd1ff;
+           color: #060918; font-weight: 700; cursor: pointer; }
+  .grade { display: grid; grid-template-columns: repeat(4, 150px); gap: 16px; }
+  .grade a { display: block; text-decoration: none; color: #eef2ff; background: #121a3a;
+             border: 1px solid #26335f; border-radius: 16px; padding: 22px 12px; text-align: center;
+             font-weight: 600; }
+  .grade a:hover, .grade a:focus { border-color: #4fd1ff; outline: none; }
+  .grade a b { display: block; font-size: 30px; color: #4fd1ff; margin-bottom: 8px; }
+  footer { position: fixed; bottom: 18px; color: #5a6891; font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1>Sky<span>Station</span></h1>
+  <p class="sub">Navegador de teste</p>
+  <form action="https://www.google.com/search" method="get">
+    <input name="q" placeholder="Pesquisar na web" autofocus>
+    <button type="submit">Buscar</button>
+  </form>
+  <div class="grade">
+    <a href="https://www.google.com"><b>G</b>Google</a>
+    <a href="https://www.youtube.com"><b>▶</b>YouTube</a>
+    <a href="https://pt.wikipedia.org"><b>W</b>Wikipédia</a>
+    <a href="https://github.com/skyy-thedev"><b>⌥</b>GitHub</a>
+  </div>
+  <footer>Ctrl+L endereço · Alt+← voltar · F5 recarregar · Home do controle para sair</footer>
+</body>
+</html>

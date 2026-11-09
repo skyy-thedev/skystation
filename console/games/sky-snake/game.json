@@ -1,0 +1,9 @@
+{
+  "title": "Sky Snake",
+  "type": "autoral",
+  "exec": "python3 main.py",
+  "cover": "cover.png",
+  "color": "#fbbf24",
+  "order": 20,
+  "description": "A cobrinha clássica do SkyStation. Coma as estrelas, cresça e não bata. O recorde fica salvo."
+}

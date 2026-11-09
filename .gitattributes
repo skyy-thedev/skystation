@@ -1,0 +1,7 @@
+# Scripts rodam no Linux: sempre LF, mesmo se clonar no Windows.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.stl binary
+*.ttf binary
+*.bmp binary

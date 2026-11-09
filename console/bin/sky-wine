@@ -1,0 +1,17 @@
+#!/bin/bash
+# SkyStation: roda um jogo de Windows antigo via Wine (tradução DirectX -> OpenGL, WineD3D).
+# Cada jogo ganha um "prefixo" próprio (uma mini instalação de Windows) em ~/skystation/wine/<pasta>,
+# então um jogo nunca bagunça o outro e os saves ficam isolados.
+# Uso (no game.json):  "exec": "sky-wine Jogo.exe"   (rodado de dentro da pasta do jogo)
+
+EXE="$1"; shift
+NAME="$(basename "$PWD")"
+export WINEPREFIX="$HOME/skystation/wine/$NAME"
+export WINEDEBUG=-all                     # logs do Wine custam CPU; desligados
+export WINEDLLOVERRIDES="mscoree=;mshtml="  # não pergunta sobre Mono/Gecko na primeira vez
+mkdir -p "$WINEPREFIX"
+RUN="${XDG_RUNTIME_DIR:-/tmp}/skystation"
+mkdir -p "$RUN" && echo "$WINEPREFIX" >"$RUN/wineprefix"   # o sky-run encerra o wineserver ao sair
+
+[ -f "$EXE" ] || { echo "Executável não encontrado: $EXE" >"${SKY_MSG_FILE:-/dev/null}"; exit 3; }
+exec wine "$EXE" "$@"

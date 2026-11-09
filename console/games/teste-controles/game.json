@@ -1,0 +1,9 @@
+{
+  "title": "Teste de Controles",
+  "type": "ferramenta",
+  "exec": "python3 main.py",
+  "cover": "cover.png",
+  "color": "#8b5cf6",
+  "order": 90,
+  "description": "Mostra os controles conectados e o último botão apertado. Esc ou B para voltar."
+}

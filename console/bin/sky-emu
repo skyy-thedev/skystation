@@ -1,0 +1,40 @@
+#!/bin/bash
+# SkyStation: abre uma ROM/ISO no emulador certo, com configuração otimizada.
+# Uso: sky-emu <sistema> <arquivo>
+#   ps1  -> RetroArch + core PCSX-ReARMed (dynarec, o mais leve)
+#   ps2  -> PCSX2 (perfil leve: OpenGL, resolução nativa | potente: Vulkan, 2x)
+
+SYS="$1"
+ROM="$2"
+SKY="$HOME/skystation"
+MSG="${SKY_MSG_FILE:-/dev/null}"
+PROFILE="${SKY_PROFILE:-$(/opt/skystation/bin/sky-perfil)}"
+
+fail() { echo "$1" >"$MSG"; echo "sky-emu: $1" >&2; exit "${2:-3}"; }
+
+[ -f "$ROM" ] || fail "Arquivo não encontrado: $(basename "$ROM")"
+mkdir -p "$SKY/saves/$SYS" "$SKY/states/$SYS" "$SKY/bios/$SYS"
+
+case "$SYS" in
+ps1)
+    CORE="/opt/skystation/emu/cores/pcsx_rearmed_libretro.so"
+    [ -f "$CORE" ] || fail "Emulador de PS1 não instalado. Rode a Fase 4 de novo."
+    CFG="$HOME/.config/skystation/retroarch.cfg"
+    mkdir -p "$(dirname "$CFG")"
+    # Configuração base do SkyStation, sempre regenerada (o RetroArch não salva por cima).
+    sed -e "s|@SKY@|$SKY|g" /opt/skystation/emu/retroarch.cfg >"$CFG"
+    exec retroarch --fullscreen --config "$CFG" -L "$CORE" "$ROM"
+    ;;
+ps2)
+    PCSX2="/opt/pcsx2/AppRun"
+    [ -x "$PCSX2" ] || fail "Emulador de PS2 não instalado. Rode a Fase 4 de novo."
+    BIOS="$(find "$SKY/bios/ps2" -maxdepth 1 -type f \( -iname '*.bin' -o -iname '*.rom0' \) | head -1)"
+    [ -n "$BIOS" ] || fail "Falta a BIOS do PS2 em ~/skystation/bios/ps2 (extraia do seu console)."
+    python3 /opt/skystation/bin/sky-pcsx2-ini "$PROFILE" "$SKY" "$(basename "$BIOS")" \
+        || fail "Não consegui preparar a configuração do PCSX2."
+    exec "$PCSX2" -fullscreen -nogui -- "$ROM"
+    ;;
+*)
+    fail "Sistema desconhecido: $SYS"
+    ;;
+esac

@@ -1,0 +1,9 @@
+{
+  "title": "Navegador",
+  "type": "app",
+  "exec": "python3 main.py",
+  "cover": "cover.png",
+  "color": "#22c55e",
+  "order": 80,
+  "description": "Navegador simples do SkyStation para testes. Use teclado e mouse; Home do controle para sair."
+}

@@ -1,0 +1,70 @@
+#!/bin/bash
+# SkyStation: executor de jogos.
+# Toda abertura de jogo passa por aqui. Ele:
+#   - roda o jogo numa sessão própria (setsid): o botão Home consegue fechar o jogo
+#     inteiro (inclusive processos filhos) sem tocar no launcher;
+#   - liga o GameMode (CPU em desempenho máximo só durante o jogo);
+#   - liga o MangoHud se a medição de FPS estiver ativada no menu;
+#   - grava o log do jogo e o código de saída para o launcher mostrar erros.
+#
+# Uso: sky-run <pasta-do-jogo> <comando> <id> [título]
+
+DIR="$1"
+CMD="$2"
+ID="${3:-jogo}"
+TITLE="${4:-$ID}"
+
+RUN="${XDG_RUNTIME_DIR:-/tmp}/skystation"
+STATE="$HOME/.local/state/skystation/games"
+CONF="$HOME/.config/skystation"
+mkdir -p "$RUN" "$STATE"
+rm -f "$RUN/last_exit" "$RUN/last_msg"
+echo "$TITLE" >"$RUN/game.title"     # o menu Home mostra o nome do jogo
+
+export SKY_MSG_FILE="$RUN/last_msg"     # sky-emu escreve aqui mensagens para o jogador
+export SKY_PROFILE="$(/opt/skystation/bin/sky-perfil)"
+
+PREFIX=""
+command -v gamemoderun >/dev/null 2>&1 && PREFIX="gamemoderun"
+
+if [ -f "$CONF/mangohud.on" ] && command -v mangohud >/dev/null 2>&1; then
+    BENCH="$HOME/skystation/benchmarks"
+    [ -w /mnt/skystation ] && BENCH="/mnt/skystation/benchmarks"   # na VM, vai direto para a pasta compartilhada
+    mkdir -p "$BENCH"
+    export MANGOHUD_CONFIG="fps,frametime,frame_timing,cpu_stats,cpu_temp,gpu_stats,ram,position=top-left,font_size=20,autostart_log=1,log_duration=0,output_folder=$BENCH"
+    PREFIX="$PREFIX mangohud"
+fi
+
+LOG="$STATE/$ID.log"
+{
+    echo "=== $(date '+%F %T')  $ID"
+    echo "pasta:   $DIR"
+    echo "comando: $PREFIX $CMD"
+    echo "perfil:  $SKY_PROFILE"
+} >"$LOG"
+
+# setsid: o jogo vira líder do próprio grupo de processos (PGID = PID).
+setsid bash -c 'cd -- "$1" || exit 97; eval "exec $2 $3"' sky-game "$DIR" "$PREFIX" "$CMD" >>"$LOG" 2>&1 &
+child=$!
+echo "$child" >"$RUN/game.pid"
+
+wait "$child"
+code=$?
+
+rm -f "$RUN/game.pid"
+echo "=== saiu com código $code" >>"$LOG"
+echo "$code" >"$RUN/last_exit"
+
+# Wine deixa um servidor rodando em segundo plano; encerra o do prefixo deste jogo.
+if [ -n "${SKY_WINEPREFIX:-}" ] || [ -f "$RUN/wineprefix" ]; then
+    WP="${SKY_WINEPREFIX:-$(cat "$RUN/wineprefix" 2>/dev/null)}"
+    [ -n "$WP" ] && WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1
+    rm -f "$RUN/wineprefix"
+fi
+
+# Ponte de diagnóstico na VM.
+if [ -w /mnt/skystation ]; then
+    mkdir -p /mnt/skystation/logs && cp "$LOG" "/mnt/skystation/logs/$ID.log" 2>/dev/null
+fi
+
+exit "$code"

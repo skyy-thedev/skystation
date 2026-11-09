@@ -1,0 +1,24 @@
+#!/bin/bash
+# SkyStation: roda DENTRO do cage (por isso tem acesso à tela Wayland).
+# Sobe o botão Home em segundo plano e depois o launcher.
+# Uso: sky-shell <comando do launcher...>
+LOG_DIR="$HOME/.local/state/skystation"
+mkdir -p "$LOG_DIR"
+export SDL_VIDEODRIVER=wayland
+
+# Resolução escolhida com "skystation-vm resolucao" (menos pixels = mais FPS na VM).
+RES="$(tr -d '[:space:]' 2>/dev/null <"$HOME/.config/skystation/resolucao")"
+if [ -n "$RES" ] && command -v wlr-randr >/dev/null 2>&1; then
+    OUT="$(wlr-randr 2>/dev/null | awk 'NR==1{print $1}')"
+    if [ -n "$OUT" ]; then
+        wlr-randr --output "$OUT" --mode "$RES" 2>/dev/null \
+            || wlr-randr --output "$OUT" --custom-mode "$RES" 2>/dev/null \
+            || echo "sky-shell: não consegui aplicar a resolução $RES" >>"$LOG_DIR/home.log"
+    fi
+fi
+
+python3 /opt/skystation/bin/sky-home.py >"$LOG_DIR/home.log" 2>&1 &
+HOME_PID=$!
+trap 'kill "$HOME_PID" 2>/dev/null' EXIT
+
+"$@"

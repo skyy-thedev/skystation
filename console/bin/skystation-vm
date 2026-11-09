@@ -1,0 +1,30 @@
+#!/bin/bash
+# SkyStation: ajustes de vídeo (pensados para a VM, mas valem em qualquer máquina).
+# Rode como usuário normal (sem sudo). Para aplicar: logout (o console reabre sozinho).
+#
+#   skystation-vm resolucao 960x540     resolução do console (menos pixels = mais FPS na VM)
+#   skystation-vm resolucao auto        volta à resolução padrão da tela
+#   skystation-vm video auto            GPU se der, CPU se não der (padrão)
+#   skystation-vm video hibrido         compositor na CPU + jogos na GPU (VM com aceleração 3D)
+#   skystation-vm video software        tudo na CPU
+#   skystation-vm status
+CONF="$HOME/.config/skystation"
+mkdir -p "$CONF"
+case "${1:-status}" in
+    resolucao)
+        if [ "${2:-auto}" = auto ]; then rm -f "$CONF/resolucao"; echo "Resolução: padrão da tela"
+        elif [[ "$2" =~ ^[0-9]{3,4}x[0-9]{3,4}$ ]]; then echo "$2" >"$CONF/resolucao"; echo "Resolução: $2"
+        else echo "Use algo como 960x540, 1024x768 ou auto"; exit 1; fi ;;
+    video)
+        case "${2:-auto}" in
+            auto) rm -f "$CONF/video"; echo "Vídeo: auto" ;;
+            hibrido|software) echo "$2" >"$CONF/video"; echo "Vídeo: $2" ;;
+            *) echo "Use: auto, hibrido ou software"; exit 1 ;;
+        esac ;;
+    status)
+        echo "Resolução: $(cat "$CONF/resolucao" 2>/dev/null || echo 'padrão da tela')"
+        echo "Vídeo:     $(cat "$CONF/video" 2>/dev/null || echo auto)"
+        exit 0 ;;
+    *) sed -n '2,12p' "$0"; exit 1 ;;
+esac
+echo "Para aplicar: logout"

@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""SkyStation: backend das Configurações do launcher. Sempre responde JSON numa linha.
+
+  sky-config info
+  sky-config volume get | set <0-100> | mute
+  sky-config wifi list | connect <ssid> [senha] | status
+  sky-config bt list | scan | pair <MAC>
+"""
+import json
+import os
+import re
+import select
+import shutil
+import subprocess
+import sys
+import time
+
+
+def out(obj):
+    print(json.dumps(obj, ensure_ascii=False))
+    sys.exit(0)
+
+
+def fail(msg):
+    out({"ok": False, "error": msg})
+
+
+def run(cmd, timeout=25):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, r.stdout, r.stderr
+    except FileNotFoundError:
+        return 127, "", f"{cmd[0]} não instalado"
+    except subprocess.TimeoutExpired:
+        return 124, "", "tempo esgotado"
+
+
+# ------------------------------------------------------------------ sistema
+def info():
+    def read(path, default=""):
+        try:
+            with open(path) as f:
+                return f.read()
+        except OSError:
+            return default
+
+    cpu = "?"
+    for line in read("/proc/cpuinfo").splitlines():
+        if line.startswith("model name"):
+            cpu = re.sub(r"\s+", " ", line.split(":", 1)[1]).strip()
+            break
+    mem_kb = 0
+    for line in read("/proc/meminfo").splitlines():
+        if line.startswith("MemTotal"):
+            mem_kb = int(line.split()[1])
+    vendors = {"0x8086": "Intel", "0x1002": "AMD", "0x10de": "NVIDIA", "0x15ad": "VMware/VirtualBox (virtual)"}
+    gpus = []
+    drm = "/sys/class/drm"
+    if os.path.isdir(drm):
+        for card in sorted(os.listdir(drm)):
+            if re.fullmatch(r"card\d+", card):
+                v = read(f"{drm}/{card}/device/vendor").strip()
+                gpus.append(vendors.get(v, v or "?"))
+    du = shutil.disk_usage("/")
+    _, ipout, _ = run(["ip", "-4", "-o", "addr", "show", "scope", "global"])
+    ips = re.findall(r"inet (\d+\.\d+\.\d+\.\d+)", ipout)
+    up = float(read("/proc/uptime", "0").split()[0] or 0)
+    _, perfil, _ = run(["/opt/skystation/bin/sky-perfil"])
+    version = read("/opt/skystation/VERSION", "desenvolvimento").strip()
+    out({"ok": True, "items": [
+        ["SkyStation", version],
+        ["Perfil", perfil.strip() or "?"],
+        ["Processador", f"{cpu} ({os.cpu_count()} threads)"],
+        ["Vídeo", ", ".join(gpus) or "?"],
+        ["Memória", f"{mem_kb / 1048576:.1f} GB"],
+        ["Armazenamento", f"{du.used / 1e9:.1f} de {du.total / 1e9:.1f} GB usados"],
+        ["Rede", ", ".join(ips) or "sem conexão"],
+        ["Kernel", os.uname().release],
+        ["Ligado há", f"{int(up // 3600)} h {int(up % 3600 // 60)} min"],
+    ]})
+
+
+# ------------------------------------------------------------------ som
+SINK = "@DEFAULT_AUDIO_SINK@"
+
+
+def volume(args):
+    sub = args[0] if args else "get"
+    if sub == "set" and len(args) > 1:
+        v = max(0, min(100, int(args[1])))
+        run(["wpctl", "set-volume", "-l", "1.0", SINK, f"{v}%"])
+        run(["wpctl", "set-mute", SINK, "0"])
+    elif sub == "mute":
+        run(["wpctl", "set-mute", SINK, "toggle"])
+    code, so, se = run(["wpctl", "get-volume", SINK])
+    m = re.search(r"Volume:\s*([\d.]+)", so)
+    if code != 0 or not m:
+        fail("Sem saída de áudio (" + (se.strip() or "wpctl falhou") + ")")
+    out({"ok": True, "volume": round(float(m.group(1)) * 100), "muted": "MUTED" in so})
+
+
+# ------------------------------------------------------------------ Wi-Fi
+def _split_nmcli(line):
+    # o modo -t do nmcli escapa ":" dentro dos campos como "\:"
+    return [p.replace("\\:", ":") for p in re.split(r"(?<!\\):", line)]
+
+
+def wifi(args):
+    sub = args[0] if args else "list"
+    code, so, _ = run(["nmcli", "-t", "-f", "TYPE", "device"])
+    if "wifi" not in so.split():
+        fail("Nenhuma placa Wi-Fi encontrada (na VM isso é normal)")
+    if sub == "list":
+        code, so, se = run(["nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY",
+                            "device", "wifi", "list", "--rescan", "yes"])
+        if code != 0:
+            fail(se.strip() or "não consegui listar as redes")
+        nets = {}
+        for line in so.splitlines():
+            p = _split_nmcli(line)
+            if len(p) < 4 or not p[1]:
+                continue
+            ssid, sig = p[1], int(p[2] or 0)
+            cur = nets.get(ssid)
+            if cur is None or sig > cur["signal"] or p[0] == "*":
+                nets[ssid] = {"ssid": ssid, "signal": sig, "secure": p[3] not in ("", "--"),
+                              "active": p[0] == "*" or (cur or {}).get("active", False)}
+        lst = sorted(nets.values(), key=lambda n: (not n["active"], -n["signal"]))
+        out({"ok": True, "networks": lst})
+    if sub == "connect" and len(args) > 1:
+        cmd = ["nmcli", "device", "wifi", "connect", args[1]]
+        if len(args) > 2 and args[2]:
+            cmd += ["password", args[2]]
+        code, so, se = run(cmd, timeout=45)
+        if code == 0:
+            out({"ok": True, "message": f"Conectado a {args[1]}"})
+        fail((se or so).strip().splitlines()[-1] if (se or so).strip() else "falha ao conectar")
+    fail("comando de Wi-Fi inválido")
+
+
+# ------------------------------------------------------------------ Bluetooth
+def _bt_session(commands, wait_for=None, timeout=20):
+    """Roda uma sessão interativa do bluetoothctl (precisa de 'agent' para parear)."""
+    p = subprocess.Popen(["bluetoothctl"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, text=True, bufsize=1)
+    buf = ""
+    try:
+        for c in commands:
+            p.stdin.write(c + "\n")
+            p.stdin.flush()
+            time.sleep(0.4)
+        end = time.time() + timeout
+        while time.time() < end:
+            r, _, _ = select.select([p.stdout], [], [], 0.5)
+            if r:
+                line = p.stdout.readline()
+                if not line:
+                    break
+                buf += line
+                if wait_for and any(w in line for w in wait_for):
+                    break
+        return buf
+    finally:
+        try:
+            p.stdin.write("quit\n")
+            p.stdin.flush()
+        except (BrokenPipeError, OSError):
+            pass
+        try:
+            p.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            p.kill()
+
+
+def _devices(kind=""):
+    code, so, _ = run(["bluetoothctl", "devices"] + ([kind] if kind else []))
+    devs = []
+    for line in so.splitlines():
+        m = re.match(r"Device ([0-9A-F:]{17}) (.*)", line.strip())
+        if m:
+            devs.append({"mac": m.group(1), "name": m.group(2)})
+    return devs
+
+
+def bt(args):
+    sub = args[0] if args else "list"
+    code, so, se = run(["bluetoothctl", "show"])
+    if code != 0 or "Controller" not in so:
+        fail("Nenhum adaptador Bluetooth encontrado (na VM isso é normal)")
+    run(["bluetoothctl", "power", "on"])
+    if sub == "list":
+        paired = {d["mac"] for d in _devices("Paired")}
+        out({"ok": True, "devices": [dict(d, paired=d["mac"] in paired) for d in _devices()]})
+    if sub == "scan":
+        run(["bluetoothctl", "--timeout", "8", "scan", "on"], timeout=15)
+        paired = {d["mac"] for d in _devices("Paired")}
+        out({"ok": True, "devices": [dict(d, paired=d["mac"] in paired) for d in _devices()]})
+    if sub == "pair" and len(args) > 1:
+        mac = args[1]
+        log = _bt_session(["agent NoInputNoOutput", "default-agent", f"pair {mac}"],
+                          wait_for=["Pairing successful", "Failed to pair", "AlreadyExists"], timeout=25)
+        if "Failed to pair" in log and "AlreadyExists" not in log:
+            fail("Não pareou. Coloque o controle em modo de pareamento e tente de novo.")
+        run(["bluetoothctl", "trust", mac])
+        code, so, _ = run(["bluetoothctl", "connect", mac], timeout=20)
+        if "Connection successful" in so or code == 0:
+            out({"ok": True, "message": "Controle pareado e conectado"})
+        fail("Pareou, mas não conectou. Aperte um botão do controle.")
+    fail("comando de Bluetooth inválido")
+
+
+def main():
+    if len(sys.argv) < 2:
+        fail("uso: sky-config <info|volume|wifi|bt> ...")
+    cmd, args = sys.argv[1], sys.argv[2:]
+    try:
+        {"info": lambda a: info(), "volume": volume, "wifi": wifi, "bt": bt}.get(
+            cmd, lambda a: fail("comando desconhecido"))(args)
+    except Exception as e:  # nunca devolver lixo para o launcher
+        fail(f"erro interno: {e}")
+
+
+if __name__ == "__main__":
+    main()

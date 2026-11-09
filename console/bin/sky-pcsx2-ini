@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""SkyStation: aplica o perfil de desempenho no PCSX2.ini antes de cada jogo de PS2.
+
+Só altera as chaves do SkyStation; o resto do arquivo (ajustes que o próprio PCSX2 grava)
+é preservado.
+
+Uso: sky-pcsx2-ini <leve|potente> <pasta-skystation> <arquivo-bios>
+"""
+import configparser
+import os
+import sys
+
+profile, sky, bios = sys.argv[1], sys.argv[2], sys.argv[3]
+
+# Renderer do PCSX2: 12 = OpenGL, 14 = Vulkan.
+# HD 4400 (notebook): OpenGL é o driver maduro; o Vulkan dessa geração é incompleto.
+# Ryzen (potente): Vulkan via RADV é o melhor caminho.
+PROFILES = {
+    "leve": {"Renderer": "12", "upscale_multiplier": "1"},
+    "potente": {"Renderer": "14", "upscale_multiplier": "2"},
+}
+
+ini_dir = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "PCSX2", "inis")
+os.makedirs(ini_dir, exist_ok=True)
+path = os.path.join(ini_dir, "PCSX2.ini")
+
+cp = configparser.ConfigParser(interpolation=None, strict=False)
+cp.optionxform = str  # o PCSX2 diferencia maiúsculas nas chaves
+if os.path.exists(path):
+    cp.read(path, encoding="utf-8")
+
+
+def put(section, key, value):
+    if not cp.has_section(section):
+        cp.add_section(section)
+    cp.set(section, key, value)
+
+
+put("UI", "SetupWizardIncomplete", "false")
+put("UI", "StartFullscreen", "true")
+put("UI", "ConfirmShutdown", "false")
+put("UI", "HideMouseCursor", "true")
+put("Folders", "Bios", os.path.join(sky, "bios", "ps2"))
+put("Folders", "MemoryCards", os.path.join(sky, "saves", "ps2"))
+put("Folders", "Savestates", os.path.join(sky, "states", "ps2"))
+put("Filenames", "BIOS", bios)
+for k, v in PROFILES.get(profile, PROFILES["leve"]).items():
+    put("EmuCore/GS", k, v)
+
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    cp.write(f, space_around_delimiters=True)
+os.replace(tmp, path)  # troca atômica: um desligamento no meio não corrompe a config

@@ -1,0 +1,9 @@
+{
+  "title": "Sky Dodge",
+  "type": "autoral",
+  "exec": "python3 main.py",
+  "cover": "cover.png",
+  "color": "#4fd1ff",
+  "order": 10,
+  "description": "Primeiro jogo autoral do SkyStation. Desvie dos meteoros o máximo que conseguir."
+}

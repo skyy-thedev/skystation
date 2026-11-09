@@ -1,0 +1,14 @@
+# Arquivos grandes, pessoais ou gerados: nunca vão para o GitHub
+roms/
+bios/
+logs/
+benchmarks/
+*.log
+diag-boot.txt
+atualizacao.txt
+__pycache__/
+*.pyc
+.godot/
+
+# Substituído pelo Git (servia para conferir cópias pela pasta do Windows)
+MANIFEST.md5

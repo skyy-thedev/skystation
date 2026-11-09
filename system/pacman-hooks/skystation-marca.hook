@@ -1,0 +1,13 @@
+# SkyStation: reaplica a identidade (os-release) e limpa o GRUB quando o Arch atualiza
+# os pacotes que sobrescreveriam essas mudanças.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = filesystem
+Target = grub
+
+[Action]
+Description = SkyStation: reaplicando identidade do sistema...
+When = PostTransaction
+Exec = /usr/local/bin/skystation-marca
