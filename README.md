@@ -15,6 +15,8 @@ skystation/
 │   ├── fase5-2.sh    codecs do navegador, Snake, PS1 com mais formatos
 │   ├── fase5-3.sh    boot com logo SkyStation e sem texto (UKI)
 │   ├── fase5-5.sh    visual novo (barra cruzada + boot animado), Bluetooth sem atraso, espaço
+│   ├── fase5-6.sh    portátil (bateria, energia, brilho), avisos com som, capturas, capas, tempo de jogo
+│   ├── energia.sh    perfil da CPU na tomada/bateria (comando skystation-energia)
 │   ├── marca.sh      identidade do sistema (comando skystation-marca, reaplicado pelo pacman)
 │   ├── diag.sh       diagnóstico do boot (comando skystation-diag)
 │   ├── expandir.sh   ocupa a mídia inteira após clonar (comando skystation-expandir)
@@ -27,7 +29,9 @@ skystation/
 ├── docs/             guias (clonar para cartão/pendrive)
 └── console/          tudo que roda no console (vira /opt/skystation)
     ├── session.sh    abre o cage com o launcher e o vigia do botão Home
+    ├── sounds/       sons de aviso e música ambiente (originais, gerados por tools/gerar-sons.py)
     ├── bin/          sky-run (executor), sky-home.py + sky-overlay.py (botão Home),
+    │                 sky-notify (avisos com som), sky-capas (capas automáticas),
     │                 sky-shell, sky-emu (emuladores), sky-wine (PC), sky-config (Configurações),
     │                 sky-perfil (leve/potente), sky-pcsx2-ini
     ├── emu/          configuração otimizada do RetroArch e cores
@@ -86,6 +90,21 @@ rótulo **SKYROMS** e crie as pastas `ps1/` e `ps2/` (capas opcionais em `ps1/co
 Ao conectar, ele monta sozinho em `/mnt/skyroms` e os jogos aparecem no console; ao tirar, somem.
 Dica: `.chd` ocupa bem menos que `.bin/.cue` (converta com o `chdman` no PC).
 
+## Recursos da Fase 5.6
+
+- **Bateria:** nível do console e dos controles no topo da tela e no menu Home. Na bateria o menu
+  roda a 30 quadros e a CPU fica econômica; aviso em 15 % e 5 %; em 3 % o jogo é fechado do jeito
+  certo e o console desliga sozinho.
+- **Avisos com som** (`sky-notify`): controle conectado/desconectado, USB, pendrive de jogos, jogo
+  novo, carregador, bateria fraca, temperatura alta. Silenciar: `touch ~/.config/skystation/avisos.off`.
+- **Menu Home (no jogo):** salvar/carregar estado (PS1), salvar captura de tela, volume, bateria,
+  temperatura e hora. As capturas aparecem na categoria **Capturas** (`~/skystation/capturas`).
+- **Sistema:** volume e brilho (◀ ▶), saída de som (alto-falantes ou TV), música ambiente.
+- **Descanso de tela:** escurece após 5 min parado no menu; desliga após 20 min (bateria) ou 60 min.
+- **Capas automáticas:** baixadas do acervo libretro-thumbnails pelo nome do arquivo.
+- **Tempo de jogo e Recentes:** `~/skystation/saves/tempo.json`.
+- **Nova versão:** o console confere o GitHub a cada 6 h e avisa em Sistema → Atualizar.
+
 ## Visual
 
 - **Temas:** Sistema → Tema de cores (Automático muda com a hora do dia: Oceano, Aurora,
@@ -140,7 +159,11 @@ curl -fsSL https://raw.githubusercontent.com/skyy-thedev/skystation/main/setup/s
 - [x] Controle nos emuladores: perfis de ~440 controles no RetroArch (PS1) e mapeamento SDL no PCSX2 (PS2)
 - [x] Fase 5.5: interface em barra cruzada, boot animado, temas, sons, atualizar pelo menu,
       pendrive de jogos SKYROMS, Bluetooth sem economia de energia, cache do pacman automático
+- [x] Fase 5.6: bateria do console e dos controles, modo econômico, avisos com som, brilho/volume,
+      saída de som, descanso de tela, menu Home com salvar/carregar estado e captura, capas
+      automáticas, tempo de jogo + Recentes, Capturas, aviso de nova versão, música ambiente
 - [ ] Porta USB ao lado do HDMI sem energia (provável defeito físico)
+- [ ] Drive de DVD: jogar PS1/PS2 direto do disco ou copiar para .chd
 - [ ] SSD SATA no lugar do pendrive
 - [ ] Case impressa em 3D (protótipo v0.1 em hardware/case)
 - [ ] Fase 6: ISO próprio do SkyStation

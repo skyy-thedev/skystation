@@ -20,6 +20,9 @@ CONF="$HOME/.config/skystation"
 mkdir -p "$RUN" "$STATE"
 rm -f "$RUN/last_exit" "$RUN/last_msg"
 echo "$TITLE" >"$RUN/game.title"     # o menu Home mostra o nome do jogo
+echo "$ID" >"$RUN/game.id"
+case "$ID" in ps1-*) echo ps1 ;; ps2-*) echo ps2 ;; *) echo "" ;; esac >"$RUN/game.sys"   # salvar estado só no PS1
+START=$(date +%s)
 
 export SKY_MSG_FILE="$RUN/last_msg"     # sky-emu escreve aqui mensagens para o jogador
 export SKY_PROFILE="$(/opt/skystation/bin/sky-perfil)"
@@ -53,6 +56,26 @@ code=$?
 
 rm -f "$RUN/game.pid"
 echo "=== saiu com código $code" >>"$LOG"
+
+# Tempo de jogo (Fase 5.6): soma o tempo desta partida em ~/skystation/saves/tempo.json.
+# Partidas com menos de 10 s (abriu e fechou) não contam.
+python3 - "$ID" "$TITLE" "$START" "$(date +%s)" "$HOME/skystation/saves/tempo.json" <<'PY' 2>>"$LOG"
+import json, os, sys
+gid, title, start, end, path = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), sys.argv[5]
+secs = end - start
+if secs >= 10:
+    try:
+        data = json.load(open(path))
+    except (OSError, ValueError):
+        data = {}
+    g = data.get(gid, {"seconds": 0, "plays": 0})
+    g.update(seconds=g.get("seconds", 0) + secs, plays=g.get("plays", 0) + 1, last=end, title=title)
+    data[gid] = g
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".tmp", "w") as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+    os.replace(path + ".tmp", path)
+PY
 echo "$code" >"$RUN/last_exit"
 
 # Wine deixa um servidor rodando em segundo plano; encerra o do prefixo deste jogo.

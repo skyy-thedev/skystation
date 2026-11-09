@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""SkyStation: baixa a capa de cada jogo de PS1/PS2 que ainda não tem capa.
+
+As capas vêm do acervo público libretro-thumbnails (GitHub), procuradas pelo nome do arquivo.
+Funciona melhor com nomes no padrão Redump/No-Intro, ex.: "Crash Bash (USA).cue".
+Cada capa é reduzida (512 px de altura) e salva em <pasta da ROM>/covers/<nome>.png.
+Nomes sem capa no acervo ficam anotados e só são tentados de novo depois de 7 dias.
+
+Saída (uma linha JSON):  {"ok": true, "baixadas": 3, "tentadas": 5}
+"""
+import glob
+import json
+import os
+import re
+import sys
+import time
+import urllib.parse
+import urllib.request
+
+HOME = os.path.expanduser("~")
+BASES = [os.path.join(HOME, "skystation/roms"), "/mnt/skyroms", "/mnt/skystation/roms"]
+SYSTEMS = {
+    "ps1": ("Sony_-_PlayStation", {"cue", "chd", "pbp", "m3u", "iso", "img"}),
+    "ps2": ("Sony_-_PlayStation_2", {"iso", "chd", "cso", "gz"}),
+}
+URL = "https://raw.githubusercontent.com/libretro-thumbnails/{repo}/master/Named_Boxarts/{name}.png"
+FAILS = os.path.join(HOME, ".cache/skystation/capas-falhas.json")
+RETRY = 7 * 24 * 3600
+
+
+def candidates(stem):
+    names = [stem]
+    clean = re.sub(r"\s*\[[^\]]*\]", "", stem).strip()          # tira [SLUS-00594] etc.
+    if clean != stem:
+        names.append(clean)
+    base = re.sub(r"\s*\([^\)]*\)", "", clean).strip()         # só o título
+    for region in ("(USA)", "(Europe)", "(Brazil)", "(Japan)", "(USA) (Rev 1)"):
+        names.append(f"{base} {region}")
+    out = []
+    for n in names:
+        n = re.sub(r'[&*/:`<>?\\|"]', "_", n)                   # regra de nomes do acervo
+        if n not in out:
+            out.append(n)
+    return out
+
+
+def fetch(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "SkyStation"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return r.read()
+
+
+def save_cover(data, dest):
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    tmp = dest + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(data)
+    try:  # reduz com o pygame (já instalado no console); se falhar, fica a original
+        os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+        import pygame
+        img = pygame.image.load(tmp)
+        w, h = img.get_size()
+        if h > 512:
+            img = pygame.transform.smoothscale(img, (max(1, int(w * 512 / h)), 512))
+            pygame.image.save(img, tmp + ".png")
+            os.replace(tmp + ".png", tmp)
+    except Exception:
+        pass
+    os.replace(tmp, dest)
+
+
+def main():
+    try:
+        with open(FAILS) as f:
+            fails = json.load(f)
+    except (OSError, ValueError):
+        fails = {}
+    got = tried = 0
+    for base in BASES:
+        for sys_id, (repo, exts) in SYSTEMS.items():
+            rdir = os.path.join(base, sys_id)
+            if not os.path.isdir(rdir) or not os.access(rdir, os.W_OK):
+                continue
+            for path in sorted(glob.glob(os.path.join(glob.escape(rdir), "*"))):
+                ext = path.rsplit(".", 1)[-1].lower() if "." in os.path.basename(path) else ""
+                if ext not in exts:
+                    continue
+                stem = os.path.basename(path).rsplit(".", 1)[0]
+                dest = os.path.join(rdir, "covers", stem + ".png")
+                if os.path.exists(dest) or os.path.exists(os.path.join(rdir, stem + ".png")):
+                    continue
+                key = f"{sys_id}/{stem}"
+                if time.time() - fails.get(key, 0) < RETRY:
+                    continue
+                tried += 1
+                ok = False
+                for name in candidates(stem):
+                    try:
+                        data = fetch(URL.format(repo=repo, name=urllib.parse.quote(name)))
+                        if data[:4] == b"\x89PNG":
+                            save_cover(data, dest)
+                            ok = True
+                            got += 1
+                            break
+                    except Exception:
+                        continue
+                if not ok:
+                    fails[key] = time.time()
+    os.makedirs(os.path.dirname(FAILS), exist_ok=True)
+    with open(FAILS, "w") as f:
+        json.dump(fails, f)
+    print(json.dumps({"ok": True, "baixadas": got, "tentadas": tried}))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:  # nunca derruba o launcher
+        print(json.dumps({"ok": False, "error": str(e)}))
+        sys.exit(0)

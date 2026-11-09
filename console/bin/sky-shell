@@ -19,6 +19,12 @@ fi
 
 python3 /opt/skystation/bin/sky-home.py >"$LOG_DIR/home.log" 2>&1 &
 HOME_PID=$!
-trap 'kill "$HOME_PID" 2>/dev/null' EXIT
+# Fase 5.6: avisos com som (controle, USB, pendrive, jogo novo, bateria, temperatura)
+NOTIFY_PID=""
+if [ -f /opt/skystation/bin/sky-notify ]; then
+    python3 /opt/skystation/bin/sky-notify >"$LOG_DIR/notify.log" 2>&1 &
+    NOTIFY_PID=$!
+fi
+trap 'kill "$HOME_PID" $NOTIFY_PID 2>/dev/null' EXIT
 
 "$@"

@@ -35,7 +35,8 @@ fi
 
 # Comandos do sistema (skystation-*) sempre na versão mais nova do projeto.
 for pair in skystation-atualizar.sh:skystation-atualizar expandir.sh:skystation-expandir \
-            diag.sh:skystation-diag marca.sh:skystation-marca diag-controle.sh:skystation-diag-controle; do
+            diag.sh:skystation-diag marca.sh:skystation-marca diag-controle.sh:skystation-diag-controle \
+            energia.sh:skystation-energia; do
     f="$SRC/setup/${pair%%:*}"; [ -f "$f" ] || continue
     sed 's/\r$//' "$f" > "/usr/local/bin/${pair##*:}.new"
     chmod 755 "/usr/local/bin/${pair##*:}.new"

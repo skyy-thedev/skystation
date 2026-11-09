@@ -1,0 +1,334 @@
+#!/usr/bin/env python3
+"""SkyStation: avisos do sistema (Fase 5.6).
+
+Roda a sessão inteira em segundo plano (iniciado pelo sky-shell) e toca um som diferente para
+cada coisa que acontece, mesmo com um jogo aberto:
+
+  controle conectado / desconectado      dispositivo USB conectado / removido
+  pendrive de jogos (SKYROMS) conectado  jogo novo encontrado
+  carregador ligado / desligado          bateria do console em 15 %, 5 % e 3 %
+  bateria do controle fraca              temperatura alta
+
+Cada aviso também vira uma linha em $XDG_RUNTIME_DIR/skystation/events.jsonl, que o launcher
+lê para mostrar a notificação na tela. Com a bateria em 3 % (descarregando), o jogo aberto é
+fechado do jeito certo (para o emulador gravar o save) e o console desliga sozinho.
+
+Sons em /opt/skystation/sounds (gerados por tools/gerar-sons.py). Para silenciar os avisos:
+  touch ~/.config/skystation/avisos.off
+"""
+import glob
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
+EVENTS = os.path.join(RUN, "events.jsonl")
+SOUNDS = "/opt/skystation/sounds"
+CONF = os.path.expanduser("~/.config/skystation")
+HOME = os.path.expanduser("~")
+SKYROMS = "/mnt/skyroms"
+ROM_EXTS = {"ps1": {"cue", "chd", "pbp", "m3u", "iso", "img"}, "ps2": {"iso", "chd", "cso", "gz"}}
+GAME_DIRS = ["/opt/skystation/games", os.path.join(HOME, "skystation/games")]
+ROM_BASES = [os.path.join(HOME, "skystation/roms"), SKYROMS, "/mnt/skystation/roms"]
+
+try:
+    import evdev
+    from evdev import ecodes as E
+except ImportError:
+    evdev = None
+
+
+def log(msg):
+    print(time.strftime("%H:%M:%S"), "sky-notify:", msg, flush=True)
+
+
+def read(path, default=""):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+# ------------------------------------------------------------------ som e eventos
+PLAYER = next((p for p in ("pw-play", "paplay", "aplay") if shutil.which(p)), None)
+
+
+def play(name):
+    if not name or PLAYER is None or os.path.exists(os.path.join(CONF, "avisos.off")):
+        return
+    path = os.path.join(SOUNDS, name + ".wav")
+    if os.path.exists(path):
+        try:
+            subprocess.Popen([PLAYER, path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            pass
+
+
+def event(kind, text, sound=None):
+    log(f"{kind}: {text}")
+    os.makedirs(RUN, exist_ok=True)
+    try:
+        # o arquivo é pequeno e vive na RAM (XDG_RUNTIME_DIR); limita a 200 linhas
+        lines = []
+        if os.path.exists(EVENTS) and os.path.getsize(EVENTS) > 40000:
+            with open(EVENTS) as f:
+                lines = f.readlines()[-100:]
+            with open(EVENTS, "w") as f:
+                f.writelines(lines)
+        with open(EVENTS, "a") as f:
+            f.write(json.dumps({"t": time.time(), "kind": kind, "text": text}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+    play(sound)
+
+
+# ------------------------------------------------------------------ leituras
+def friendly(name):
+    n = name.lower()
+    if "dualsense" in n:
+        return "DualSense"
+    if "wireless controller" in n or "dualshock 4" in n:
+        return "DualShock 4"
+    if "xbox" in n or "x-box" in n:
+        return "Controle Xbox"
+    if "8bitdo" in n:
+        return "Controle 8BitDo"
+    return name.strip() or "Controle"
+
+
+def controllers():
+    found = {}
+    if evdev is None:
+        return found
+    for path in evdev.list_devices():
+        try:
+            dev = evdev.InputDevice(path)
+            caps = dev.capabilities()
+            keys = set(caps.get(E.EV_KEY, []))
+            if (E.BTN_SOUTH in keys or E.BTN_GAMEPAD in keys) and E.EV_ABS in caps:
+                found[f"{dev.name}|{dev.uniq or dev.phys}"] = friendly(dev.name)
+            dev.close()
+        except OSError:
+            pass
+    return found
+
+
+def usb_devices():
+    found = {}
+    for d in glob.glob("/sys/bus/usb/devices/*"):
+        base = os.path.basename(d)
+        if ":" in base or base.startswith("usb"):
+            continue  # interfaces e controladores-raiz não contam
+        prod = read(os.path.join(d, "product"))
+        if prod:
+            found[base + "|" + prod] = prod
+    return found
+
+
+def skyroms_mounted():
+    for line in read("/proc/mounts").splitlines():
+        parts = line.split()
+        if len(parts) > 1 and parts[1] == SKYROMS:
+            return True
+    return False
+
+
+def game_keys():
+    keys = {}
+    for base in GAME_DIRS:
+        for j in glob.glob(os.path.join(base, "*", "game.json")):
+            try:
+                with open(j) as f:
+                    keys["g:" + os.path.dirname(j)] = json.load(f).get("title") or os.path.basename(os.path.dirname(j))
+            except (OSError, ValueError):
+                pass
+    for base in ROM_BASES:
+        for sys_id, exts in ROM_EXTS.items():
+            for p in glob.glob(os.path.join(glob.escape(base), sys_id, "*")):
+                ext = p.rsplit(".", 1)[-1].lower() if "." in p else ""
+                if ext in exts:
+                    stem = os.path.basename(p).rsplit(".", 1)[0]
+                    keys[f"{sys_id}:{stem.lower()}"] = re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", "", stem).strip() or stem
+    return keys
+
+
+def power():
+    """(bateria do console: (capacidade, status) ou None, carregador ligado: bool ou None, controles: {nome: (cap, status)})"""
+    bat, ac, pads = None, None, {}
+    for d in glob.glob("/sys/class/power_supply/*"):
+        typ = read(os.path.join(d, "type"))
+        scope = read(os.path.join(d, "scope"))
+        if typ == "Mains":
+            ac = read(os.path.join(d, "online")) == "1"
+        elif typ == "Battery":
+            cap = read(os.path.join(d, "capacity"))
+            st = read(os.path.join(d, "status"))
+            if not cap.isdigit():
+                continue
+            if scope == "Device":
+                pads[os.path.basename(d)] = (int(cap), st)
+            elif bat is None:
+                bat = (int(cap), st)
+    return bat, ac, pads
+
+
+def temperature():
+    best = None
+    for z in glob.glob("/sys/class/thermal/thermal_zone*"):
+        if read(os.path.join(z, "type")) in ("x86_pkg_temp", "acpitz", "TCPU", "cpu-thermal"):
+            v = read(os.path.join(z, "temp"))
+            if v.lstrip("-").isdigit():
+                c = int(v) / 1000
+                best = c if best is None else max(best, c)
+    if best is None:
+        for h in glob.glob("/sys/class/hwmon/hwmon*"):
+            if read(os.path.join(h, "name")) in ("coretemp", "k10temp"):
+                for t in glob.glob(os.path.join(h, "temp*_input")):
+                    v = read(t)
+                    if v.isdigit():
+                        best = max(best or 0, int(v) / 1000)
+    return best
+
+
+def close_game_and_poweroff():
+    pid_s = read(os.path.join(RUN, "game.pid"))
+    if pid_s.isdigit():
+        try:
+            os.killpg(int(pid_s), signal.SIGCONT)
+            os.killpg(int(pid_s), signal.SIGTERM)  # o emulador grava o save ao sair
+        except OSError:
+            pass
+        for _ in range(16):
+            time.sleep(0.5)
+            if not os.path.exists(os.path.join(RUN, "game.pid")):
+                break
+    time.sleep(2)
+    subprocess.run(["systemctl", "poweroff"])
+
+
+# ------------------------------------------------------------------ laço principal
+def main():
+    log("iniciado")
+    pads = controllers()
+    usb = usb_devices()
+    mounted = skyroms_mounted()
+    games = game_keys()
+    bat, ac, pad_bat = power()
+    warned_bat = set()
+    warned_pad = set()
+    hot_since, hot_warned = None, 0.0
+    pending_usb = []           # avisos de USB esperam 4 s (o controle/pendrive tem prioridade)
+    quiet_games_until = 0.0
+    critical = False
+    tick = 0
+
+    while True:
+        time.sleep(1.0)
+        tick += 1
+        now = time.time()
+        special = False
+
+        # controles
+        cur = controllers()
+        for k in cur.keys() - pads.keys():
+            event("controle", f"{cur[k]} conectado", "controle-on")
+            special = True
+        for k in pads.keys() - cur.keys():
+            event("controle", f"{pads[k]} desconectado", "controle-off")
+            special = True
+        pads = cur
+
+        # pendrive de jogos
+        m = skyroms_mounted()
+        if m != mounted:
+            mounted = m
+            if m:
+                for sub in ("ps1", "ps2", "ps1/covers", "ps2/covers"):
+                    try:
+                        os.makedirs(os.path.join(SKYROMS, sub), exist_ok=True)
+                    except OSError:
+                        pass
+            event("pendrive", "Pendrive de jogos conectado" if m else "Pendrive de jogos removido",
+                  "pendrive-on" if m else "pendrive-off")
+            event("jogos", "recarregar")
+            special = True
+            quiet_games_until = now + 8   # os jogos do pendrive não tocam "jogo novo" um a um
+
+        # USB (espera 4 s para não tocar dois sons para a mesma coisa)
+        cur_usb = usb_devices()
+        for k in cur_usb.keys() - usb.keys():
+            pending_usb.append((now, "usb-on", f"{cur_usb[k]} conectado"))
+        for k in usb.keys() - cur_usb.keys():
+            pending_usb.append((now, "usb-off", f"{usb[k]} removido"))
+        usb = cur_usb
+        if special:
+            pending_usb = []
+        ready = [p for p in pending_usb if now - p[0] >= 4]
+        pending_usb = [p for p in pending_usb if now - p[0] < 4]
+        if ready:
+            event("usb", ready[-1][2] if len(ready) == 1 else f"{len(ready)} dispositivos USB", ready[-1][1])
+
+        # jogos novos (a cada 5 s)
+        if tick % 5 == 0:
+            cur_games = game_keys()
+            new = [cur_games[k] for k in cur_games.keys() - games.keys()]
+            if new and now > quiet_games_until:
+                event("jogo", f"Jogo novo: {new[0]}" if len(new) == 1 else f"{len(new)} jogos novos", "jogo-novo")
+            if cur_games.keys() != games.keys():
+                event("jogos", "recarregar")
+            games = cur_games
+
+        # energia (a cada 3 s)
+        if tick % 3 == 0:
+            nbat, nac, npad = power()
+            if nac is not None and ac is not None and nac != ac:
+                event("energia", "Carregador conectado" if nac else "Usando a bateria",
+                      "carregando" if nac else "descarregando")
+                warned_bat.clear()
+            ac = nac if nac is not None else ac
+            if nbat:
+                cap, st = nbat
+                discharging = st == "Discharging"
+                if discharging:
+                    for lim, snd in ((15, "bateria-baixa"), (5, "alerta")):
+                        if cap <= lim and lim not in warned_bat:
+                            warned_bat.add(lim)
+                            event("bateria", f"Bateria do console em {cap}%"
+                                  + (": ligue o carregador" if lim == 5 else ""), snd)
+                    if cap <= 3 and not critical:
+                        critical = True
+                        event("bateria", "Bateria esgotada: salvando e desligando…", "alerta")
+                        close_game_and_poweroff()
+                else:
+                    critical = False
+            for name, (cap, st) in npad.items():
+                if st == "Discharging" and cap <= 15 and name not in warned_pad:
+                    warned_pad.add(name)
+                    event("bateria", f"Bateria do controle em {cap}%", "bateria-baixa")
+                elif st != "Discharging" or cap > 20:
+                    warned_pad.discard(name)
+            pad_bat = npad
+
+        # temperatura (a cada 5 s): 90 °C por 15 s seguidos
+        if tick % 5 == 0:
+            tc = temperature()
+            if tc is not None and tc >= 90:
+                hot_since = hot_since or now
+                if now - hot_since >= 15 and now - hot_warned > 300:
+                    hot_warned = now
+                    event("calor", f"Temperatura alta: {tc:.0f} °C (verifique a ventilação)", "alerta")
+            else:
+                hot_since = None
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(0)

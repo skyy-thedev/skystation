@@ -23,7 +23,12 @@ ps1)
     mkdir -p "$(dirname "$CFG")"
     # Configuração base do SkyStation, sempre regenerada (o RetroArch não salva por cima).
     sed -e "s|@SKY@|$SKY|g" /opt/skystation/emu/retroarch.cfg >"$CFG"
-    exec retroarch --fullscreen --config "$CFG" -L "$CORE" "$ROM"
+    # Canal de comandos só local (Fase 5.6): o menu Home escreve SAVE_STATE / LOAD_STATE aqui.
+    # Aberto em leitura+escrita para o RetroArch nunca ver "fim de arquivo" na entrada.
+    FIFO="${XDG_RUNTIME_DIR:-/tmp}/skystation/retroarch.cmd"
+    mkdir -p "$(dirname "$FIFO")"
+    rm -f "$FIFO" && mkfifo -m 600 "$FIFO" && exec 3<>"$FIFO"
+    exec retroarch --fullscreen --config "$CFG" -L "$CORE" "$ROM" <&3
     ;;
 ps2)
     PCSX2="/opt/pcsx2/AppRun"

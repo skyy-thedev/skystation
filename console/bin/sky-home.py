@@ -5,8 +5,9 @@ Roda em segundo plano durante toda a sessão (iniciado pelo sky-shell, dentro do
 e escuta todos os controles e teclados, sem atrapalhar ninguém.
 
 Com um jogo aberto:
-  - TOQUE no Home (ou Select+Start, ou F12): o jogo PAUSA e abre o menu por cima,
-    com "Voltar ao jogo" e "Fechar jogo".
+  - TOQUE no Home (ou Select+Start, ou F12): o jogo PAUSA e abre o menu por cima:
+    Voltar ao jogo, Salvar/Carregar estado (PS1), Salvar captura de tela, Volume e Fechar jogo,
+    com bateria, temperatura e hora no rodapé (Fase 5.6).
   - SEGURAR 1,5 s: fecha o jogo direto (saída de emergência, funciona mesmo se o menu falhar).
 
 Como o menu funciona por baixo:
@@ -17,8 +18,12 @@ Como o menu funciona por baixo:
   4. Ao escolher: SIGCONT (o jogo continua de onde parou) ou fechamento em duas etapas
      (SIGTERM, e SIGKILL se em 3 s ele não fechou).
 """
+import glob
+import json
 import os
+import re
 import select
+import shutil
 import signal
 import subprocess
 import sys
@@ -36,18 +41,82 @@ HOLD = 1.5
 RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
 PID_FILE = os.path.join(RUN, "game.pid")
 TITLE_FILE = os.path.join(RUN, "game.title")
+SHOT = os.path.join(RUN, "pause.png")
 OVERLAY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sky-overlay.py")
+SOUNDS = "/opt/skystation/sounds"
+CAPTURAS = os.path.expanduser("~/skystation/capturas")
+RA_FIFO = os.path.join(RUN, "retroarch.cmd")   # comandos do RetroArch pela entrada padrão (sky-emu)
+PLAYER = next((p for p in ("pw-play", "paplay", "aplay") if shutil.which(p)), None)
 
 TRIGGERS = {E.BTN_MODE, E.BTN_SELECT, E.BTN_START, E.KEY_F12}
 NAV_UP = {E.KEY_UP, E.BTN_DPAD_UP, E.KEY_W}
 NAV_DOWN = {E.KEY_DOWN, E.BTN_DPAD_DOWN, E.KEY_S}
+NAV_LEFT = {E.KEY_LEFT, E.BTN_DPAD_LEFT, E.KEY_A}
+NAV_RIGHT = {E.KEY_RIGHT, E.BTN_DPAD_RIGHT, E.KEY_D}
 ACCEPT = {E.BTN_SOUTH, E.KEY_ENTER, E.KEY_KPENTER, E.KEY_SPACE}
 BACK = {E.BTN_EAST, E.KEY_ESC, E.KEY_BACKSPACE, E.BTN_MODE, E.KEY_F12, E.BTN_START}
-ITEMS = ["Voltar ao jogo", "Fechar jogo"]
 
 
 def log(msg):
     print(time.strftime("%H:%M:%S"), "sky-home:", msg, flush=True)
+
+
+def read(path, default=""):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def play(name):
+    if PLAYER and not os.path.exists(os.path.expanduser("~/.config/skystation/avisos.off")):
+        path = os.path.join(SOUNDS, name + ".wav")
+        if os.path.exists(path):
+            subprocess.Popen([PLAYER, path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def get_volume():
+    try:
+        out = subprocess.run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"], capture_output=True,
+                             text=True, timeout=2).stdout
+        m = re.search(r"([\d.]+)", out)
+        return int(round(float(m.group(1)) * 100)) if m else -1, "MUTED" in out
+    except (OSError, subprocess.SubprocessError):
+        return -1, False
+
+
+def change_volume(delta):
+    sign = "+" if delta > 0 else "-"
+    subprocess.run(["wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", f"{abs(delta)}%{sign}"],
+                   capture_output=True, timeout=2)
+    subprocess.run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "0"], capture_output=True, timeout=2)
+
+
+def status_info():
+    """Bateria do console e dos controles, temperatura e hora, para o rodapé do menu."""
+    info = {"hora": time.strftime("%H:%M")}
+    pads = []
+    for d in glob.glob("/sys/class/power_supply/*"):
+        if read(os.path.join(d, "type")) != "Battery" or not read(os.path.join(d, "capacity")).isdigit():
+            continue
+        cap = int(read(os.path.join(d, "capacity")))
+        charging = read(os.path.join(d, "status")) in ("Charging", "Full")
+        if read(os.path.join(d, "scope")) == "Device":
+            pads.append([cap, charging])
+        elif "bateria" not in info:
+            info["bateria"] = [cap, charging]
+    if pads:
+        info["controles"] = pads
+    temps = []
+    for z in glob.glob("/sys/class/thermal/thermal_zone*"):
+        if read(os.path.join(z, "type")) in ("x86_pkg_temp", "acpitz"):
+            v = read(os.path.join(z, "temp"))
+            if v.isdigit():
+                temps.append(int(v) / 1000)
+    if temps:
+        info["temp"] = round(max(temps))
+    return info
 
 
 def game_pid():
@@ -101,6 +170,8 @@ class Home:
         self.sel = 0
         self.grabbed = False
         self.ungrab_at = None
+        self.items = []         # [(ação, texto)]
+        self.info_at = 0.0
 
     # ---------------------------------------------------------- dispositivos
     def scan(self):
@@ -159,27 +230,43 @@ class Home:
         signal_group(pid, signal.SIGSTOP)
         self.grab_all(True)
         self.ungrab_at = None
-        title = ""
-        try:
-            with open(TITLE_FILE) as f:
-                title = f.read().strip()
-        except OSError:
-            pass
+        title = read(TITLE_FILE)
+        # foto da tela congelada: vira o fundo do menu e pode ser salva como captura
+        shot = ""
+        if shutil.which("grim"):
+            try:
+                if os.path.exists(SHOT):
+                    os.remove(SHOT)
+                subprocess.run(["grim", SHOT], timeout=3, capture_output=True)
+                shot = SHOT if os.path.exists(SHOT) else ""
+            except (OSError, subprocess.SubprocessError):
+                shot = ""
+        self.items = [("resume", "Voltar ao jogo")]
+        if read(os.path.join(RUN, "game.sys")) == "ps1":
+            self.items += [("save", "Salvar estado"), ("load", "Carregar estado")]
+        if shot:
+            self.items.append(("shot", "Salvar captura de tela"))
+        self.items += [("volume", "Volume"), ("close", "Fechar jogo")]
         self.sel = 0
         try:
-            self.overlay = subprocess.Popen([sys.executable, OVERLAY, title or "Jogo"],
+            self.overlay = subprocess.Popen([sys.executable, OVERLAY, title or "Jogo", shot],
                                             stdin=subprocess.PIPE, text=True)
         except OSError as e:
             log(f"não consegui abrir o overlay: {e}; voltando ao jogo")
             self.overlay = None
-            self.choose(0)
+            self.choose("resume")
             return
+        self.send("items " + json.dumps([t for _, t in self.items], ensure_ascii=False))
         self.send(f"sel {self.sel}")
+        vol, muted = get_volume()
+        self.send(f"vol {vol} {int(muted)}")
+        self.send("info " + json.dumps(status_info(), ensure_ascii=False))
+        self.info_at = time.monotonic()
 
     def menu_open(self):
         return self.menu_pid is not None
 
-    def choose(self, idx):
+    def choose(self, action):
         pid = self.menu_pid
         self.menu_pid = None
         if self.overlay:
@@ -190,7 +277,7 @@ class Home:
                 self.overlay.kill()
             self.overlay = None
         if pid:
-            if idx == 1:
+            if action == "close":
                 close_game(pid)
             else:
                 log("voltando ao jogo")
@@ -199,24 +286,74 @@ class Home:
         # para o jogo não receber o "soltar" de um botão que ele nunca viu ser apertado.
         self.ungrab_at = time.monotonic() + 1.5
 
+    def retroarch(self, command):
+        """Descongela o jogo por um instante para o RetroArch executar o comando (salvar/carregar)."""
+        pid = self.menu_pid
+        if not pid:
+            return False
+        signal_group(pid, signal.SIGCONT)
+        try:
+            fd = os.open(RA_FIFO, os.O_WRONLY | os.O_NONBLOCK)
+            try:
+                os.write(fd, (command + "\n").encode())
+            finally:
+                os.close(fd)
+            time.sleep(0.6)
+            return True
+        except OSError as e:
+            log(f"comando {command} falhou: {e}")
+            return False
+        finally:
+            if command != "LOAD_STATE":
+                signal_group(pid, signal.SIGSTOP)
+
+    def activate(self):
+        action = self.items[self.sel][0]
+        if action in ("resume", "close"):
+            self.choose(action)
+        elif action == "save":
+            ok = self.retroarch("SAVE_STATE")
+            play("salvo" if ok else "alerta")
+            self.send("msg " + ("Estado salvo" if ok else "Não consegui salvar o estado"))
+        elif action == "load":
+            if self.retroarch("LOAD_STATE"):
+                play("carregado")
+            self.choose("resume")
+        elif action == "shot":
+            os.makedirs(CAPTURAS, exist_ok=True)
+            gid = read(os.path.join(RUN, "game.id"), "jogo")
+            dest = os.path.join(CAPTURAS, f"{gid}_{time.strftime('%Y%m%d-%H%M%S')}.png")
+            try:
+                shutil.copyfile(SHOT, dest)
+                play("captura")
+                self.send("msg Captura salva em Capturas")
+            except OSError:
+                self.send("msg Não consegui salvar a captura")
+
     def menu_key(self, code):
+        n = len(self.items)
         if code in NAV_UP:
-            self.sel = (self.sel - 1) % len(ITEMS)
+            self.sel = (self.sel - 1) % n
             self.send(f"sel {self.sel}")
         elif code in NAV_DOWN:
-            self.sel = (self.sel + 1) % len(ITEMS)
+            self.sel = (self.sel + 1) % n
             self.send(f"sel {self.sel}")
+        elif code in NAV_LEFT or code in NAV_RIGHT:
+            if self.items[self.sel][0] == "volume":
+                change_volume(5 if code in NAV_RIGHT else -5)
+                vol, muted = get_volume()
+                self.send(f"vol {vol} {int(muted)}")
         elif code in ACCEPT:
-            self.choose(self.sel)
+            self.activate()
         elif code in BACK:
-            self.choose(0)
+            self.choose("resume")
 
     def menu_abs(self, path, dev, ev):
-        if ev.code == E.ABS_HAT0Y:
+        if ev.code in (E.ABS_HAT0Y, E.ABS_HAT0X):
             v = ev.value
-        elif ev.code == E.ABS_Y:
+        elif ev.code in (E.ABS_Y, E.ABS_X):
             try:
-                info = dev.absinfo(E.ABS_Y)
+                info = dev.absinfo(ev.code)
                 mid = (info.max + info.min) / 2
                 half = max(1, (info.max - info.min) / 2)
                 n = (ev.value - mid) / half
@@ -227,7 +364,10 @@ class Home:
             return
         key = (path, ev.code)
         if v != self.axis.get(key, 0) and v != 0:
-            self.menu_key(E.KEY_UP if v < 0 else E.KEY_DOWN)
+            if ev.code in (E.ABS_HAT0Y, E.ABS_Y):
+                self.menu_key(E.KEY_UP if v < 0 else E.KEY_DOWN)
+            else:
+                self.menu_key(E.KEY_LEFT if v < 0 else E.KEY_RIGHT)
         self.axis[key] = v
 
     # ---------------------------------------------------------- laço principal
@@ -274,7 +414,12 @@ class Home:
             if self.menu_open() and (self.overlay is None or self.overlay.poll() is not None):
                 log("overlay fechou inesperadamente; voltando ao jogo")
                 self.overlay = None
-                self.choose(0)
+                self.choose("resume")
+
+            # rodapé do menu (bateria, temperatura, hora) a cada 2 s
+            if self.menu_open() and time.monotonic() - self.info_at > 2.0:
+                self.info_at = time.monotonic()
+                self.send("info " + json.dumps(status_info(), ensure_ascii=False))
 
             # soltar os controles depois de fechar o menu
             if self.grabbed and not self.menu_open() and self.ungrab_at is not None:

@@ -3,6 +3,8 @@
 
   sky-config info
   sky-config volume get | set <0-100> | mute
+  sky-config audio list | next          (saída de som: alto-falantes / HDMI)
+  sky-config brilho get | set <5-100>
   sky-config wifi list | connect <ssid> [senha] | status
   sky-config bt list | scan | pair <MAC>
 """
@@ -67,7 +69,23 @@ def info():
     up = float(read("/proc/uptime", "0").split()[0] or 0)
     _, perfil, _ = run(["/opt/skystation/bin/sky-perfil"])
     version = read("/opt/skystation/VERSION", "desenvolvimento").strip()
-    out({"ok": True, "items": [
+    extra = []
+    temps = []
+    for z in sorted(os.listdir("/sys/class/thermal")) if os.path.isdir("/sys/class/thermal") else []:
+        if read(f"/sys/class/thermal/{z}/type").strip() in ("x86_pkg_temp", "acpitz"):
+            v = read(f"/sys/class/thermal/{z}/temp").strip()
+            if v.isdigit():
+                temps.append(int(v) / 1000)
+    if temps:
+        extra.append(["Temperatura", f"{max(temps):.0f} °C"])
+    ps = "/sys/class/power_supply"
+    for d in sorted(os.listdir(ps)) if os.path.isdir(ps) else []:
+        if read(f"{ps}/{d}/type").strip() == "Battery" and read(f"{ps}/{d}/capacity").strip().isdigit():
+            who = "Controle" if read(f"{ps}/{d}/scope").strip() == "Device" else "Bateria"
+            st = {"Charging": "carregando", "Discharging": "em uso", "Full": "cheia"}.get(
+                read(f"{ps}/{d}/status").strip(), read(f"{ps}/{d}/status").strip().lower())
+            extra.append([who, f"{read(f'{ps}/{d}/capacity').strip()}% ({st})"])
+    out({"ok": True, "items": extra + [
         ["SkyStation", version],
         ["Perfil", perfil.strip() or "?"],
         ["Processador", f"{cpu} ({os.cpu_count()} threads)"],
@@ -97,6 +115,51 @@ def volume(args):
     if code != 0 or not m:
         fail("Sem saída de áudio (" + (se.strip() or "wpctl falhou") + ")")
     out({"ok": True, "volume": round(float(m.group(1)) * 100), "muted": "MUTED" in so})
+
+
+def audio(args):
+    """Saídas de som (alto-falantes, HDMI...). 'next' troca para a próxima."""
+    code, so, se = run(["pactl", "-f", "json", "list", "sinks"])
+    if code != 0:
+        fail("pactl indisponível: " + (se.strip() or "?"))
+    try:
+        sinks = json.loads(so)
+    except ValueError:
+        fail("resposta inválida do pactl")
+    _, default, _ = run(["pactl", "get-default-sink"])
+    default = default.strip()
+
+    def label(sk):
+        d = (sk.get("description") or sk.get("name") or "?")
+        low = d.lower() + " " + (sk.get("name") or "").lower()
+        if "hdmi" in low or "displayport" in low:
+            return "TV (HDMI)"
+        if "analog" in low or "speaker" in low or "built-in" in low:
+            return "Alto-falantes do console"
+        return d
+    lst = [{"name": sk.get("name"), "label": label(sk), "default": sk.get("name") == default} for sk in sinks]
+    if args and args[0] == "next" and lst:
+        i = next((k for k, v in enumerate(lst) if v["default"]), -1)
+        nxt = lst[(i + 1) % len(lst)]
+        run(["pactl", "set-default-sink", nxt["name"]])
+        for v in lst:
+            v["default"] = v["name"] == nxt["name"]
+    cur = next((v["label"] for v in lst if v["default"]), lst[0]["label"] if lst else "nenhuma")
+    out({"ok": True, "current": cur, "sinks": lst})
+
+
+def brilho(args):
+    if not shutil.which("brightnessctl"):
+        fail("brightnessctl não instalado (rode a Fase 5.6)")
+    if args and args[0] == "set" and len(args) > 1:
+        v = max(5, min(100, int(args[1])))
+        run(["brightnessctl", "-q", "set", f"{v}%"])
+    code, so, se = run(["brightnessctl", "-m"])
+    # formato: dispositivo,classe,atual,porcentagem%,máximo
+    parts = so.strip().split(",")
+    if code != 0 or len(parts) < 4:
+        fail("Sem controle de brilho (" + (se.strip() or "tela externa?") + ")")
+    out({"ok": True, "brilho": int(parts[3].rstrip("%"))})
 
 
 # ------------------------------------------------------------------ Wi-Fi
@@ -211,10 +274,11 @@ def bt(args):
 
 def main():
     if len(sys.argv) < 2:
-        fail("uso: sky-config <info|volume|wifi|bt> ...")
+        fail("uso: sky-config <info|volume|audio|brilho|wifi|bt> ...")
     cmd, args = sys.argv[1], sys.argv[2:]
     try:
-        {"info": lambda a: info(), "volume": volume, "wifi": wifi, "bt": bt}.get(
+        {"info": lambda a: info(), "volume": volume, "audio": audio, "brilho": brilho,
+         "wifi": wifi, "bt": bt}.get(
             cmd, lambda a: fail("comando desconhecido"))(args)
     except Exception as e:  # nunca devolver lixo para o launcher
         fail(f"erro interno: {e}")

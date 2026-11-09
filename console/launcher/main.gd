@@ -1,5 +1,5 @@
 extends Control
-## SkyStation Launcher — interface "barra cruzada" (Fase 5.5)
+## SkyStation Launcher — interface "barra cruzada" (Fase 5.5 + 5.6)
 ##
 ## Categorias na horizontal (Sistema, Jogos, PS1, PS2, Apps, Energia) e itens na vertical,
 ## sobre um fundo de ondas animado por shader. Tudo é desenhado em _draw (leve: um nó só
@@ -8,6 +8,10 @@ extends Control
 ## Jogos: /opt/skystation/games e ~/skystation/games (uma pasta por jogo, com game.json).
 ## ROMs:  ~/skystation/roms/<sistema>, /mnt/skystation/roms/<sistema> (VM) e
 ##        /mnt/skyroms/<sistema> (pendrive de jogos com o rótulo SKYROMS).
+##
+## Fase 5.6: bateria (console e controles), avisos do sky-notify, brilho e volume, saída de som,
+## descanso de tela, capas automáticas, tempo de jogo + Recentes, Capturas, aviso de nova versão,
+## música ambiente e modo econômico na bateria.
 
 # ---------------------------------------------------------------- constantes
 
@@ -163,6 +167,42 @@ var disk_txt: String = ""
 var version_txt: String = ""
 var skyroms_present: bool = false
 
+# Fase 5.6
+const SKY_BIN := "/opt/skystation/bin"
+const IDLE_DIM := 300.0          # 5 min parado no menu: escurece
+const IDLE_OFF_BAT := 1200.0     # 20 min na bateria: desliga
+const IDLE_OFF_AC := 3600.0      # 60 min na tomada: desliga
+var sounds_dir: String = ""
+var bat_cap: int = -1
+var bat_charging: bool = false
+var on_battery: bool = false
+var pad_bats: Array = []         # [[capacidade, carregando]]
+var temp_c: int = -1
+var events_pos: int = -1
+var reload_at: float = -1.0
+var covers_at: float = 6.0
+var covers_busy: bool = false
+var playtime: Dictionary = {}
+var shots: Array = []            # caminhos das capturas (mais nova primeiro)
+var viewer_open: bool = false
+var viewer_idx: int = 0
+var viewer_tex: Texture2D = null
+var slider_kind: String = ""     # "", "volume", "brilho"
+var slider_val: int = 0
+var slider_t: float = 0.0
+var idle_t: float = 0.0
+var dimmed: bool = false
+var dim_t: float = 0.0
+var saved_brightness: int = -1
+var off_countdown: float = -1.0
+var music: AudioStreamPlayer = null
+var music_on: bool = true
+var audio_out_txt: String = ""
+var update_sha: String = ""
+var update_check_at: float = 20.0
+var bg_threads: Array = []
+var toast_icon: String = ""
+
 
 # ---------------------------------------------------------------- ciclo de vida
 
@@ -202,11 +242,14 @@ func _ready() -> void:
 	_apply_theme(true)
 	_make_glow()
 	logo_tex = _load_tex(ProjectSettings.globalize_path("res://logo.png"))  # a mesma logo da tela de boot
+	sounds_dir = ProjectSettings.globalize_path("res://").path_join("../sounds").simplify_path()
 	_make_sounds()
+	_make_music()
 	_load_state()
 	_reload_games()
 	_refresh_status()
 	version_txt = _read_text("/opt/skystation/VERSION", "")
+	_bg(_run_json.bind(SKY_BIN + "/sky-config", ["audio", "list"]), _on_audio)
 	if FileAccess.file_exists(conf_dir + "/intro.off"):
 		intro_t = INTRO_LEN
 	else:
@@ -216,6 +259,9 @@ func _ready() -> void:
 func _exit_tree() -> void:
 	if busy_thread != null and busy_thread.is_started():
 		busy_thread.wait_to_finish()
+	for th in bg_threads:
+		if th.is_started():
+			th.wait_to_finish()
 
 
 func _process(delta: float) -> void:
@@ -237,6 +283,19 @@ func _process(delta: float) -> void:
 	status_t -= delta
 	if status_t <= 0.0:
 		_refresh_status()
+	_poll_events()
+	if reload_at > 0.0 and t >= reload_at:
+		reload_at = -1.0
+		_reload_games()
+	if covers_at > 0.0 and t >= covers_at:
+		covers_at = -1.0
+		_fetch_covers()
+	if update_check_at > 0.0 and t >= update_check_at:
+		update_check_at = t + 6.0 * 3600.0
+		_check_update()
+	_tick_music(delta)
+	_tick_idle(delta)
+	slider_t = move_toward(slider_t, 1.0 if slider_kind != "" else 0.0, delta * 8.0)
 
 	if toast_t > 0.0:
 		toast_t -= delta
@@ -251,7 +310,7 @@ func _process(delta: float) -> void:
 			intro_t = INTRO_LEN
 			cooldown = 0.25
 		return
-	if busy_msg == "":
+	if busy_msg == "" and not dimmed:
 		_handle_input(delta)
 	var k := 1.0 - exp(-delta * 11.0)
 	cat_smooth = lerp(cat_smooth, float(cat), k)
@@ -303,8 +362,28 @@ func _nav_dir() -> Vector2i:
 	return d
 
 
+func _input(event: InputEvent) -> void:
+	# qualquer botão/tecla "acorda" o console (e não faz mais nada se a tela estava escura)
+	var real := event is InputEventKey or event is InputEventJoypadButton \
+		or (event is InputEventJoypadMotion and absf((event as InputEventJoypadMotion).axis_value) > 0.5)
+	if not real or not event.is_pressed() and not event is InputEventJoypadMotion:
+		return
+	idle_t = 0.0
+	off_countdown = -1.0
+	if dimmed:
+		_wake()
+		cooldown = 0.4
+		get_viewport().set_input_as_handled()
+
+
 func _handle_input(delta: float) -> void:
 	if cooldown > 0.0:
+		return
+	if slider_kind != "":
+		_slider_input(delta)
+		return
+	if viewer_open:
+		_viewer_input()
 		return
 	var d := _nav_dir()
 	if d != hold_dir:
@@ -371,6 +450,17 @@ func _cur() -> Dictionary:
 # ---------------------------------------------------------------- jogos e categorias
 
 func _reload_games() -> void:
+	var pt_txt := _read_text(home_dir + "/skystation/saves/tempo.json", "{}")
+	var pt = JSON.parse_string(pt_txt) if pt_txt.begins_with("{") else {}
+	playtime = pt if typeof(pt) == TYPE_DICTIONARY else {}
+	shots.clear()
+	var sd := DirAccess.open(home_dir + "/skystation/capturas")
+	if sd != null:
+		for f in sd.get_files():
+			if f.get_extension().to_lower() == "png":
+				shots.append(home_dir + "/skystation/capturas/" + f)
+	shots.sort()
+	shots.reverse()
 	games.clear()
 	for base in ["/opt/skystation/games", home_dir + "/skystation/games"]:
 		var da := DirAccess.open(base)
@@ -482,6 +572,9 @@ func _game_item(g: Dictionary) -> Dictionary:
 	var sub: String = TYPE_NAMES.get(g["type"], str(g["type"]))
 	if g["sys"] != "":
 		sub = ROM_SYSTEMS[g["sys"]]["name"]
+	var pt: Dictionary = playtime.get(g["id"], {})
+	if not pt.is_empty():
+		sub += "  ·  " + _fmt_time(int(pt.get("seconds", 0))) + " jogados  ·  " + _fmt_when(int(pt.get("last", 0)))
 	return {"title": g["title"], "sub": sub, "desc": g["description"], "kind": "game",
 		"game": g, "color": g["color"], "cover": g["cover"], "glyph": ""}
 
@@ -499,6 +592,8 @@ func _build_cats() -> void:
 	var c_pc := {"id": "pc", "title": "PC", "icon": "monitor", "items": []}
 	var c_apps := {"id": "apps", "title": "Apps", "icon": "apps", "items": []}
 	var c_power := {"id": "energia", "title": "Energia", "icon": "power", "items": []}
+	var c_recent := {"id": "recentes", "title": "Recentes", "icon": "clock", "items": []}
+	var c_shots := {"id": "capturas", "title": "Capturas", "icon": "camera", "items": []}
 
 	for g in games:
 		var it := _game_item(g)
@@ -523,14 +618,35 @@ func _build_cats() -> void:
 	c_sys["items"] = [
 		_act("Wi-Fi", "Redes sem fio", "settings:0", "wifi"),
 		_act("Bluetooth", "Parear controles e fones", "settings:1", "bt"),
-		_act("Som", "Volume e mudo", "settings:2", "sound"),
-		_act("Informações do sistema", "Hardware e versão", "settings:3", "info"),
-		_act("Armazenamento", disk_txt, "storage", "drive"),
+		_act("Volume", "Ajuste com ◀ ▶", "slider:volume", "sound"),
+		_act("Saída de som", audio_out_txt, "audio_out", "speaker"),
+		_act("Brilho da tela", "Ajuste com ◀ ▶", "slider:brilho", "sun"),
 		_act("Tema de cores", _theme_name(), "theme", "palette"),
+		_act("Música ambiente", "Ligada" if music_on else "Desligada", "music", "note"),
 		_act("Sons da interface", "Ligados" if sounds_on else "Desligados", "sounds", "note"),
+		_act("Bateria e temperatura", _power_txt(), "power_info", "battery"),
+		_act("Armazenamento", disk_txt, "storage", "drive"),
 		_act("Medição de FPS", "Ligada: contador e log nos jogos" if _fps_on() else "Desligada", "fps", "gauge"),
-		_act("Atualizar o SkyStation", ("Versão " + version_txt) if version_txt != "" else "Baixar a versão mais nova", "update", "refresh"),
+		_act("Informações do sistema", "Hardware e versão", "settings:3", "info"),
+		_act("Atualizar o SkyStation", _update_txt(), "update", "refresh"),
 	]
+	# Recentes: os 8 últimos jogados (que ainda existem)
+	var by_id := {}
+	for g in games:
+		by_id[g["id"]] = g
+	var recent_ids := playtime.keys().filter(func(k): return by_id.has(k))
+	recent_ids.sort_custom(func(a, b): return int(playtime[a].get("last", 0)) > int(playtime[b].get("last", 0)))
+	for k in recent_ids.slice(0, 8):
+		c_recent["items"].append(_game_item(by_id[k]))
+	# Capturas de tela
+	for path in shots.slice(0, 40):
+		var name: String = str(path).get_file().get_basename()
+		var parts := name.split("_")
+		var when := parts[-1] if parts.size() > 1 else ""
+		var who := "_".join(parts.slice(0, parts.size() - 1)) if parts.size() > 1 else name
+		var it := {"title": _shot_title(who), "sub": _shot_date(when), "desc": "", "kind": "shot",
+			"path": path, "glyph": "camera", "color": Color(0, 0, 0, 0), "cover": null}
+		c_shots["items"].append(it)
 	# Desligar fica por último: um "A" sem querer ao entrar na categoria não desliga nada.
 	c_power["items"] = [
 		_act("Recarregar jogos", "Procura jogos e ROMs de novo", "reload", "search"),
@@ -540,12 +656,20 @@ func _build_cats() -> void:
 	]
 
 	var old_id: String = cats[cat]["id"] if not cats.is_empty() and cat < cats.size() else "jogos"
-	cats = [c_sys, c_games, c_ps1, c_ps2]
+	cats = [c_sys]
+	if not c_recent["items"].is_empty():
+		cats.append(c_recent)
+	cats += [c_games, c_ps1, c_ps2]
 	if not c_pc["items"].is_empty():
 		cats.append(c_pc)
 	cats.append(c_apps)
+	if not c_shots["items"].is_empty():
+		cats.append(c_shots)
 	cats.append(c_power)
 	cat = 1
+	for i in cats.size():
+		if cats[i]["id"] == "jogos":
+			cat = i
 	for i in cats.size():
 		if cats[i]["id"] == old_id:
 			cat = i
@@ -571,6 +695,14 @@ func _refresh_sys_items() -> void:
 					it["sub"] = "Ligados" if sounds_on else "Desligados"
 				"fps":
 					it["sub"] = "Ligada: contador e log nos jogos" if _fps_on() else "Desligada"
+				"music":
+					it["sub"] = "Ligada" if music_on else "Desligada"
+				"power_info":
+					it["sub"] = _power_txt()
+				"audio_out":
+					it["sub"] = audio_out_txt
+				"update":
+					it["sub"] = _update_txt()
 
 
 # ---------------------------------------------------------------- ações
@@ -583,6 +715,10 @@ func _activate() -> void:
 		_play("accept")
 		_launch(it["game"])
 		return
+	if it["kind"] == "shot":
+		_play("accept")
+		_open_viewer()
+		return
 	var action: String = str(it.get("action", ""))
 	if action == "":
 		_play("back")
@@ -591,10 +727,24 @@ func _activate() -> void:
 	if action.begins_with("settings:"):
 		_open_settings(int(action.split(":")[1]))
 		return
+	if action.begins_with("slider:"):
+		_open_slider(action.split(":")[1])
+		return
 	match action:
 		"storage":
 			_refresh_status()
-			_toast("Livre: " + disk_txt)
+			_toast("Livre: " + disk_txt, 2.8, "drive")
+		"power_info":
+			_refresh_status()
+			_toast(_power_txt(), 2.8, "battery")
+		"audio_out":
+			_bg(_run_json.bind(SKY_BIN + "/sky-config", ["audio", "next"]), _on_audio_announce)
+		"music":
+			music_on = not music_on
+			if music_on:
+				DirAccess.remove_absolute(conf_dir + "/musica.off")
+			else:
+				_write_text(conf_dir + "/musica.off", "1")
 		"theme":
 			var i := THEME_ORDER.find(theme_key)
 			theme_key = THEME_ORDER[(i + 1) % THEME_ORDER.size()]
@@ -643,6 +793,8 @@ func _launch(g: Dictionary) -> void:
 	OS.low_processor_usage_mode = true
 	Engine.max_fps = 4
 	bg.visible = false
+	if music != null:
+		music.stop()
 
 
 func _on_game_closed() -> void:
@@ -650,8 +802,10 @@ func _on_game_closed() -> void:
 	busy_msg = ""
 	bg.visible = true
 	OS.low_processor_usage_mode = false
-	Engine.max_fps = 30 if low_gfx else 0
+	_apply_power_mode()
 	_report_exit()
+	reload_at = t + 0.3   # tempo de jogo e capturas novas
+	idle_t = 0.0
 	cooldown = 0.5
 	hold_dir = _nav_dir()
 	_refresh_status()
@@ -742,6 +896,9 @@ func _toggle_panel() -> void:
 		panel_items = []
 		if it.get("kind", "") == "game":
 			panel_items.append(["Jogar", "play"])
+		if it.get("kind", "") == "shot":
+			panel_items.append(["Ver captura", "play"])
+			panel_items.append(["Apagar captura", "delete_shot"])
 		panel_items.append(["Medição de FPS: " + ("ligada" if _fps_on() else "desligada"), "fps"])
 		panel_items.append(["Tema: " + _theme_name(), "theme"])
 		panel_items.append(["Recarregar jogos", "reload"])
@@ -773,6 +930,12 @@ func _panel_choose() -> void:
 			_toast("%d jogo(s) encontrado(s)" % games.size())
 		"settings":
 			_open_settings(-1)
+		"delete_shot":
+			var it := _cur()
+			if it.get("kind", "") == "shot":
+				DirAccess.remove_absolute(str(it["path"]))
+				_reload_games()
+				_toast("Captura apagada", 2.0, "camera")
 		_:
 			_play("back")
 
@@ -824,12 +987,8 @@ func _refresh_status() -> void:
 			var nums := lines[1].split(" ", false)
 			if nums.size() >= 2:
 				disk_txt = "%.1f GB livres de %.1f GB" % [float(nums[0]) / 1e9, float(nums[1]) / 1e9]
-	var present := DirAccess.dir_exists_absolute("/mnt/skyroms/ps1") or DirAccess.dir_exists_absolute("/mnt/skyroms/ps2")
-	if present != skyroms_present:
-		skyroms_present = present
-		if not cats.is_empty():
-			_reload_games()
-			_toast("Pendrive de jogos conectado" if present else "Pendrive de jogos removido")
+	skyroms_present = _read_text("/proc/mounts", "").contains(" /mnt/skyroms ")
+	_read_power()
 	if theme_key == "auto" and not palette.is_empty() and palette != THEMES[_auto_theme()]:
 		_apply_theme(true)
 	_refresh_sys_items()
@@ -851,9 +1010,20 @@ func _save_state() -> void:
 
 
 func _read_text(path: String, default: String) -> String:
-	if not FileAccess.file_exists(path):
+	# Lê linha a linha: arquivos de /proc e /sys dizem ter tamanho 0 (ou 4096) e o
+	# get_file_as_string() confia nesse tamanho.
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
 		return default
-	return FileAccess.get_file_as_string(path).strip_edges()
+	var lines := PackedStringArray()
+	while true:
+		var line := f.get_line()
+		if f.eof_reached() and line == "":
+			break
+		lines.append(line)
+		if f.eof_reached():
+			break
+	return "\n".join(lines).strip_edges()
 
 
 func _write_text(path: String, text: String) -> void:
@@ -864,9 +1034,400 @@ func _write_text(path: String, text: String) -> void:
 		f.close()
 
 
-func _toast(msg: String, seconds: float = 2.8) -> void:
+func _toast(msg: String, seconds: float = 2.8, icon: String = "") -> void:
 	toast_msg = msg
 	toast_t = seconds
+	toast_icon = icon
+
+
+# ---------------------------------------------------------------- Fase 5.6: utilidades
+
+func _bg(work: Callable, done: Callable) -> void:
+	# roda "work" numa thread e chama "done" com o resultado de volta na thread principal
+	var th := Thread.new()
+	bg_threads.append(th)
+	th.start(_bg_worker.bind(th, work, done))
+
+
+func _bg_worker(th: Thread, work: Callable, done: Callable) -> void:
+	var r = work.call()
+	call_deferred("_bg_done", th, done, r)
+
+
+func _bg_done(th: Thread, done: Callable, r) -> void:
+	th.wait_to_finish()
+	bg_threads.erase(th)
+	done.call(r)
+
+
+func _run_json(cmd: String, args: Array) -> Dictionary:
+	var out: Array = []
+	if OS.execute(cmd, PackedStringArray(args), out, false) < 0 or out.is_empty():
+		return {"ok": false}
+	var lines: PackedStringArray = str(out[0]).strip_edges().split("\n")
+	if not lines[-1].begins_with("{"):
+		return {"ok": false}
+	var data = JSON.parse_string(lines[-1])
+	return data if typeof(data) == TYPE_DICTIONARY else {"ok": false}
+
+
+func _play_file(name: String) -> void:
+	if not sounds_on:
+		return
+	var path := sounds_dir.path_join(name + ".wav")
+	if FileAccess.file_exists(path):
+		OS.create_process("pw-play", [path])
+
+
+func _fmt_time(secs: int) -> String:
+	if secs < 60:
+		return "menos de 1 min"
+	var h := secs / 3600
+	var m := (secs % 3600) / 60
+	return ("%d h %02d min" % [h, m]) if h > 0 else ("%d min" % m)
+
+
+func _fmt_when(epoch: int) -> String:
+	if epoch <= 0:
+		return ""
+	var today := int(Time.get_unix_time_from_system() / 86400.0 + Time.get_time_zone_from_system()["bias"] / 1440.0)
+	var day := int(epoch / 86400.0 + Time.get_time_zone_from_system()["bias"] / 1440.0)
+	match today - day:
+		0:
+			return "hoje"
+		1:
+			return "ontem"
+	if today - day < 7:
+		return "há %d dias" % (today - day)
+	var d := Time.get_datetime_dict_from_unix_time(epoch)
+	return "%d de %s" % [d["day"], MONTHS[d["month"] - 1]]
+
+
+func _shot_title(game_id: String) -> String:
+	for g in games:
+		if g["id"] == game_id:
+			return str(g["title"])
+	return game_id.replace("_", " ").replace("-", " ").capitalize()
+
+
+func _shot_date(stamp: String) -> String:
+	# 20261109-195233 -> 9 de nov, 19:52
+	if stamp.length() < 13:
+		return stamp
+	return "%d de %s, %s:%s" % [stamp.substr(6, 2).to_int(), MONTHS[clampi(stamp.substr(4, 2).to_int() - 1, 0, 11)],
+		stamp.substr(9, 2), stamp.substr(11, 2)]
+
+
+func _power_txt() -> String:
+	var parts: Array = []
+	if bat_cap >= 0:
+		parts.append("Console %d%% %s" % [bat_cap, "(carregando)" if bat_charging else "(bateria)"])
+	else:
+		parts.append("Na tomada")
+	for p in pad_bats:
+		parts.append("Controle %d%%" % int(p[0]))
+	if temp_c >= 0:
+		parts.append("CPU %d °C" % temp_c)
+	return "  ·  ".join(parts)
+
+
+func _update_txt() -> String:
+	if update_sha != "":
+		return "Nova versão disponível!"
+	return ("Versão " + version_txt) if version_txt != "" else "Baixar a versão mais nova"
+
+
+func _read_power() -> void:
+	bat_cap = -1
+	pad_bats = []
+	var ac := -1
+	var ps_root := OS.get_environment("SKY_SYSFS") + "/sys/class/power_supply"  # SKY_SYSFS: só para testes
+	var da := DirAccess.open(ps_root)
+	if da != null:
+		for d in da.get_directories():
+			var base := ps_root + "/" + d
+			var typ := _read_text(base + "/type", "")
+			if typ == "Mains":
+				ac = _read_text(base + "/online", "0").to_int()
+			elif typ == "Battery":
+				var cap := _read_text(base + "/capacity", "")
+				if not cap.is_valid_int():
+					continue
+				var st := _read_text(base + "/status", "")
+				var chg := st == "Charging" or st == "Full"
+				if _read_text(base + "/scope", "") == "Device":
+					pad_bats.append([cap.to_int(), chg])
+				elif bat_cap < 0:
+					bat_cap = cap.to_int()
+					bat_charging = chg or st == "Not charging"
+	var was := on_battery
+	on_battery = bat_cap >= 0 and (ac == 0 or (ac < 0 and not bat_charging))
+	temp_c = -1
+	var tz := DirAccess.open("/sys/class/thermal")
+	if tz != null:
+		for z in tz.get_directories():
+			if _read_text("/sys/class/thermal/%s/type" % z, "") in ["x86_pkg_temp", "acpitz"]:
+				var v := _read_text("/sys/class/thermal/%s/temp" % z, "")
+				if v.is_valid_int():
+					temp_c = maxi(temp_c, v.to_int() / 1000)
+	if was != on_battery:
+		_apply_power_mode()
+
+
+func _apply_power_mode() -> void:
+	# Na bateria: menu a 30 quadros por segundo e ondas mais simples (a CPU fica econômica
+	# pelo próprio sistema; ver skystation-energia). Na tomada: tudo no máximo.
+	if running_pid != -1:
+		return
+	var eco := low_gfx or on_battery
+	Engine.max_fps = 30 if eco else 0
+	bg_mat.set_shader_parameter("strands", 5 if low_gfx else (7 if on_battery else 11))
+
+
+func _poll_events() -> void:
+	var path := run_dir + "/events.jsonl"
+	if not FileAccess.file_exists(path):
+		return
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return
+	var length := f.get_length()
+	if events_pos < 0 or length < events_pos:
+		events_pos = length   # na abertura, ignora os avisos antigos
+		return
+	if length == events_pos:
+		return
+	f.seek(events_pos)
+	var txt := f.get_buffer(length - events_pos).get_string_from_utf8()
+	events_pos = length
+	for line in txt.split("\n", false):
+		var ev = JSON.parse_string(line)
+		if typeof(ev) != TYPE_DICTIONARY:
+			continue
+		var kind := str(ev.get("kind", ""))
+		var text := str(ev.get("text", ""))
+		if kind == "jogos":
+			reload_at = t + 0.8
+			covers_at = t + 3.0
+			continue
+		var icons := {"controle": "pad", "usb": "usb", "pendrive": "drive", "jogo": "disc",
+			"bateria": "battery", "energia": "battery", "calor": "thermo"}
+		_toast(text, 3.5, str(icons.get(kind, "info")))
+		if kind in ["controle", "energia", "bateria"]:
+			status_t = 0.0  # atualiza bateria/controles na tela já
+
+
+func _fetch_covers() -> void:
+	if covers_busy or not FileAccess.file_exists(SKY_BIN + "/sky-capas"):
+		return
+	covers_busy = true
+	_bg(_run_json.bind(SKY_BIN + "/sky-capas", []), _on_covers)
+
+
+func _on_covers(r: Dictionary) -> void:
+	covers_busy = false
+	var n := int(r.get("baixadas", 0))
+	if n > 0:
+		_reload_games()
+		_toast("%d capa(s) nova(s) baixada(s)" % n, 3.0, "disc")
+		_play_file("atualizacao")
+
+
+func _check_update() -> void:
+	var cur := ""
+	var m := RegEx.create_from_string("\\(([0-9a-f]{7})\\)").search(version_txt)
+	if m != null:
+		cur = m.get_string(1)
+	if cur == "":
+		return  # instalado pela pasta da VM: não há commit para comparar
+	_bg(_fetch_remote_sha, _on_remote_sha.bind(cur))
+
+
+func _fetch_remote_sha() -> String:
+	var out: Array = []
+	OS.execute("curl", ["-fsSL", "--max-time", "10",
+		"https://api.github.com/repos/skyy-thedev/skystation/commits/main"], out, false)
+	if out.is_empty():
+		return ""
+	var data = JSON.parse_string(str(out[0]))
+	if typeof(data) != TYPE_DICTIONARY:
+		return ""
+	return str(data.get("sha", "")).substr(0, 7)
+
+
+func _on_remote_sha(sha: String, cur: String) -> void:
+	if sha != "" and sha != cur and sha != update_sha:
+		update_sha = sha
+		_refresh_sys_items()
+		_toast("Nova versão do SkyStation disponível: Sistema → Atualizar", 5.0, "refresh")
+		_play_file("atualizacao")
+
+
+func _on_audio_announce(r: Dictionary) -> void:
+	_on_audio(r, true)
+
+
+func _on_audio(r: Dictionary, announce: bool = false) -> void:
+	if not r.get("ok", false):
+		if announce:
+			_toast("Não consegui trocar a saída de som", 3.0, "speaker")
+		return
+	audio_out_txt = str(r.get("current", ""))
+	_refresh_sys_items()
+	if announce:
+		_toast("Saída de som: " + audio_out_txt, 2.5, "speaker")
+
+
+# ---------------------------------------------------------------- música ambiente
+
+func _make_music() -> void:
+	music_on = not FileAccess.file_exists(conf_dir + "/musica.off")
+	var path := sounds_dir.path_join("ambiente.ogg")
+	if not FileAccess.file_exists(path):
+		return
+	var st := AudioStreamOggVorbis.load_from_file(path)
+	if st == null:
+		return
+	st.loop = true
+	music = AudioStreamPlayer.new()
+	music.stream = st
+	music.volume_db = -80.0
+	add_child(music)
+
+
+func _tick_music(delta: float) -> void:
+	if music == null:
+		return
+	var want := music_on and running_pid == -1 and intro_t > 2.0 and not dimmed
+	var target := -17.0 if want else -60.0
+	music.volume_db = move_toward(music.volume_db, target, delta * (12.0 if want else 30.0))
+	if want and not music.playing:
+		music.play()
+	elif not want and music.playing and music.volume_db <= -59.0:
+		music.stop()
+
+
+# ---------------------------------------------------------------- descanso de tela
+
+func _tick_idle(delta: float) -> void:
+	if running_pid != -1 or intro_t < INTRO_LEN or busy_msg != "":
+		idle_t = 0.0
+		return
+	idle_t += delta
+	dim_t = move_toward(dim_t, 1.0 if dimmed else 0.0, delta * 1.5)
+	if not dimmed and idle_t >= IDLE_DIM:
+		dimmed = true
+		panel_open = false
+		slider_kind = ""
+		_bg(_run_json.bind(SKY_BIN + "/sky-config", ["brilho", "get"]), _on_dim_brightness)
+	var limit := IDLE_OFF_BAT if on_battery else IDLE_OFF_AC
+	if dimmed and idle_t >= limit and off_countdown < 0.0:
+		off_countdown = 30.0
+		_play_file("bateria-baixa")
+	if off_countdown >= 0.0:
+		off_countdown -= delta
+		if off_countdown <= 0.0:
+			off_countdown = -1.0
+			busy_msg = "Desligando por inatividade…"
+			OS.execute("systemctl", ["poweroff"])
+
+
+func _on_dim_brightness(r: Dictionary) -> void:
+	if r.get("ok", false) and dimmed:
+		saved_brightness = int(r.get("brilho", -1))
+		OS.create_process(SKY_BIN + "/sky-config", ["brilho", "set", "8"])
+
+
+func _wake() -> void:
+	dimmed = false
+	idle_t = 0.0
+	off_countdown = -1.0
+	if saved_brightness > 0:
+		OS.create_process(SKY_BIN + "/sky-config", ["brilho", "set", str(saved_brightness)])
+		saved_brightness = -1
+
+
+# ---------------------------------------------------------------- brilho e volume (◀ ▶)
+
+func _open_slider(kind: String) -> void:
+	slider_kind = kind
+	slider_val = -1
+	var args := ["brilho", "get"] if kind == "brilho" else ["volume", "get"]
+	_bg(_run_json.bind(SKY_BIN + "/sky-config", args), _on_slider_value.bind(kind))
+
+
+func _on_slider_value(r: Dictionary, kind: String) -> void:
+	if slider_kind != kind:
+		return
+	if not r.get("ok", false):
+		slider_kind = ""
+		_toast(str(r.get("error", "Não disponível")), 3.5, "sun" if kind == "brilho" else "sound")
+		return
+	slider_val = int(r.get(kind, 0))
+
+
+func _slider_input(delta: float) -> void:
+	var d := _nav_dir()
+	if d != hold_dir:
+		hold_dir = d
+		hold_t = 0.3
+		if d.x != 0:
+			_slider_step(d.x)
+	elif d.x != 0:
+		hold_t -= delta
+		if hold_t <= 0.0:
+			hold_t = 0.06
+			_slider_step(d.x)
+	if Input.is_action_just_pressed("sky_back") or Input.is_action_just_pressed("sky_accept") \
+			or Input.is_action_just_pressed("sky_menu"):
+		slider_kind = ""
+		_play("back")
+
+
+func _slider_step(dir: int) -> void:
+	if slider_val < 0:
+		return
+	var lo := 5 if slider_kind == "brilho" else 0
+	var nv := clampi(slider_val + dir * 5, lo, 100)
+	if nv == slider_val:
+		return
+	slider_val = nv
+	_play("tick")
+	if slider_kind == "brilho":
+		OS.create_process(SKY_BIN + "/sky-config", ["brilho", "set", str(nv)])
+	else:
+		OS.create_process("wpctl", ["set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", "%d%%" % nv])
+
+
+# ---------------------------------------------------------------- capturas
+
+func _open_viewer() -> void:
+	var it := _cur()
+	viewer_idx = maxi(0, shots.find(it.get("path", "")))
+	_viewer_load()
+	viewer_open = viewer_tex != null
+
+
+func _viewer_load() -> void:
+	viewer_tex = null
+	if viewer_idx >= 0 and viewer_idx < shots.size():
+		var img := Image.load_from_file(str(shots[viewer_idx]))
+		if img != null and not img.is_empty():
+			viewer_tex = ImageTexture.create_from_image(img)
+
+
+func _viewer_input() -> void:
+	var d := _nav_dir()
+	if d != hold_dir:
+		hold_dir = d
+		if d.x != 0 and shots.size() > 1:
+			viewer_idx = wrapi(viewer_idx + d.x, 0, shots.size())
+			_viewer_load()
+			_play("tick")
+	if Input.is_action_just_pressed("sky_back") or Input.is_action_just_pressed("sky_accept"):
+		viewer_open = false
+		viewer_tex = null
+		_play("back")
 
 
 # ---------------------------------------------------------------- sons (sintetizados)
@@ -1047,17 +1608,27 @@ func _draw() -> void:
 	if settings != null and settings.visible:
 		return  # Configurações abertas: só o fundo de ondas fica atrás delas
 	var a := ui_alpha
-	_draw_header(w, h, a)
-	_draw_xmb(w, h, a)
-	_draw_footer(w, h, a)
-	if panel_t > 0.0:
-		_draw_panel(w, h)
+	if viewer_open:
+		_draw_viewer(w, h)
+	else:
+		_draw_header(w, h, a)
+		_draw_xmb(w, h, a)
+		_draw_footer(w, h, a)
+		if panel_t > 0.0:
+			_draw_panel(w, h)
+		if slider_t > 0.0:
+			_draw_slider(w, h)
 	if toast_t > 0.0:
 		var ta: float = clamp(toast_t, 0.0, 1.0) * a
-		var tw := font.get_string_size(toast_msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x + 48.0
-		var r := Rect2((w - tw) / 2.0, h - 112, tw, 42)
-		_rrect(r, Color(0, 0, 0, 0.55 * ta), 21, Color(accent, 0.5 * ta), 1)
-		_text(toast_msg, Vector2(r.position.x + 24, r.position.y + 28), 18, Color(WHITE, ta))
+		var icon_w := 34.0 if toast_icon != "" else 0.0
+		var tw := font.get_string_size(toast_msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x + 48.0 + icon_w
+		var r := Rect2(w - tw - 48.0, 100, tw, 44)   # canto superior direito, como as notificações de console
+		_rrect(r, Color(0, 0, 0, 0.62 * ta), 22, Color(accent, 0.55 * ta), 1)
+		if toast_icon != "":
+			_icon(toast_icon, Vector2(r.position.x + 32, r.position.y + 22), 24.0, Color(accent, ta))
+		_text(toast_msg, Vector2(r.position.x + 24 + icon_w, r.position.y + 29), 18, Color(WHITE, ta))
+	if dim_t > 0.0:
+		_draw_dim(w, h)
 	if busy_msg != "":
 		_draw_busy(w, h)
 
@@ -1113,12 +1684,25 @@ func _draw_header(w: float, _h: float, a: float) -> void:
 	var dw := font.get_string_size(date, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
 	_text(date, Vector2(w - 56 - dw, 82), 15, Color(MUTED, a))
 
-	# status: controles e Wi-Fi
+	# status: bateria, controles (com bateria) e Wi-Fi
 	var x := w - 70.0 - maxf(cw, dw) - 30.0
+	if bat_cap >= 0:
+		var tw := font.get_string_size("%d%%" % bat_cap, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
+		_text("%d%%" % bat_cap, Vector2(x - tw + 14, 62), 15, Color(WHITE, 0.9 * a))
+		_battery(Vector2(x - tw - 30, 49), bat_cap, bat_charging, a)
+		x -= tw + 62.0
 	if pads > 0:
 		_icon("pad", Vector2(x, 50), 30.0, Color(WHITE, 0.85 * a))
 		if pads > 1:
 			_text(str(pads), Vector2(x + 14, 66), 13, Color(accent, a), true)
+		for i in pad_bats.size():  # nível do controle: 4 tracinhos embaixo do ícone
+			var cap: int = int(pad_bats[i][0])
+			var lvl := clampi(int(ceil(cap / 25.0)), 1, 4)
+			for k in 4:
+				var col := Color(accent, a) if k < lvl else Color(WHITE, 0.2 * a)
+				if cap <= 15 and not pad_bats[i][1]:
+					col = Color(Color("ffaa5a"), a) if k < lvl else col
+				draw_rect(Rect2(x - 12 + k * 6.5, 68 + i * 6, 5, 3), col)
 		x -= 46.0
 	if wifi_q >= 0:
 		var bars: int = 1 + int(clamp(wifi_q, 0, 70) / 18)
@@ -1181,6 +1765,9 @@ func _draw_xmb(w: float, h: float, a: float) -> void:
 
 
 func _draw_item(it: Dictionary, c: Vector2, sel: float, a: float, is_cur: bool) -> void:
+	if it["kind"] == "shot":
+		_draw_shot_item(it, c, sel, a)
+		return
 	var game: bool = it["kind"] == "game"
 	var ih := 58.0 + 46.0 * sel if game else 44.0 + 22.0 * sel
 	var iw := ih * 0.75 if game else ih
@@ -1215,6 +1802,89 @@ func _draw_item(it: Dictionary, c: Vector2, sel: float, a: float, is_cur: bool) 
 		_text(str(it["sub"]), Vector2(tx, c.y + 24), 16, Color(accent.lightened(0.25), a * sel))
 	if is_cur and sel > 0.8 and str(it.get("desc", "")) != "" and it["kind"] == "game":
 		_text(str(it["desc"]), Vector2(tx, c.y + 50), 15, Color(MUTED, a * sel), false, size.x - tx - 80)
+
+
+func _draw_shot_item(it: Dictionary, c: Vector2, sel: float, a: float) -> void:
+	var ih := 54.0 + 46.0 * sel
+	var iw := ih * 16.0 / 9.0
+	var r := Rect2(c.x - iw / 2.0, c.y - ih / 2.0, iw, ih)
+	if not it.has("thumb"):
+		it["thumb"] = null
+		var img := Image.load_from_file(str(it["path"]))  # carrega só quando aparece na tela
+		if img != null and not img.is_empty():
+			img.resize(320, int(320.0 * img.get_height() / max(1, img.get_width())), Image.INTERPOLATE_BILINEAR)
+			it["thumb"] = ImageTexture.create_from_image(img)
+	if sel > 0.5:
+		_glow(c, iw * 0.8, Color(accent, 0.6 * sel * a))
+	_rrect(r.grow(2), Color(0, 0, 0, 0.5 * a), 8)
+	if it["thumb"] != null:
+		_draw_cover(it["thumb"], r, a)
+	_rrect(r, Color(0, 0, 0, 0), 7, Color(1, 1, 1, 0.25 * a + 0.4 * sel * a), 2 if sel > 0.5 else 1)
+	var tx := c.x + iw / 2.0 + 24.0
+	var ts := int(20 + 6 * sel)
+	_text_shadow(str(it["title"]), Vector2(tx, c.y + (ts * 0.35 if sel < 0.5 else -4.0)), ts, Color(WHITE, a),
+		sel > 0.5, size.x - tx - 60)
+	if sel > 0.5:
+		_text(str(it["sub"]), Vector2(tx, c.y + 24), 16, Color(accent.lightened(0.25), a * sel))
+
+
+func _draw_viewer(w: float, h: float) -> void:
+	draw_rect(Rect2(0, 0, w, h), Color(0, 0, 0, 0.92))
+	if viewer_tex != null:
+		var ts := viewer_tex.get_size()
+		var k: float = minf((w - 80.0) / ts.x, (h - 120.0) / ts.y)
+		var sz := ts * k
+		draw_texture_rect(viewer_tex, Rect2((w - sz.x) / 2.0, (h - sz.y) / 2.0 - 10.0, sz.x, sz.y), false)
+	var name := str(shots[viewer_idx]).get_file().get_basename() if viewer_idx < shots.size() else ""
+	var parts := name.split("_")
+	var info := "%s  ·  %s   (%d de %d)" % [_shot_title("_".join(parts.slice(0, maxi(1, parts.size() - 1)))),
+		_shot_date(parts[-1]), viewer_idx + 1, shots.size()]
+	_text(info, Vector2(0, h - 26), 16, MUTED, false, w, HORIZONTAL_ALIGNMENT_CENTER)
+	_text("◀ ▶  anterior / próxima      B  voltar      Y (na lista)  apagar", Vector2(0, 34), 14, DIM, false, w,
+		HORIZONTAL_ALIGNMENT_CENTER)
+
+
+func _draw_slider(w: float, h: float) -> void:
+	var e := slider_t * slider_t * (3.0 - 2.0 * slider_t)
+	var pw := 520.0
+	var r := Rect2((w - pw) / 2.0, h - 150.0 + (1.0 - e) * 40.0, pw, 96)
+	_rrect(r, Color(palette[1].darkened(0.4), 0.92 * e), 18, Color(accent, 0.5 * e), 1)
+	var kind := slider_kind if slider_kind != "" else "volume"
+	_icon("sun" if kind == "brilho" else "sound", r.position + Vector2(44, 48), 34.0, Color(WHITE, e))
+	_text("Brilho da tela" if kind == "brilho" else "Volume", r.position + Vector2(82, 36), 18, Color(WHITE, e), true)
+	var bar := Rect2(r.position.x + 82, r.position.y + 54, pw - 180, 8)
+	_rrect(bar, Color(1, 1, 1, 0.15 * e), 4)
+	if slider_val >= 0:
+		_rrect(Rect2(bar.position, Vector2(bar.size.x * slider_val / 100.0, 8)), Color(accent, e), 4)
+		_text("%d%%" % slider_val, Vector2(bar.end.x + 16, bar.position.y + 10), 18, Color(WHITE, e), true)
+	_text("◀ ▶ ajustar     A / B  pronto", Vector2(r.position.x, r.end.y + 24), 14, Color(DIM, e), false, pw,
+		HORIZONTAL_ALIGNMENT_CENTER)
+
+
+func _draw_dim(w: float, h: float) -> void:
+	# descanso de tela: escurece, mostra só a hora; aperte qualquer botão para voltar
+	var e := dim_t
+	draw_rect(Rect2(0, 0, w, h), Color(0, 0, 0, 0.78 * e))
+	var dt := Time.get_datetime_dict_from_system()
+	var clock := "%02d:%02d" % [dt["hour"], dt["minute"]]
+	var drift := Vector2(sin(t * 0.05) * 60.0, cos(t * 0.037) * 30.0)   # anda devagar (protege a tela)
+	_text(clock, Vector2(0, h / 2.0 + 10) + drift, 72, Color(WHITE, 0.55 * e), true, w, HORIZONTAL_ALIGNMENT_CENTER)
+	var date := "%s, %d de %s" % [WEEKDAYS[dt["weekday"]], dt["day"], MONTHS[dt["month"] - 1]]
+	_text(date, Vector2(0, h / 2.0 + 46) + drift, 18, Color(MUTED, 0.5 * e), false, w, HORIZONTAL_ALIGNMENT_CENTER)
+	if off_countdown >= 0.0:
+		_text("Desligando por inatividade em %d s — aperte qualquer botão" % int(ceil(off_countdown)),
+			Vector2(0, h - 60), 18, Color(Color("ffaa5a"), e), false, w, HORIZONTAL_ALIGNMENT_CENTER)
+
+
+func _battery(p: Vector2, cap: int, charging: bool, a: float) -> void:
+	var col := Color(WHITE, 0.9 * a)
+	_rrect(Rect2(p, Vector2(26, 13)), Color(0, 0, 0, 0), 3, col, 2)
+	draw_rect(Rect2(p + Vector2(26, 4), Vector2(3, 5)), col)
+	var fill := Color(Color("ffaa5a"), a) if cap <= 15 and not charging else Color(accent, a)
+	draw_rect(Rect2(p + Vector2(3, 3), Vector2(20.0 * clampi(cap, 0, 100) / 100.0, 7)), fill)
+	if charging:  # raio
+		draw_colored_polygon(PackedVector2Array([p + Vector2(14, -2), p + Vector2(8, 7), p + Vector2(13, 7),
+			p + Vector2(11, 15), p + Vector2(18, 5), p + Vector2(13, 5)]), Color(WHITE, a))
 
 
 func _draw_cover(tex: Texture2D, r: Rect2, a: float) -> void:
@@ -1365,5 +2035,39 @@ func _icon(kind: String, c: Vector2, s: float, col: Color) -> void:
 		"search":
 			draw_arc(c + Vector2(-s * 0.06, -s * 0.06), s * 0.24, 0, TAU, 32, col, lw, true)
 			draw_line(c + Vector2(s * 0.12, s * 0.12), c + Vector2(s * 0.34, s * 0.34), col, lw * 1.3, true)
+		"speaker":
+			draw_colored_polygon(PackedVector2Array([c + Vector2(-s * 0.38, -s * 0.13), c + Vector2(-s * 0.2, -s * 0.13),
+				c + Vector2(0, -s * 0.33), c + Vector2(0, s * 0.33), c + Vector2(-s * 0.2, s * 0.13),
+				c + Vector2(-s * 0.38, s * 0.13)]), col)
+			_rrect(Rect2(c.x + s * 0.12, c.y - s * 0.3, s * 0.26, s * 0.6), Color(0, 0, 0, 0), int(s * 0.06), col, int(lw))
+		"sun":
+			draw_circle(c, s * 0.17, col, true, -1.0, true)
+			for i in 8:
+				var ang := i * TAU / 8.0
+				var dir := Vector2(cos(ang), sin(ang))
+				draw_line(c + dir * s * 0.27, c + dir * s * 0.40, col, lw, true)
+		"battery":
+			_rrect(Rect2(c.x - s * 0.38, c.y - s * 0.18, s * 0.68, s * 0.36), Color(0, 0, 0, 0), int(s * 0.07), col, int(lw))
+			draw_rect(Rect2(c.x + s * 0.30, c.y - s * 0.08, s * 0.08, s * 0.16), col)
+			draw_rect(Rect2(c.x - s * 0.30, c.y - s * 0.10, s * 0.38, s * 0.20), col)
+		"clock":
+			draw_arc(c, s * 0.38, 0, TAU, 48, col, lw, true)
+			draw_line(c, c + Vector2(0, -s * 0.24), col, lw, true)
+			draw_line(c, c + Vector2(s * 0.17, s * 0.06), col, lw, true)
+		"camera":
+			_rrect(Rect2(c.x - s * 0.42, c.y - s * 0.22, s * 0.84, s * 0.52), Color(0, 0, 0, 0), int(s * 0.1), col, int(lw))
+			draw_rect(Rect2(c.x - s * 0.16, c.y - s * 0.32, s * 0.32, s * 0.1), col)
+			draw_arc(c + Vector2(0, s * 0.04), s * 0.15, 0, TAU, 32, col, lw, true)
+		"usb":
+			draw_line(c + Vector2(0, s * 0.38), c + Vector2(0, -s * 0.28), col, lw, true)
+			draw_colored_polygon(PackedVector2Array([c + Vector2(0, -s * 0.42), c + Vector2(-s * 0.09, -s * 0.26),
+				c + Vector2(s * 0.09, -s * 0.26)]), col)
+			draw_line(c + Vector2(0, s * 0.12), c + Vector2(-s * 0.2, -s * 0.02), col, lw, true)
+			draw_circle(c + Vector2(-s * 0.2, -s * 0.06), s * 0.06, col, true, -1.0, true)
+			draw_line(c + Vector2(0, s * 0.2), c + Vector2(s * 0.2, s * 0.06), col, lw, true)
+			draw_rect(Rect2(c.x + s * 0.15, c.y - s * 0.02, s * 0.1, s * 0.1), col)
+		"thermo":
+			_rrect(Rect2(c.x - s * 0.08, c.y - s * 0.38, s * 0.16, s * 0.5), Color(0, 0, 0, 0), int(s * 0.08), col, int(lw))
+			draw_circle(c + Vector2(0, s * 0.22), s * 0.14, col, true, -1.0, true)
 		_:
 			draw_circle(c, s * 0.3, col, false, lw, true)
