@@ -30,6 +30,7 @@ skystation/
     │                 sky-shell, sky-emu (emuladores), sky-wine (PC), sky-config (Configurações),
     │                 sky-perfil (leve/potente), sky-pcsx2-ini
     ├── emu/          configuração otimizada do RetroArch e cores
+    │   └── autoconfig/udev/  perfis de controle do RetroArch (libretro, MIT)
     ├── launcher/     launcher em Godot 4 (main.gd = biblioteca, settings.gd = Configurações)
     ├── games/        um jogo por pasta, cada um com game.json
     │   ├── sky-dodge/        jogo autoral: desvie dos meteoros (Python + pygame)
@@ -116,6 +117,7 @@ curl -fsSL https://raw.githubusercontent.com/skyy-thedev/skystation/main/setup/s
 - [x] Fase 5.4: vídeo à prova de falhas + comando skystation-vm (resolução e modo de vídeo)
 - [x] Notebook real: boot pelo pendrive (imagem enxuta de 7 GB), PS1 a 60 FPS, 45 °C
 - [x] Git: projeto no GitHub; `skystation-atualizar` baixa do GitHub fora da VM
+- [x] Controle nos emuladores: perfis de ~440 controles no RetroArch (PS1) e mapeamento SDL no PCSX2 (PS2)
 - [ ] Controles Bluetooth (DS4) e porta USB que não responde
 - [ ] SSD SATA no lugar do pendrive
 - [ ] Case impressa em 3D (protótipo v0.1 em hardware/case)
