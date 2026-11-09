@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""SkyStation: receber jogos pelo Wi-Fi.
+
+Abre uma página na rede local (porta 8080). No PC ou no celular, acesse o endereço que aparece
+na tela do console, digite o PIN e arraste os arquivos (.cue + .bin, .chd, .iso…). Eles vão
+direto para ~/skystation/roms/<sistema> ou para o pendrive SKYROMS.
+
+Uso: sky-receber <pin>     (aberto pelo launcher; fecha quando você sai da tela)
+Saída: uma linha JSON por evento, para o launcher mostrar o progresso.
+"""
+import json
+import os
+import shutil
+import sys
+import threading
+import time
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+PORT = 8080
+PIN = sys.argv[1] if len(sys.argv) > 1 else "0000"
+HOME = os.path.expanduser("~")
+DESTS = {"interno": os.path.join(HOME, "skystation/roms"), "skyroms": "/mnt/skyroms"}
+EXTS = {"ps1": {"cue", "bin", "chd", "pbp", "m3u", "iso", "img", "png", "jpg"},
+        "ps2": {"iso", "chd", "cso", "gz", "png", "jpg"}}
+LOCK = threading.Lock()
+
+
+def emit(obj):
+    with LOCK:
+        print(json.dumps(obj, ensure_ascii=False), flush=True)
+
+
+def skyroms_ok():
+    try:
+        with open("/proc/mounts") as f:
+            return any(len(l.split()) > 1 and l.split()[1] == "/mnt/skyroms" for l in f)
+    except OSError:
+        return False
+
+
+PAGE = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>SkyStation · Enviar jogos</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,Segoe UI,Roboto,sans-serif;color:#eef2ff;
+background:radial-gradient(1200px 600px at 50% 120%,#1b3a8a 0,#0d1a4a 40%,#040817 100%);min-height:100vh}
+main{max-width:760px;margin:0 auto;padding:40px 20px}h1{font-size:30px;margin:0 0 4px}h1 b{color:#4fd1ff}
+p.sub{color:#a9b6d8;margin:0 0 28px}.row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+label{font-size:13px;color:#a9b6d8;display:block;margin-bottom:6px}
+select,input{background:#0a1236;color:#eef2ff;border:1px solid #2a3a7a;border-radius:10px;padding:10px 12px;font-size:16px}
+#drop{border:2px dashed #3b5bb8;border-radius:18px;padding:48px 20px;text-align:center;color:#a9b6d8;
+background:rgba(10,18,54,.5);cursor:pointer;transition:.2s}#drop.on{border-color:#4fd1ff;background:rgba(79,209,255,.08);color:#fff}
+#drop strong{display:block;font-size:20px;color:#eef2ff;margin-bottom:6px}
+.f{background:rgba(10,18,54,.7);border:1px solid #1f2d63;border-radius:12px;padding:12px 14px;margin-top:10px}
+.f .n{display:flex;justify-content:space-between;gap:10px;font-size:14px}.f .n span:last-child{color:#a9b6d8}
+.bar{height:6px;background:#1a2550;border-radius:3px;margin-top:8px;overflow:hidden}.bar i{display:block;height:100%;width:0;background:#4fd1ff}
+.ok .bar i{background:#54f0b8}.err{border-color:#ff7a7a}.err .n span:last-child{color:#ff9a9a}
+.tip{color:#6d7ba3;font-size:13px;margin-top:22px;line-height:1.5}
+</style></head><body><main>
+<h1>Sky<b>Station</b></h1><p class="sub">Enviar jogos pelo Wi-Fi para o seu console</p>
+<div class="row">
+ <div><label>PIN (aparece na TV)</label><input id="pin" inputmode="numeric" maxlength="4" size="6" placeholder="0000"></div>
+ <div><label>Sistema</label><select id="sys"><option value="ps1">PlayStation (PS1)</option><option value="ps2">PlayStation 2</option></select></div>
+ <div><label>Guardar em</label><select id="dest"><option value="interno">Console</option><option value="skyroms" id="osk">Pendrive SKYROMS</option></select></div>
+</div>
+<div id="drop"><strong>Arraste os arquivos aqui</strong>ou clique para escolher (.cue + .bin, .chd, .iso, .pbp, capas .png)
+<input id="pick" type="file" multiple hidden></div>
+<div id="list"></div>
+<p class="tip">Envie o .cue junto com todos os .bin do jogo. Capas: um .png com o mesmo nome do jogo.<br>
+O jogo aparece no console assim que terminar. Use só cópias dos seus próprios discos.</p>
+</main><script>
+const $=s=>document.querySelector(s);let fila=[],ocupado=false;
+fetch('/info').then(r=>r.json()).then(i=>{if(!i.skyroms){$('#osk').disabled=true;$('#osk').textContent+=' (não conectado)'}});
+$('#pin').value=localStorage.getItem('pin')||'';
+const drop=$('#drop');drop.onclick=()=>$('#pick').click();$('#pick').onchange=e=>add(e.target.files);
+['dragenter','dragover'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add('on')}));
+['dragleave','drop'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove('on')}));
+drop.addEventListener('drop',e=>add(e.dataTransfer.files));
+function fmt(b){return b>1e9?(b/1e9).toFixed(2)+' GB':(b/1e6).toFixed(1)+' MB'}
+function add(files){localStorage.setItem('pin',$('#pin').value);for(const f of files){const el=document.createElement('div');
+el.className='f';el.innerHTML='<div class="n"><span></span><span>na fila · '+fmt(f.size)+'</span></div><div class="bar"><i></i></div>';
+el.querySelector('.n span').textContent=f.name;$('#list').appendChild(el);fila.push({f,el,sys:$('#sys').value,dest:$('#dest').value})}next()}
+function next(){if(ocupado||!fila.length)return;ocupado=true;const it=fila.shift(),x=new XMLHttpRequest(),st=it.el.querySelector('.n span:last-child');
+x.open('PUT','/enviar?nome='+encodeURIComponent(it.f.name)+'&sistema='+it.sys+'&destino='+it.dest);x.setRequestHeader('X-Pin',$('#pin').value);
+x.upload.onprogress=e=>{if(e.lengthComputable){const p=e.loaded/e.total;it.el.querySelector('i').style.width=(p*100)+'%';st.textContent=Math.round(p*100)+'% · '+fmt(e.total)}};
+x.onload=()=>{let r={};try{r=JSON.parse(x.responseText)}catch(e){}if(x.status==200&&r.ok){it.el.classList.add('ok');st.textContent='enviado ✓'}
+else{it.el.classList.add('err');st.textContent=r.error||('erro '+x.status)}ocupado=false;next()};
+x.onerror=()=>{it.el.classList.add('err');st.textContent='conexão perdida';ocupado=false;next()};x.send(it.f)}
+</script></body></html>"""
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "SkyStation"
+
+    def log_message(self, *a):
+        pass
+
+    def reply(self, code, body, ctype="application/json; charset=utf-8"):
+        data = body.encode() if isinstance(body, str) else body
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path.startswith("/info"):
+            self.reply(200, json.dumps({"skyroms": skyroms_ok()}))
+        else:
+            self.reply(200, PAGE, "text/html; charset=utf-8")
+
+    def do_PUT(self):
+        u = urllib.parse.urlparse(self.path)
+        q = dict(urllib.parse.parse_qsl(u.query))
+        fail = lambda c, m: self.reply(c, json.dumps({"ok": False, "error": m}, ensure_ascii=False))
+        if u.path != "/enviar":
+            return fail(404, "não encontrado")
+        if self.headers.get("X-Pin", "") != PIN:
+            emit({"evento": "pin_errado"})
+            return fail(403, "PIN errado (veja na tela do console)")
+        name = os.path.basename(q.get("nome", "")).strip()
+        sys_id, dest = q.get("sistema", ""), q.get("destino", "interno")
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if not name or name.startswith(".") or sys_id not in EXTS or ext not in EXTS[sys_id]:
+            return fail(400, "tipo de arquivo não aceito")
+        if dest not in DESTS or (dest == "skyroms" and not skyroms_ok()):
+            return fail(400, "destino indisponível")
+        size = int(self.headers.get("Content-Length", "0") or 0)
+        folder = os.path.join(DESTS[dest], sys_id, "covers" if ext in ("png", "jpg") else "")
+        os.makedirs(folder, exist_ok=True)
+        if size + 50 * 1024 * 1024 > shutil.disk_usage(folder).free:
+            return fail(507, "sem espaço no destino")
+        target = os.path.join(folder, name)
+        tmp = target + ".parcial"
+        emit({"evento": "recebendo", "nome": name, "p": 0.0})
+        got, last = 0, 0.0
+        try:
+            with open(tmp, "wb") as f:
+                while got < size:
+                    chunk = self.rfile.read(min(4 * 1024 * 1024, size - got))
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    got += len(chunk)
+                    if time.monotonic() - last > 0.5:
+                        last = time.monotonic()
+                        emit({"evento": "recebendo", "nome": name, "p": round(got / max(1, size), 3)})
+                f.flush()
+                os.fsync(f.fileno())
+            if got != size:
+                raise OSError("envio interrompido")
+            os.replace(tmp, target)
+        except OSError as e:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            emit({"evento": "erro", "nome": name, "erro": str(e)})
+            return fail(500, str(e))
+        emit({"evento": "recebido", "nome": name, "destino": dest, "sistema": sys_id})
+        self.reply(200, json.dumps({"ok": True}))
+
+
+def main():
+    try:
+        srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    except OSError as e:
+        emit({"evento": "erro", "erro": f"porta {PORT} ocupada: {e}"})
+        sys.exit(1)
+    emit({"evento": "pronto", "porta": PORT})
+    srv.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

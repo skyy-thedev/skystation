@@ -203,6 +203,17 @@ var update_check_at: float = 20.0
 var bg_threads: Array = []
 var toast_icon: String = ""
 
+# Fase 5.7
+var disk_detail: String = ""
+var recv_pid: int = -1
+var recv_pin: String = ""
+var recv_ip: String = ""
+var recv_log: Array = []         # últimas linhas do que chegou
+var recv_cur: String = ""
+var recv_thread: Thread = null
+var job_thread: Thread = null
+var confirm_delete: bool = false
+
 
 # ---------------------------------------------------------------- ciclo de vida
 
@@ -259,8 +270,10 @@ func _ready() -> void:
 func _exit_tree() -> void:
 	if busy_thread != null and busy_thread.is_started():
 		busy_thread.wait_to_finish()
-	for th in bg_threads:
-		if th.is_started():
+	if recv_pid != -1:
+		OS.kill(recv_pid)
+	for th in bg_threads + [recv_thread, job_thread]:
+		if th != null and th.is_started():
 			th.wait_to_finish()
 
 
@@ -384,6 +397,10 @@ func _handle_input(delta: float) -> void:
 		return
 	if viewer_open:
 		_viewer_input()
+		return
+	if recv_pid != -1:
+		if Input.is_action_just_pressed("sky_back") or Input.is_action_just_pressed("sky_accept"):
+			_close_receive()
 		return
 	var d := _nav_dir()
 	if d != hold_dir:
@@ -538,7 +555,7 @@ func _scan_roms() -> void:
 					"id": sys_id + "-" + stem.validate_filename().replace(" ", "_"),
 					"dir": rdir, "sys": sys_id,
 					"title": title, "type": "retro",
-					"exec": "sky-emu %s %s" % [sys_id, _shq(path)],
+					"exec": "sky-emu %s %s" % [sys_id, _shq(path)], "path": path,
 					"description": "%s  ·  %s  ·  %s" % [info["name"], f.get_extension().to_upper(), where],
 					"color": Color.from_string(info["color"], Color("4fd1ff")),
 					"order": 50, "cover": null,
@@ -626,6 +643,9 @@ func _build_cats() -> void:
 		_act("Sons da interface", "Ligados" if sounds_on else "Desligados", "sounds", "note"),
 		_act("Bateria e temperatura", _power_txt(), "power_info", "battery"),
 		_act("Armazenamento", disk_txt, "storage", "drive"),
+		_act("Receber jogos pelo Wi-Fi", "Envie do PC ou do celular pelo navegador", "receive", "download"),
+		_act("Som de ligar", "Ligado" if not FileAccess.file_exists(conf_dir + "/ligar.off") else "Desligado", "boot_sound", "note"),
+		_act("Ligar pelo controle", _wake_txt(), "wake_pad", "pad"),
 		_act("Medição de FPS", "Ligada: contador e log nos jogos" if _fps_on() else "Desligada", "fps", "gauge"),
 		_act("Informações do sistema", "Hardware e versão", "settings:3", "info"),
 		_act("Atualizar o SkyStation", _update_txt(), "update", "refresh"),
@@ -649,6 +669,7 @@ func _build_cats() -> void:
 		c_shots["items"].append(it)
 	# Desligar fica por último: um "A" sem querer ao entrar na categoria não desliga nada.
 	c_power["items"] = [
+		_act("Modo de espera", "Desliga a tela; o controle ou o botão de ligar acordam o console", "suspend", "moon"),
 		_act("Recarregar jogos", "Procura jogos e ROMs de novo", "reload", "search"),
 		_act("Reiniciar a interface", "Reabre o SkyStation sem reiniciar", "restart_ui", "refresh"),
 		_act("Reiniciar", "Reinicia o console", "reboot", "refresh"),
@@ -703,6 +724,10 @@ func _refresh_sys_items() -> void:
 					it["sub"] = audio_out_txt
 				"update":
 					it["sub"] = _update_txt()
+				"boot_sound":
+					it["sub"] = "Desligado" if FileAccess.file_exists(conf_dir + "/ligar.off") else "Ligado"
+				"wake_pad":
+					it["sub"] = _wake_txt()
 
 
 # ---------------------------------------------------------------- ações
@@ -733,12 +758,23 @@ func _activate() -> void:
 	match action:
 		"storage":
 			_refresh_status()
-			_toast("Livre: " + disk_txt, 2.8, "drive")
+			_toast(disk_detail, 4.0, "drive")
 		"power_info":
 			_refresh_status()
 			_toast(_power_txt(), 2.8, "battery")
 		"audio_out":
 			_bg(_run_json.bind(SKY_BIN + "/sky-config", ["audio", "next"]), _on_audio_announce)
+		"receive":
+			_open_receive()
+		"suspend":
+			_suspend()
+		"boot_sound":
+			_toggle_file(conf_dir + "/ligar.off")
+			if not FileAccess.file_exists(conf_dir + "/ligar.off"):
+				_play_file("ligar")
+		"wake_pad":
+			_toggle_file(conf_dir + "/acordar.off")
+			_toast("Vale a partir do próximo minuto (o sistema aplica sozinho)", 3.0, "pad")
 		"music":
 			music_on = not music_on
 			if music_on:
@@ -896,6 +932,13 @@ func _toggle_panel() -> void:
 		panel_items = []
 		if it.get("kind", "") == "game":
 			panel_items.append(["Jogar", "play"])
+			var gpath := str(it["game"].get("path", ""))
+			if gpath != "":
+				if gpath.begins_with("/mnt/skyroms/"):
+					panel_items.append(["Mover para o console", "move:interno"])
+				elif skyroms_present and not gpath.begins_with("/mnt/skystation/"):
+					panel_items.append(["Mover para o pendrive SKYROMS", "move:skyroms"])
+				panel_items.append(["Apagar jogo", "delete_game"])
 		if it.get("kind", "") == "shot":
 			panel_items.append(["Ver captura", "play"])
 			panel_items.append(["Apagar captura", "delete_shot"])
@@ -913,6 +956,12 @@ func _toggle_panel() -> void:
 func _panel_choose() -> void:
 	var a: String = panel_items[panel_sel][1]
 	panel_open = false
+	if a != "delete_game":
+		confirm_delete = false
+	if a.begins_with("move:"):
+		var it := _cur()
+		_run_job(["mover", str(it["game"]["path"]), a.split(":")[1]], "Movendo " + str(it.get("title", "")) + "…")
+		return
 	match a:
 		"play":
 			_activate()
@@ -930,6 +979,16 @@ func _panel_choose() -> void:
 			_toast("%d jogo(s) encontrado(s)" % games.size())
 		"settings":
 			_open_settings(-1)
+		"delete_game":
+			var it := _cur()
+			if not confirm_delete:
+				confirm_delete = true
+				panel_open = true
+				panel_items = [["Confirmar: apagar " + str(it.get("title", "")), "delete_game"], ["Cancelar", "close"]]
+				panel_sel = 1
+				return
+			confirm_delete = false
+			_run_job(["apagar", str(it["game"]["path"])], "Apagando " + str(it.get("title", "")) + "…")
 		"delete_shot":
 			var it := _cur()
 			if it.get("kind", "") == "shot":
@@ -980,14 +1039,27 @@ func _refresh_status() -> void:
 			var parts := line.split(" ", false)
 			if parts.size() > 2:
 				wifi_q = int(parts[2].replace(".", ""))
-	var out: Array = []
-	if OS.execute("df", ["-B1", "--output=avail,size", home_dir], out, false) == 0 and out.size() > 0:
-		var lines: PackedStringArray = str(out[0]).strip_edges().split("\n")
-		if lines.size() >= 2:
-			var nums := lines[1].split(" ", false)
-			if nums.size() >= 2:
-				disk_txt = "%.1f GB livres de %.1f GB" % [float(nums[0]) / 1e9, float(nums[1]) / 1e9]
 	skyroms_present = _read_text("/proc/mounts", "").contains(" /mnt/skyroms ")
+	var mounts := ["/"]
+	if skyroms_present:
+		mounts.append("/mnt/skyroms")
+	var out: Array = []
+	if OS.execute("df", PackedStringArray(["-B1", "--output=avail,size"] + mounts), out, false) == 0 and out.size() > 0:
+		var lines: PackedStringArray = str(out[0]).strip_edges().split("\n")
+		var free_t := 0.0
+		var size_t := 0.0
+		var parts: Array = []
+		for i in range(1, lines.size()):
+			var nums := lines[i].split(" ", false)
+			if nums.size() >= 2:
+				free_t += float(nums[0])
+				size_t += float(nums[1])
+				parts.append("%s %.1f de %.1f GB livres" % ["Sistema" if i == 1 else "SKYROMS",
+					float(nums[0]) / 1e9, float(nums[1]) / 1e9])
+		disk_txt = "%.1f GB livres de %.1f GB" % [free_t / 1e9, size_t / 1e9]
+		if parts.size() > 1:
+			disk_txt += "  (sistema + SKYROMS)"
+		disk_detail = "  ·  ".join(parts)
 	_read_power()
 	if theme_key == "auto" and not palette.is_empty() and palette != THEMES[_auto_theme()]:
 		_apply_theme(true)
@@ -1278,6 +1350,171 @@ func _on_audio(r: Dictionary, announce: bool = false) -> void:
 		_toast("Saída de som: " + audio_out_txt, 2.5, "speaker")
 
 
+# ---------------------------------------------------------------- Fase 5.7: espera, receber, mover
+
+func _toggle_file(path: String) -> void:
+	if FileAccess.file_exists(path):
+		DirAccess.remove_absolute(path)
+	else:
+		_write_text(path, "1")
+	_refresh_sys_items()
+
+
+func _wake_txt() -> String:
+	if FileAccess.file_exists(conf_dir + "/acordar.off"):
+		return "Desligado"
+	return "Ligado: no modo de espera, o controle liga o console"
+
+
+func _suspend() -> void:
+	_play("back")
+	if music != null:
+		music.stop()
+	busy_msg = "Modo de espera…"
+	queue_redraw()
+	# espera a tela desenhar a mensagem antes de dormir; ao acordar, limpa
+	await get_tree().create_timer(0.6).timeout
+	OS.execute("systemctl", ["suspend"])
+	await get_tree().create_timer(1.5).timeout
+	busy_msg = ""
+	idle_t = 0.0
+	dimmed = false
+	status_t = 0.0
+
+
+func _open_receive() -> void:
+	if recv_pid != -1 or not FileAccess.file_exists(SKY_BIN + "/sky-receber"):
+		return
+	recv_pin = "%04d" % (randi() % 10000)
+	recv_ip = ""
+	var out: Array = []
+	OS.execute("ip", ["-4", "-o", "addr", "show", "scope", "global"], out, false)
+	var m := RegEx.create_from_string("inet (\\d+\\.\\d+\\.\\d+\\.\\d+)").search(str(out[0]) if not out.is_empty() else "")
+	if m != null:
+		recv_ip = m.get_string(1)
+	recv_log = []
+	recv_cur = ""
+	var info := OS.execute_with_pipe(SKY_BIN + "/sky-receber", [recv_pin])
+	if info.is_empty():
+		_toast("Não consegui abrir o recebimento", 3.0, "download")
+		return
+	recv_pid = int(info["pid"])
+	recv_thread = Thread.new()
+	recv_thread.start(_pipe_reader.bind(info["stdio"], "_on_recv_line"))
+
+
+func _pipe_reader(pipe: FileAccess, cb: String) -> void:
+	# lê a saída de um processo linha a linha (numa thread) e repassa para a tela
+	while pipe.is_open():
+		var line := pipe.get_line()
+		if line == "" and pipe.eof_reached():
+			break
+		if line != "":
+			call_deferred(cb, line)
+	call_deferred(cb, "{\"evento\": \"fim\"}")
+
+
+func _on_recv_line(line: String) -> void:
+	var ev = JSON.parse_string(line) if line.begins_with("{") else null
+	if typeof(ev) != TYPE_DICTIONARY:
+		return
+	match str(ev.get("evento", "")):
+		"recebendo":
+			recv_cur = "%s  %d%%" % [str(ev.get("nome", "")), int(float(ev.get("p", 0)) * 100)]
+		"recebido":
+			recv_cur = ""
+			recv_log.push_front("✓ " + str(ev.get("nome", "")) + ("  → SKYROMS" if ev.get("destino", "") == "skyroms" else ""))
+			recv_log = recv_log.slice(0, 6)
+		"erro":
+			recv_cur = ""
+			recv_log.push_front("✗ " + str(ev.get("nome", "")) + ": " + str(ev.get("erro", "")))
+			recv_log = recv_log.slice(0, 6)
+		"pin_errado":
+			recv_log.push_front("✗ Alguém digitou o PIN errado")
+			recv_log = recv_log.slice(0, 6)
+		"fim":
+			if recv_thread != null:
+				recv_thread.wait_to_finish()
+				recv_thread = null
+			if recv_pid != -1:
+				recv_pid = -1
+				_toast("Recebimento encerrado", 2.5, "download")
+
+
+func _close_receive() -> void:
+	if recv_pid != -1:
+		OS.kill(recv_pid)
+	recv_pid = -1
+	_play("back")
+	reload_at = t + 0.5
+	covers_at = t + 2.0
+
+
+func _run_job(args: Array, title: String) -> void:
+	if job_thread != null:
+		return
+	var info := OS.execute_with_pipe(SKY_BIN + "/sky-jogos", PackedStringArray(args))
+	if info.is_empty():
+		_toast("Não consegui iniciar", 3.0, "drive")
+		return
+	busy_msg = title
+	job_thread = Thread.new()
+	job_thread.start(_pipe_reader.bind(info["stdio"], "_on_job_line"))
+
+
+func _on_job_line(line: String) -> void:
+	var ev = JSON.parse_string(line) if line.begins_with("{") else null
+	if typeof(ev) != TYPE_DICTIONARY:
+		return
+	if ev.has("p"):
+		var base := busy_msg.split("  ")[0]
+		busy_msg = "%s  %d%%" % [base, int(float(ev["p"]) * 100)]
+	elif ev.has("ok"):
+		busy_msg = ""
+		if ev["ok"]:
+			_toast(str(ev.get("message", "Pronto")), 3.0, "drive")
+			_play_file("salvo")
+		else:
+			_toast(str(ev.get("error", "Erro")), 5.0, "drive")
+			_play_file("alerta")
+		_reload_games()
+		_refresh_status()
+	elif str(ev.get("evento", "")) == "fim":
+		if job_thread != null:
+			job_thread.wait_to_finish()
+			job_thread = null
+		if busy_msg != "":
+			busy_msg = ""
+
+
+func _draw_receive(w: float, h: float) -> void:
+	draw_rect(Rect2(0, 0, w, h), Color(0, 0, 0, 0.55))
+	var r := Rect2(w * 0.12, h * 0.14, w * 0.76, h * 0.72)
+	_rrect(r, Color(palette[1].darkened(0.3), 0.94), 22, Color(accent, 0.45), 1)
+	var x := r.position.x + 48.0
+	var y := r.position.y + 62.0
+	_icon("download", Vector2(x + 14, y - 12), 34.0, accent)
+	_text("Receber jogos pelo Wi-Fi", Vector2(x + 48, y), 26, WHITE, true)
+	y += 56.0
+	_text("1.  No PC ou no celular (mesma rede Wi-Fi), abra no navegador:", Vector2(x, y), 18, MUTED)
+	y += 54.0
+	var url := ("http://%s:8080" % recv_ip) if recv_ip != "" else "sem rede: conecte o Wi-Fi em Sistema"
+	_text(url, Vector2(x + 24, y), 40, accent, true)
+	y += 54.0
+	_text("2.  Digite o PIN:", Vector2(x, y), 18, MUTED)
+	_text(recv_pin, Vector2(x + 190, y + 6), 40, WHITE, true)
+	y += 48.0
+	_text("3.  Arraste os arquivos do jogo (.cue + .bin, .chd, .iso). Ele aparece aqui sozinho.", Vector2(x, y), 18, MUTED)
+	y += 46.0
+	if recv_cur != "":
+		_text("Recebendo:  " + recv_cur, Vector2(x, y), 18, WHITE, false, r.size.x - 96)
+		y += 30.0
+	for line in recv_log:
+		_text(str(line), Vector2(x, y), 16, MUTED, false, r.size.x - 96)
+		y += 26.0
+	_text("B  fechar (o recebimento para)", Vector2(x, r.end.y - 28), 15, DIM)
+
+
 # ---------------------------------------------------------------- música ambiente
 
 func _make_music() -> void:
@@ -1328,8 +1565,11 @@ func _tick_idle(delta: float) -> void:
 		off_countdown -= delta
 		if off_countdown <= 0.0:
 			off_countdown = -1.0
-			busy_msg = "Desligando por inatividade…"
-			OS.execute("systemctl", ["poweroff"])
+			if on_battery:
+				busy_msg = "Desligando por inatividade…"
+				OS.execute("systemctl", ["poweroff"])
+			else:
+				_suspend()   # na tomada: modo de espera (o controle acorda)
 
 
 func _on_dim_brightness(r: Dictionary) -> void:
@@ -1610,6 +1850,8 @@ func _draw() -> void:
 	var a := ui_alpha
 	if viewer_open:
 		_draw_viewer(w, h)
+	elif recv_pid != -1:
+		_draw_receive(w, h)
 	else:
 		_draw_header(w, h, a)
 		_draw_xmb(w, h, a)
@@ -1872,7 +2114,8 @@ func _draw_dim(w: float, h: float) -> void:
 	var date := "%s, %d de %s" % [WEEKDAYS[dt["weekday"]], dt["day"], MONTHS[dt["month"] - 1]]
 	_text(date, Vector2(0, h / 2.0 + 46) + drift, 18, Color(MUTED, 0.5 * e), false, w, HORIZONTAL_ALIGNMENT_CENTER)
 	if off_countdown >= 0.0:
-		_text("Desligando por inatividade em %d s — aperte qualquer botão" % int(ceil(off_countdown)),
+		_text(("Desligando" if on_battery else "Entrando em modo de espera") +
+			" por inatividade em %d s — aperte qualquer botão" % int(ceil(off_countdown)),
 			Vector2(0, h - 60), 18, Color(Color("ffaa5a"), e), false, w, HORIZONTAL_ALIGNMENT_CENTER)
 
 
@@ -2066,6 +2309,15 @@ func _icon(kind: String, c: Vector2, s: float, col: Color) -> void:
 			draw_circle(c + Vector2(-s * 0.2, -s * 0.06), s * 0.06, col, true, -1.0, true)
 			draw_line(c + Vector2(0, s * 0.2), c + Vector2(s * 0.2, s * 0.06), col, lw, true)
 			draw_rect(Rect2(c.x + s * 0.15, c.y - s * 0.02, s * 0.1, s * 0.1), col)
+		"moon":
+			draw_circle(c, s * 0.34, col, true, -1.0, true)
+			draw_circle(c + Vector2(s * 0.16, -s * 0.12), s * 0.30,
+				Color(palette[1], 1.0) if not palette.is_empty() else Color.BLACK, true, -1.0, true)
+		"download":
+			draw_line(c + Vector2(0, -s * 0.36), c + Vector2(0, s * 0.12), col, lw * 1.2, true)
+			draw_colored_polygon(PackedVector2Array([c + Vector2(-s * 0.18, s * 0.0), c + Vector2(s * 0.18, s * 0.0),
+				c + Vector2(0, s * 0.22)]), col)
+			draw_line(c + Vector2(-s * 0.34, s * 0.34), c + Vector2(s * 0.34, s * 0.34), col, lw * 1.2, true)
 		"thermo":
 			_rrect(Rect2(c.x - s * 0.08, c.y - s * 0.38, s * 0.16, s * 0.5), Color(0, 0, 0, 0), int(s * 0.08), col, int(lw))
 			draw_circle(c + Vector2(0, s * 0.22), s * 0.14, col, true, -1.0, true)

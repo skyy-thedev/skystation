@@ -16,7 +16,9 @@ skystation/
 │   ├── fase5-3.sh    boot com logo SkyStation e sem texto (UKI)
 │   ├── fase5-5.sh    visual novo (barra cruzada + boot animado), Bluetooth sem atraso, espaço
 │   ├── fase5-6.sh    portátil (bateria, energia, brilho), avisos com som, capturas, capas, tempo de jogo
-│   ├── energia.sh    perfil da CPU na tomada/bateria (comando skystation-energia)
+│   ├── energia.sh    perfil da CPU na tomada/bateria + acordar pelo controle (skystation-energia)
+│   ├── fase5-7.sh    som de ligar, modo de espera, receber jogos pelo Wi-Fi, mover jogos
+│   ├── som-ligar.sh  som de ligar no começo do boot (serviço skystation-som-ligar)
 │   ├── marca.sh      identidade do sistema (comando skystation-marca, reaplicado pelo pacman)
 │   ├── diag.sh       diagnóstico do boot (comando skystation-diag)
 │   ├── expandir.sh   ocupa a mídia inteira após clonar (comando skystation-expandir)
@@ -32,6 +34,7 @@ skystation/
     ├── sounds/       sons de aviso e música ambiente (originais, gerados por tools/gerar-sons.py)
     ├── bin/          sky-run (executor), sky-home.py + sky-overlay.py (botão Home),
     │                 sky-notify (avisos com som), sky-capas (capas automáticas),
+    │                 sky-receber (página para enviar jogos pelo Wi-Fi), sky-jogos (mover/apagar),
     │                 sky-shell, sky-emu (emuladores), sky-wine (PC), sky-config (Configurações),
     │                 sky-perfil (leve/potente), sky-pcsx2-ini
     ├── emu/          configuração otimizada do RetroArch e cores
@@ -105,6 +108,18 @@ Dica: `.chd` ocupa bem menos que `.bin/.cue` (converta com o `chdman` no PC).
 - **Tempo de jogo e Recentes:** `~/skystation/saves/tempo.json`.
 - **Nova versão:** o console confere o GitHub a cada 6 h e avisa em Sistema → Atualizar.
 
+## Recursos da Fase 5.7
+
+- **Som de ligar:** toca no começo do boot (antes da animação terminar). Sistema → Som de ligar.
+- **Modo de espera:** Energia → Modo de espera. O console dorme e acorda pelo **controle** (USB ou
+  Bluetooth, se a placa permitir) ou pelo botão de ligar. Na tomada, o descanso de tela também
+  entra em modo de espera em vez de desligar. Desligado de verdade, só o botão liga.
+- **Receber jogos pelo Wi-Fi:** Sistema → Receber jogos pelo Wi-Fi mostra um endereço e um PIN;
+  no PC/celular, abra o endereço e arraste os arquivos (escolha PS1/PS2 e console/SKYROMS).
+- **Mover / apagar jogo:** no jogo, botão Y → Mover para o pendrive SKYROMS (ou para o console),
+  Apagar jogo (pede confirmação). O jogo inteiro vai junto (.cue + .bin, capa).
+- **Espaço total:** Sistema → Armazenamento soma o sistema e o SKYROMS.
+
 ## Visual
 
 - **Temas:** Sistema → Tema de cores (Automático muda com a hora do dia: Oceano, Aurora,
@@ -162,6 +177,8 @@ curl -fsSL https://raw.githubusercontent.com/skyy-thedev/skystation/main/setup/s
 - [x] Fase 5.6: bateria do console e dos controles, modo econômico, avisos com som, brilho/volume,
       saída de som, descanso de tela, menu Home com salvar/carregar estado e captura, capas
       automáticas, tempo de jogo + Recentes, Capturas, aviso de nova versão, música ambiente
+- [x] Fase 5.7: som de ligar, modo de espera com "ligar pelo controle", receber jogos pelo Wi-Fi,
+      mover jogos console ⇄ SKYROMS, apagar jogo, espaço total (sistema + SKYROMS)
 - [ ] Porta USB ao lado do HDMI sem energia (provável defeito físico)
 - [ ] Drive de DVD: jogar PS1/PS2 direto do disco ou copiar para .chd
 - [ ] SSD SATA no lugar do pendrive

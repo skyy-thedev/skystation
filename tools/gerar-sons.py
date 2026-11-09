@@ -97,6 +97,28 @@ save("salvo.wav", seq([(0, note(G5, .3, .4, decay=.15)), (.08, note(D6, .4, .4, 
 save("carregado.wav", seq([(0, note(D6, .3, .4, decay=.15)), (.08, note(G5, .4, .4, decay=.2))], .6))
 
 
+# ligar o console: "respiração" grave que sobe + acorde brilhante abrindo (≈ 3,5 s)
+def power_on():
+    dur = 3.6
+    t = np.arange(int(dur * RATE)) / RATE
+    swell_env = np.clip(t / 1.1, 0, 1) ** 2 * np.exp(-np.clip(t - 1.1, 0, None) / 0.5)
+    f = 55 + 55 * np.clip(t / 1.1, 0, 1)
+    swell = (np.sin(TAU * np.cumsum(f) / RATE) + 0.5 * np.sin(TAU * np.cumsum(f * 2) / RATE)) * swell_env * 0.35
+    air = np.random.default_rng(3).standard_normal(len(t))
+    air = np.convolve(air, np.ones(60) / 60, mode="same") * swell_env * 0.25   # sopro suave
+    chord = np.zeros_like(t)
+    for i, (fr, amp) in enumerate([(220.0, .22), (329.63, .2), (440.0, .18), (554.37, .16), (659.25, .14),
+                                  (880.0, .1), (1108.73, .07), (1318.51, .05)]):
+        st = 1.0 + i * 0.045
+        tt = np.clip(t - st, 0, None)
+        env = (t >= st) * np.minimum(1, tt / 0.03) * np.exp(-tt / 1.4)
+        chord += (np.sin(TAU * fr * tt) + 0.3 * np.sin(TAU * fr * 2 * tt + 1)) * env * amp
+    return echo(swell + air + chord, 0.21, 0.32, 4)
+
+
+save("ligar.wav", power_on(), gain=0.85)
+
+
 # ---------------------------------------------------------------- música ambiente
 def ambient(seconds=64.0):
     """Pad lento em 4 acordes (16 s cada) + sininhos esparsos + "reverb" por ecos. Loop sem emenda."""

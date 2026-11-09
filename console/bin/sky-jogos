@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""SkyStation: gerencia jogos (ROMs) entre o armazenamento interno e o pendrive SKYROMS.
+
+  sky-jogos espaco                     -> espaço livre/total do sistema e do SKYROMS (JSON)
+  sky-jogos mover <arquivo> <interno|skyroms>
+                                       -> move o jogo inteiro (.cue + .bin, .m3u + discos, capa);
+                                          imprime {"p": 0.0..1.0} durante a cópia e {"ok": ...} no fim
+  sky-jogos apagar <arquivo>           -> apaga o jogo inteiro (mesmos arquivos)
+
+A cópia é verificada (tamanho) antes de apagar a origem: se faltar espaço ou der erro no
+meio, nada é apagado.
+"""
+import json
+import os
+import re
+import shutil
+import sys
+
+HOME = os.path.expanduser("~")
+INTERNO = os.path.join(HOME, "skystation/roms")
+SKYROMS = "/mnt/skyroms"
+
+
+def out(obj):
+    print(json.dumps(obj, ensure_ascii=False), flush=True)
+
+
+def mounted(path):
+    try:
+        with open("/proc/mounts") as f:
+            return any(line.split()[1] == path for line in f if len(line.split()) > 1)
+    except OSError:
+        return False
+
+
+def space(path):
+    try:
+        u = shutil.disk_usage(path)
+        return {"livre": u.free, "total": u.total}
+    except OSError:
+        return None
+
+
+def game_files(path):
+    """Todos os arquivos de um jogo: o principal + faixas do .cue/.m3u + capas."""
+    files = [path]
+    folder = os.path.dirname(path)
+    ext = path.rsplit(".", 1)[-1].lower()
+    try:
+        if ext in ("cue", "m3u"):
+            with open(path, errors="replace") as f:
+                text = f.read()
+            refs = re.findall(r'FILE\s+"([^"]+)"', text) if ext == "cue" else \
+                [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.startswith("#")]
+            for r in refs:
+                p = os.path.join(folder, r)
+                if os.path.exists(p) and p not in files:
+                    files.append(p)
+                    if p.lower().endswith(".cue"):       # m3u -> cue -> bin
+                        files += [x for x in game_files(p)[1:] if x not in files and not x.endswith(".png")]
+    except OSError:
+        pass
+    stem = os.path.basename(path).rsplit(".", 1)[0]
+    for c in (os.path.join(folder, "covers", stem + ".png"), os.path.join(folder, "covers", stem + ".jpg"),
+              os.path.join(folder, stem + ".png")):
+        if os.path.exists(c):
+            files.append(c)
+    return files
+
+
+def system_of(path):
+    parts = os.path.normpath(path).split(os.sep)
+    for s in ("ps1", "ps2"):
+        if s in parts:
+            return s
+    return None
+
+
+def mover(path, dest_kind):
+    if not os.path.isfile(path):
+        out({"ok": False, "error": "Jogo não encontrado"})
+        return
+    sys_id = system_of(path)
+    if not sys_id:
+        out({"ok": False, "error": "Não sei de que sistema é este jogo"})
+        return
+    if dest_kind == "skyroms":
+        if not mounted(SKYROMS):
+            out({"ok": False, "error": "Pendrive SKYROMS não está conectado"})
+            return
+        base = SKYROMS
+    else:
+        base = INTERNO
+    dest_dir = os.path.join(base, sys_id)
+    src_dir = os.path.dirname(path)
+    if os.path.realpath(src_dir) == os.path.realpath(dest_dir):
+        out({"ok": False, "error": "O jogo já está aí"})
+        return
+    files = game_files(path)
+    total = sum(os.path.getsize(f) for f in files)
+    os.makedirs(os.path.join(dest_dir, "covers"), exist_ok=True)
+    free = shutil.disk_usage(dest_dir).free
+    if total + 50 * 1024 * 1024 > free:
+        out({"ok": False, "error": f"Falta espaço: o jogo tem {total / 1e9:.1f} GB e há {free / 1e9:.1f} GB livres"})
+        return
+    done = 0
+    copied = []
+    try:
+        for f in files:
+            rel = os.path.relpath(f, src_dir)
+            target = os.path.join(dest_dir, rel)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            tmp = target + ".parcial"
+            with open(f, "rb") as a, open(tmp, "wb") as b:
+                while True:
+                    chunk = a.read(4 * 1024 * 1024)
+                    if not chunk:
+                        break
+                    b.write(chunk)
+                    done += len(chunk)
+                    out({"p": round(done / max(1, total), 3)})
+                b.flush()
+                os.fsync(b.fileno())      # pendrive: garante que foi gravado de verdade
+            if os.path.getsize(tmp) != os.path.getsize(f):
+                raise OSError("cópia incompleta")
+            os.replace(tmp, target)
+            copied.append(target)
+    except OSError as e:
+        for c in copied:
+            try:
+                os.remove(c)
+            except OSError:
+                pass
+        out({"ok": False, "error": f"Erro ao copiar: {e}"})
+        return
+    for f in files:
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+    out({"ok": True, "message": "Jogo movido para o " + ("pendrive SKYROMS" if dest_kind == "skyroms" else "console")})
+
+
+def apagar(path):
+    if not os.path.isfile(path) or not system_of(path):
+        out({"ok": False, "error": "Jogo não encontrado"})
+        return
+    n = 0
+    for f in game_files(path):
+        try:
+            os.remove(f)
+            n += 1
+        except OSError:
+            pass
+    out({"ok": True, "message": "Jogo apagado"})
+
+
+def main():
+    a = sys.argv[1:]
+    if not a:
+        out({"ok": False, "error": "uso: sky-jogos espaco | mover <arquivo> <interno|skyroms> | apagar <arquivo>"})
+    elif a[0] == "espaco":
+        out({"ok": True, "sistema": space("/"), "skyroms": space(SKYROMS) if mounted(SKYROMS) else None})
+    elif a[0] == "mover" and len(a) == 3:
+        mover(a[1], a[2])
+    elif a[0] == "apagar" and len(a) == 2:
+        apagar(a[1])
+    else:
+        out({"ok": False, "error": "comando inválido"})
+
+
+if __name__ == "__main__":
+    main()
