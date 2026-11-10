@@ -568,6 +568,32 @@ func _scan_roms() -> void:
 						g["cover"] = tex
 						break
 				games.append(g)
+	_scan_disc(tag_re)
+
+
+func _scan_disc(tag_re: RegEx) -> void:
+	# Fase 5.8: o sky-notify identifica o disco no leitor e escreve disco.json.
+	var txt := _read_text(run_dir + "/disco.json", "")
+	var d = JSON.parse_string(txt) if txt.begins_with("{") else null
+	if typeof(d) != TYPE_DICTIONARY or not d.get("disco", false):
+		return
+	var sys_id := str(d.get("sistema", ""))
+	if not ROM_SYSTEMS.has(sys_id):
+		return
+	var info: Dictionary = ROM_SYSTEMS[sys_id]
+	var serial := str(d.get("serial", "")).validate_filename()
+	var title := tag_re.sub(str(d.get("titulo", "")), "", true).strip_edges()
+	if title == "":
+		title = "Disco de " + str(info["badge"])
+	games.append({
+		"id": sys_id + "-disco-" + (serial if serial != "" else "sem-codigo"),
+		"dir": home_dir + "/skystation", "sys": sys_id,
+		"title": title, "type": "retro", "disco": true,
+		"exec": "sky-emu %s disco %s" % [sys_id, _shq(serial)], "path": "",
+		"description": "%s  ·  Disco no leitor%s" % [info["name"], ("  ·  " + serial) if serial != "" else ""],
+		"color": Color.from_string(info["color"], Color("4fd1ff")),
+		"order": 0, "cover": _load_tex(str(d.get("capa", ""))),
+	})
 
 
 func _load_tex(path: String) -> Texture2D:
@@ -618,6 +644,8 @@ func _build_cats() -> void:
 		match str(g["type"]):
 			"retro":
 				(c_ps2 if g["sys"] == "ps2" else c_ps1)["items"].append(it)
+				if g.get("disco", false):
+					c_games["items"].insert(0, it)  # como no PS3: o disco aparece no topo de Jogos
 			"windows":
 				c_pc["items"].append(it)
 			"app", "ferramenta":
@@ -984,6 +1012,8 @@ func _toggle_panel() -> void:
 		panel_items = []
 		if it.get("kind", "") == "game":
 			panel_items.append(["Jogar", "play"])
+			if it["game"].get("disco", false):
+				panel_items.append(["Ejetar disco", "eject"])
 			var gpath := str(it["game"].get("path", ""))
 			if gpath != "":
 				if gpath.begins_with("/mnt/skyroms/"):
@@ -1041,6 +1071,10 @@ func _panel_choose() -> void:
 				return
 			confirm_delete = false
 			_run_job(["apagar", str(it["game"]["path"])], "Apagando " + str(it.get("title", "")) + "…")
+		"eject":
+			if FileAccess.file_exists(SKY_BIN + "/sky-disco"):
+				OS.create_process(SKY_BIN + "/sky-disco", ["ejetar"])
+				_toast("Ejetando o disco…", 2.0, "disc")
 		"delete_shot":
 			var it := _cur()
 			if it.get("kind", "") == "shot":
@@ -1334,7 +1368,7 @@ func _poll_events() -> void:
 			reload_at = t + 0.8
 			covers_at = t + 3.0
 			continue
-		var icons := {"controle": "pad", "usb": "usb", "pendrive": "drive", "jogo": "disc",
+		var icons := {"controle": "pad", "usb": "usb", "pendrive": "drive", "jogo": "disc", "disco": "disc",
 			"bateria": "battery", "energia": "battery", "calor": "thermo"}
 		_toast(text, 3.5, str(icons.get(kind, "info")))
 		if kind in ["controle", "energia", "bateria"]:

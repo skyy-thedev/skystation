@@ -8,6 +8,7 @@ cada coisa que acontece, mesmo com um jogo aberto:
   pendrive de jogos (SKYROMS) conectado  jogo novo encontrado
   carregador ligado / desligado          bateria do console em 15 %, 5 % e 3 %
   bateria do controle fraca              temperatura alta
+  disco de PS1/PS2 no leitor (Fase 5.8): identifica e escreve $XDG_RUNTIME_DIR/skystation/disco.json
 
 Cada aviso também vira uma linha em $XDG_RUNTIME_DIR/skystation/events.jsonl, que o launcher
 lê para mostrar a notificação na tela. Com a bateria em 3 % (descarregando), o jogo aberto é
@@ -24,6 +25,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
@@ -35,6 +37,15 @@ SKYROMS = "/mnt/skyroms"
 ROM_EXTS = {"ps1": {"cue", "chd", "pbp", "m3u", "iso", "img"}, "ps2": {"iso", "chd", "cso", "gz"}}
 GAME_DIRS = ["/opt/skystation/games", os.path.join(HOME, "skystation/games")]
 ROM_BASES = [os.path.join(HOME, "skystation/roms"), SKYROMS, "/mnt/skystation/roms"]
+
+DISCO_JSON = os.path.join(RUN, "disco.json")
+EVENT_LOCK = threading.Lock()
+try:  # sky-disco (mesma pasta) faz a leitura do disco
+    import importlib.machinery
+    disco = importlib.machinery.SourceFileLoader(
+        "sky_disco", os.path.join(os.path.dirname(os.path.realpath(__file__)), "sky-disco")).load_module()
+except Exception:
+    disco = None
 
 try:
     import evdev
@@ -73,6 +84,12 @@ def play(name):
 def event(kind, text, sound=None):
     log(f"{kind}: {text}")
     os.makedirs(RUN, exist_ok=True)
+    with EVENT_LOCK:
+        _event_write(kind, text)
+    play(sound)
+
+
+def _event_write(kind, text):
     try:
         # o arquivo é pequeno e vive na RAM (XDG_RUNTIME_DIR); limita a 200 linhas
         lines = []
@@ -85,7 +102,42 @@ def event(kind, text, sound=None):
             f.write(json.dumps({"t": time.time(), "kind": kind, "text": text}, ensure_ascii=False) + "\n")
     except OSError:
         pass
-    play(sound)
+
+
+# ------------------------------------------------------------------ disco no leitor (Fase 5.8)
+def write_disco(info):
+    os.makedirs(RUN, exist_ok=True)
+    tmp = DISCO_JSON + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(info, f, ensure_ascii=False)
+    os.replace(tmp, DISCO_JSON)
+
+
+def disco_worker(state):
+    """Identifica o disco recém-colocado: primeiro sem internet (aviso rápido), depois com nome/capa."""
+    try:
+        info = disco.detect(online=False)
+        if not info.get("disco"):
+            return
+        write_disco(info)
+        nome = {"ps1": "PS1", "ps2": "PS2"}.get(info.get("sistema", ""), "")
+        titulo = re.sub(r" *[(][^)]*[)]", "", info.get("titulo", "")).strip()
+        if nome and titulo and titulo != info.get("serial"):
+            event("disco", f"Disco de {nome}: {titulo}", "disco-on")
+        elif nome:
+            event("disco", f"Disco de {nome} no leitor", "disco-on")
+        else:
+            event("disco", "Disco não reconhecido (não é jogo de PS1/PS2)", "disco-on")
+        event("jogos", "recarregar")
+        if nome and (not info.get("capa") or info.get("titulo") in ("", info.get("serial"))):
+            full = disco.detect(online=True)
+            if full.get("disco") and full.get("serial") == info.get("serial"):
+                write_disco(full)
+                event("jogos", "recarregar")
+    except Exception as e:
+        log(f"disco: {e}")
+    finally:
+        state["busy"] = False
 
 
 # ------------------------------------------------------------------ leituras
@@ -227,6 +279,11 @@ def main():
     quiet_games_until = 0.0
     critical = False
     tick = 0
+    disc = {"ok": False, "busy": False, "warned": False}
+    try:
+        os.remove(DISCO_JSON)
+    except OSError:
+        pass
 
     while True:
         time.sleep(1.0)
@@ -314,6 +371,27 @@ def main():
                 elif st != "Discharging" or cap > 20:
                     warned_pad.discard(name)
             pad_bat = npad
+
+        # disco no leitor (a cada 2 s; com jogo aberto não mexe no leitor)
+        if disco and tick % 2 == 0 and not disc["busy"] and not os.path.exists(os.path.join(RUN, "game.pid")):
+            ds = disco.drives()
+            ok = disco.disc_ok(ds[0][0]) if ds else False
+            if ok is None:
+                if not disc["warned"]:
+                    disc["warned"] = True
+                    log("leitor sem permissão: rode a Fase 5.8")
+                ok = False
+            if ok and not disc["ok"]:
+                disc["busy"] = True
+                threading.Thread(target=disco_worker, args=(disc,), daemon=True).start()
+            elif not ok and disc["ok"]:
+                try:
+                    os.remove(DISCO_JSON)
+                except OSError:
+                    pass
+                event("disco", "Disco removido", "disco-off")
+                event("jogos", "recarregar")
+            disc["ok"] = ok
 
         # temperatura (a cada 5 s): 90 °C por 15 s seguidos
         if tick % 5 == 0:

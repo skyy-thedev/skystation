@@ -19,6 +19,7 @@ skystation/
 │   ├── energia.sh    perfil da CPU na tomada/bateria + acordar pelo controle (skystation-energia)
 │   ├── fase5-7.sh    som de ligar, modo de espera, receber jogos pelo Wi-Fi, mover jogos
 │   ├── som-ligar.sh  som de ligar no começo do boot (serviço skystation-som-ligar)
+│   ├── fase5-8.sh    jogar direto do disco (acesso ao leitor: udev + módulo sg)
 │   ├── atualizar-menu.sh  "Atualizar o SkyStation" do menu, sem sudo (serviço + .path do systemd)
 │   ├── marca.sh      identidade do sistema (comando skystation-marca, reaplicado pelo pacman)
 │   ├── diag.sh       diagnóstico do boot (comando skystation-diag)
@@ -36,6 +37,7 @@ skystation/
     ├── bin/          sky-run (executor), sky-home.py + sky-overlay.py (botão Home),
     │                 sky-notify (avisos com som), sky-capas (capas automáticas),
     │                 sky-receber (página para enviar jogos pelo Wi-Fi), sky-jogos (mover/apagar),
+    │                 sky-disco (identifica o disco no leitor, nome e capa),
     │                 sky-shell, sky-emu (emuladores), sky-wine (PC), sky-config (Configurações),
     │                 sky-perfil (leve/potente), sky-pcsx2-ini
     ├── emu/          configuração otimizada do RetroArch e cores
@@ -126,6 +128,20 @@ Dica: `.chd` ocupa bem menos que `.bin/.cue` (converta com o `chdman` no PC).
 - **BIOS do PS2 (5.7.1):** envie pelo Wi-Fi escolhendo "BIOS do PS2" (vai sempre para o console), ou
   deixe o arquivo de 4 MB em `SKYROMS/bios/`: ao abrir um jogo de PS2 ela é copiada sozinha.
 
+## Jogar do disco (Fase 5.8)
+
+Coloque o disco no leitor: em poucos segundos toca um som, aparece o aviso e o jogo surge no
+**topo de Jogos** (e em PS1/PS2) com nome e capa. A = jogar, Y → Ejetar disco.
+
+- **Como reconhece:** o `sky-disco` lê o `SYSTEM.CNF` do disco (`BOOT2` = PS2, `BOOT` = PS1) e o
+  código do jogo (ex.: SLUS-20946). O nome vem da base Redump da libretro-database (baixada uma vez
+  para `~/.cache/skystation/discos/`); sem internet aparece o código.
+- **PS2:** PCSX2 com `-disc /dev/sr0`.
+- **PS1:** o core PCSX-ReARMed lê o CD por comandos SCSI (`cdrom://driveN.cue` → `/dev/sgN`),
+  inclusive as faixas de áudio. Saves e estados de cada disco ficam em `saves/ps1/disco/<código>/`.
+- **Permissão:** `fase5-8.sh` carrega o módulo `sg` e libera `/dev/sr*` e `/dev/sg*` do leitor
+  para o usuário do console (grupo `optical` + `uaccess`).
+
 ## Visual
 
 - **Temas:** Sistema → Tema de cores (Automático muda com a hora do dia: Oceano, Aurora,
@@ -185,6 +201,7 @@ curl -fsSL https://raw.githubusercontent.com/skyy-thedev/skystation/main/setup/s
       automáticas, tempo de jogo + Recentes, Capturas, aviso de nova versão, música ambiente
 - [x] Fase 5.7: som de ligar, modo de espera com "ligar pelo controle", receber jogos pelo Wi-Fi,
       mover jogos console ⇄ SKYROMS, apagar jogo, espaço total (sistema + SKYROMS)
+- [x] Fase 5.8: jogar direto do disco (PS1 em CD, PS2 em DVD/CD), com nome, capa e ejetar
 - [ ] Porta USB ao lado do HDMI sem energia (provável defeito físico)
 - [ ] Drive de DVD: jogar PS1/PS2 direto do disco ou copiar para .chd
 - [ ] SSD SATA no lugar do pendrive

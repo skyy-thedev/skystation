@@ -12,7 +12,18 @@ PROFILE="${SKY_PROFILE:-$(/opt/skystation/bin/sky-perfil)}"
 
 fail() { echo "$1" >"$MSG"; echo "sky-emu: $1" >&2; exit "${2:-3}"; }
 
-[ -f "$ROM" ] || fail "Arquivo não encontrado: $(basename "$ROM")"
+# Fase 5.8: "disco" = jogo direto do leitor. O 3º argumento é o código do disco (saves separados).
+DISCO=""
+if [ "$ROM" = "disco" ]; then
+    DEV="$(ls -d /sys/class/block/sr[0-9]* 2>/dev/null | head -1)"
+    [ -n "$DEV" ] || fail "Nenhum leitor de CD/DVD encontrado."
+    SG="$(basename "$(ls -d "$DEV"/device/scsi_generic/sg* 2>/dev/null | head -1)" 2>/dev/null)"
+    DEV="/dev/$(basename "$DEV")"
+    [ -r "$DEV" ] || fail "Sem permissão para ler o leitor de disco. Rode a Fase 5.8 e reinicie."
+    DISCO="$(printf '%s' "${3:-disco}" | tr -cd 'A-Za-z0-9-')"
+else
+    [ -f "$ROM" ] || fail "Arquivo não encontrado: $(basename "$ROM")"
+fi
 mkdir -p "$SKY/saves/$SYS" "$SKY/states/$SYS" "$SKY/bios/$SYS"
 
 case "$SYS" in
@@ -23,6 +34,16 @@ ps1)
     mkdir -p "$(dirname "$CFG")"
     # Configuração base do SkyStation, sempre regenerada (o RetroArch não salva por cima).
     sed -e "s|@SKY@|$SKY|g" /opt/skystation/emu/retroarch.cfg >"$CFG"
+    if [ -n "$DISCO" ]; then
+        # O core de PS1 lê o CD pelo /dev/sgN (comandos SCSI: dados + faixas de áudio).
+        [ -n "$SG" ] || fail "O leitor não expõe /dev/sg (módulo sg). Rode a Fase 5.8 e reinicie."
+        [ -w "/dev/$SG" ] || fail "Sem permissão no /dev/$SG. Rode a Fase 5.8 e reinicie."
+        ROM="cdrom://drive${SG#sg}.cue"
+        # Todo disco se chama "drive1" para o RetroArch: saves e estados numa pasta por jogo.
+        mkdir -p "$SKY/saves/ps1/disco/$DISCO" "$SKY/states/ps1/disco/$DISCO"
+        sed -i -e "s|^savefile_directory = .*|savefile_directory = \"$SKY/saves/ps1/disco/$DISCO\"|" \
+               -e "s|^savestate_directory = .*|savestate_directory = \"$SKY/states/ps1/disco/$DISCO\"|" "$CFG"
+    fi
     # Canal de comandos só local (Fase 5.6): o menu Home escreve SAVE_STATE / LOAD_STATE aqui.
     # Aberto em leitura+escrita para o RetroArch nunca ver "fim de arquivo" na entrada.
     FIFO="${XDG_RUNTIME_DIR:-/tmp}/skystation/retroarch.cmd"
@@ -49,6 +70,9 @@ ps2)
     [ -n "$BIOS" ] || fail "Falta a BIOS do PS2. Envie pelo Wi-Fi (Sistema: BIOS do PS2) ou coloque em SKYROMS/bios."
     python3 /opt/skystation/bin/sky-pcsx2-ini "$PROFILE" "$SKY" "$(basename "$BIOS")" \
         || fail "Não consegui preparar a configuração do PCSX2."
+    if [ -n "$DISCO" ]; then
+        exec "$PCSX2" -fullscreen -nogui -disc "$DEV"
+    fi
     exec "$PCSX2" -fullscreen -nogui -- "$ROM"
     ;;
 *)

@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+"""SkyStation: jogos direto do disco (CD de PS1, DVD/CD de PS2) no leitor do console.
+
+    sky-disco info        identifica o disco: {"disco": true, "sistema": "ps2", "serial": "SLUS-20946",
+                          "titulo": "...", "capa": "/home/sky/.cache/...png", "dev": "/dev/sr0", "sg": "/dev/sg1"}
+    sky-disco ejetar      abre a bandeja
+
+Como identifica: lê o sistema de arquivos ISO 9660 do disco (setor 16) e procura o SYSTEM.CNF.
+  "BOOT2 = cdrom0:\\SLUS_209.46;1"  -> PS2        "BOOT = cdrom:\\SCUS_945.70;1" -> PS1
+O nome do jogo vem do código (serial) cruzado com a base Redump da libretro-database, baixada uma
+vez e guardada em ~/.cache/skystation/discos/. Sem internet, aparece o código do disco.
+A capa vem do mesmo acervo das capas automáticas (libretro-thumbnails).
+
+Também é importado pelo sky-notify, que chama detect() a cada poucos segundos.
+"""
+import fcntl
+import glob
+import json
+import os
+import re
+import struct
+import subprocess
+import sys
+import urllib.parse
+import urllib.request
+
+HOME = os.path.expanduser("~")
+CACHE = os.path.join(HOME, ".cache/skystation/discos")
+CDROM_DRIVE_STATUS = 0x5326
+CDS_DISC_OK = 4
+CDSL_CURRENT = 0x7FFFFFFF
+DATS = {
+    "ps1": "Sony - PlayStation.dat",
+    "ps2": "Sony - PlayStation 2.dat",
+}
+DAT_URL = "https://raw.githubusercontent.com/libretro/libretro-database/master/metadat/redump/{}"
+THUMB_REPO = {"ps1": "Sony_-_PlayStation", "ps2": "Sony_-_PlayStation_2"}
+THUMB_URL = "https://raw.githubusercontent.com/libretro-thumbnails/{repo}/master/Named_Boxarts/{name}.png"
+
+
+def drives():
+    """Leitores ópticos: [("/dev/sr0", "/dev/sg1" ou "")]."""
+    out = []
+    for p in sorted(glob.glob("/sys/class/block/sr[0-9]*")):
+        name = os.path.basename(p)
+        sg = glob.glob(os.path.join(p, "device/scsi_generic/sg*"))
+        out.append(("/dev/" + name, "/dev/" + os.path.basename(sg[0]) if sg else ""))
+    return out
+
+
+def disc_ok(dev):
+    """True se há um disco pronto no leitor. None se não dá para abrir o leitor (permissão)."""
+    try:
+        fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
+    except PermissionError:
+        return None
+    except OSError:
+        return False
+    try:
+        return fcntl.ioctl(fd, CDROM_DRIVE_STATUS, CDSL_CURRENT) == CDS_DISC_OK
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+
+def _read(f, lba, size):
+    f.seek(lba * 2048)
+    return f.read(size)
+
+
+def _find(f, extent, length, wanted):
+    """Procura um arquivo (sem ;1, sem caixa) num diretório ISO 9660. -> (lba, tamanho) ou None."""
+    data = _read(f, extent, length)
+    i = 0
+    while i < len(data):
+        n = data[i]
+        if n == 0:                     # resto do setor vazio: pula para o próximo
+            i = (i // 2048 + 1) * 2048
+            continue
+        rec = data[i:i + n]
+        if len(rec) < 34:
+            break
+        nlen = rec[32]
+        name = rec[33:33 + nlen].decode("latin-1").split(";")[0].upper()
+        if name == wanted:
+            return struct.unpack_from("<I", rec, 2)[0], struct.unpack_from("<I", rec, 10)[0]
+        i += n
+    return None
+
+
+def read_disc(dev):
+    """Lê rótulo e SYSTEM.CNF. -> dict com sistema/serial/rotulo, ou {} se não é jogo."""
+    with open(dev, "rb", buffering=0) as f:
+        pvd = _read(f, 16, 2048)
+        if pvd[1:6] != b"CD001":
+            return {}
+        label = pvd[40:72].decode("latin-1").strip()
+        root = pvd[156:190]
+        r_lba, r_len = struct.unpack_from("<I", root, 2)[0], struct.unpack_from("<I", root, 10)[0]
+        r_len = min(r_len, 64 * 2048)
+        cnf = _find(f, r_lba, r_len, "SYSTEM.CNF")
+        if cnf is None:
+            if _find(f, r_lba, r_len, "PSX.EXE"):
+                return {"sistema": "ps1", "serial": "", "rotulo": label}
+            return {}
+        text = _read(f, cnf[0], min(cnf[1], 4096)).decode("latin-1", "replace")
+    sistema = "ps2" if re.search(r"^\s*BOOT2\s*=", text, re.M | re.I) else "ps1"
+    m = re.search(r"([A-Z]{4})[_-](\d{3})\.(\d{2})", text.upper())
+    serial = f"{m.group(1)}-{m.group(2)}{m.group(3)}" if m else ""
+    return {"sistema": sistema, "serial": serial, "rotulo": label}
+
+
+def _fetch(url, timeout=20):
+    req = urllib.request.Request(url, headers={"User-Agent": "SkyStation"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def names_db(sistema, online=True):
+    """Tabela serial -> nome Redump (cache em TSV; baixa a base uma vez)."""
+    tsv = os.path.join(CACHE, f"nomes-{sistema}.tsv")
+    if not os.path.exists(tsv) and online:
+        try:
+            raw = _fetch(DAT_URL.format(urllib.parse.quote(DATS[sistema])), timeout=60).decode("utf-8", "replace")
+            rows = {}
+            for block in raw.split("\ngame (")[1:]:
+                nm = re.search(r'^\s*name "([^"]+)"', block, re.M)
+                se = re.search(r'^\s*serial "([^"]+)"', block, re.M)
+                if not nm or not se:
+                    continue
+                for s in re.split(r"[,\s]+", se.group(1)):
+                    s = s.strip().upper()
+                    if s and s not in rows:
+                        rows[s] = nm.group(1)
+            os.makedirs(CACHE, exist_ok=True)
+            with open(tsv + ".tmp", "w") as f:
+                for s, n in rows.items():
+                    f.write(f"{s}\t{n}\n")
+            os.replace(tsv + ".tmp", tsv)
+        except Exception:
+            pass
+    db = {}
+    try:
+        with open(tsv) as f:
+            for line in f:
+                s, _, n = line.rstrip("\n").partition("\t")
+                db[s] = n
+    except OSError:
+        pass
+    return db
+
+
+def cover(sistema, serial, title, online=True):
+    dest = os.path.join(CACHE, f"{serial or title}.png")
+    if os.path.exists(dest):
+        return dest
+    if not online or not title:
+        return ""
+    base = re.sub(r"\s*\([^\)]*\)", "", title).strip()
+    for n in (title, f"{base} (USA)", f"{base} (Europe)", f"{base} (Brazil)"):
+        n = re.sub(r'[&*/:`<>?\\|"]', "_", n)
+        try:
+            data = _fetch(THUMB_URL.format(repo=THUMB_REPO[sistema], name=urllib.parse.quote(n)), timeout=15)
+        except Exception:
+            continue
+        os.makedirs(CACHE, exist_ok=True)
+        tmp = dest + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(data)
+        try:  # reduz para 512 px de altura, como as outras capas
+            os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+            os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
+            import pygame
+            img = pygame.image.load(tmp)
+            w, h = img.get_size()
+            if h > 512:
+                pygame.image.save(pygame.transform.smoothscale(img, (max(1, int(w * 512 / h)), 512)), tmp + ".png")
+                os.replace(tmp + ".png", tmp)
+        except Exception:
+            pass
+        os.replace(tmp, dest)
+        return dest
+    return ""
+
+
+def detect(online=True):
+    """Estado do leitor. Sempre devolve um dict com "disco"."""
+    ds = drives()
+    if not ds:
+        return {"disco": False, "leitor": False}
+    dev, sg = ds[0]
+    ok = disc_ok(dev)
+    if ok is None:
+        return {"disco": False, "leitor": True, "erro": "sem permissão no leitor (rode a Fase 5.8)"}
+    if not ok:
+        return {"disco": False, "leitor": True}
+    try:
+        info = read_disc(dev)
+    except OSError as e:
+        return {"disco": True, "leitor": True, "dev": dev, "sg": sg, "sistema": "", "erro": str(e)}
+    out = {"disco": True, "leitor": True, "dev": dev, "sg": sg, "sistema": "", "serial": "",
+           "rotulo": "", "titulo": "", "capa": ""}
+    out.update(info)
+    if out["sistema"]:
+        title = names_db(out["sistema"], online).get(out["serial"], "") if out["serial"] else ""
+        out["titulo"] = title or out["rotulo"].replace("_", " ").title() or out["serial"]
+        out["capa"] = cover(out["sistema"], out["serial"], title, online)
+    return out
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "info"
+    if cmd == "info":
+        print(json.dumps(detect(online="--sem-rede" not in sys.argv), ensure_ascii=False))
+    elif cmd == "ejetar":
+        ds = drives()
+        if not ds:
+            print(json.dumps({"ok": False, "erro": "nenhum leitor"}))
+            return 1
+        r = subprocess.run(["eject", ds[0][0]], capture_output=True, text=True)
+        print(json.dumps({"ok": r.returncode == 0, "erro": r.stderr.strip()}, ensure_ascii=False))
+        return r.returncode
+    else:
+        print(__doc__)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

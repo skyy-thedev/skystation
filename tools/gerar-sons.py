@@ -119,6 +119,21 @@ def power_on():
 save("ligar.wav", power_on(), gain=0.85)
 
 
+# disco no leitor: "giro" que acelera + dois toques; ao tirar, o giro desacelera
+def spin(up=True, dur=0.55):
+    t = np.arange(int(dur * RATE)) / RATE
+    k = t / dur if up else 1 - t / dur
+    f = 90 + 260 * k ** 1.5
+    env = np.sin(np.pi * np.clip(t / dur, 0, 1)) ** 1.5
+    return (np.sin(TAU * np.cumsum(f) / RATE) + 0.35 * np.sin(TAU * np.cumsum(f * 3) / RATE)) * env * 0.22
+
+
+save("disco-on.wav", echo(seq([(0, spin(True)), (.42, note(G5, .4, .35, decay=.2)),
+                               (.5, note(D6, .5, .35, decay=.25))], 1.2), .14, .3))
+save("disco-off.wav", seq([(0, note(D6, .25, .3, decay=.1)), (.07, note(G5, .3, .3, decay=.12)),
+                          (.12, spin(False, .5))], .7))
+
+
 # ---------------------------------------------------------------- música ambiente
 def ambient(seconds=64.0):
     """Pad lento em 4 acordes (16 s cada) + sininhos esparsos + "reverb" por ecos. Loop sem emenda."""
