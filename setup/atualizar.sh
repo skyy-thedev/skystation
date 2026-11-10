@@ -37,7 +37,7 @@ fi
 for pair in skystation-atualizar.sh:skystation-atualizar expandir.sh:skystation-expandir \
             diag.sh:skystation-diag marca.sh:skystation-marca diag-controle.sh:skystation-diag-controle \
             energia.sh:skystation-energia som-ligar.sh:skystation-som-ligar \
-            atualizar-menu.sh:skystation-atualizar-menu; do
+            atualizar-menu.sh:skystation-atualizar-menu diag-ps2.sh:skystation-diag-ps2; do
     f="$SRC/setup/${pair%%:*}"; [ -f "$f" ] || continue
     sed 's/\r$//' "$f" > "/usr/local/bin/${pair##*:}.new"
     chmod 755 "/usr/local/bin/${pair##*:}.new"
