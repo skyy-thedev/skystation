@@ -130,6 +130,17 @@ def spin(up=True, dur=0.55):
 
 save("disco-on.wav", echo(seq([(0, spin(True)), (.42, note(G5, .4, .35, decay=.2)),
                                (.5, note(D6, .5, .35, decay=.25))], 1.2), .14, .3))
+# TV conectada: "tela acendendo" (varredura que abre) + acorde; desconectada: o inverso curto
+def sweep_up(dur=0.35, f0=300, f1=1400):
+    t = np.arange(int(dur * RATE)) / RATE
+    f = f0 * (f1 / f0) ** (t / dur)
+    return np.sin(TAU * np.cumsum(f) / RATE) * np.sin(np.pi * t / dur) * 0.16
+
+
+save("tv-on.wav", echo(seq([(0, sweep_up()), (.28, note(C5, .6, .3, decay=.3)), (.32, note(G5, .6, .28, decay=.3)),
+                            (.36, note(E6, .6, .22, decay=.3))], 1.3), .15, .3))
+save("tv-off.wav", seq([(0, note(E6, .25, .25, decay=.1)), (.06, note(C5, .3, .25, decay=.12)),
+                       (.1, sweep_up(.3, 1200, 250))], .55))
 save("disco-off.wav", seq([(0, note(D6, .25, .3, decay=.1)), (.07, note(G5, .3, .3, decay=.12)),
                           (.12, spin(False, .5))], .7))
 

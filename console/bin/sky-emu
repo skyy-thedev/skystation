@@ -68,7 +68,8 @@ ps2)
         fi
     fi
     [ -n "$BIOS" ] || fail "Falta a BIOS do PS2. Envie pelo Wi-Fi (Sistema: BIOS do PS2) ou coloque em SKYROMS/bios."
-    python3 /opt/skystation/bin/sky-pcsx2-ini "$PROFILE" "$SKY" "$(basename "$BIOS")" \
+    GAME_ID="$(cat "${XDG_RUNTIME_DIR:-/tmp}/skystation/game.id" 2>/dev/null)"
+    python3 /opt/skystation/bin/sky-pcsx2-ini "$PROFILE" "$SKY" "$(basename "$BIOS")" "$GAME_ID" \
         || fail "Não consegui preparar a configuração do PCSX2."
     if [ -n "$DISCO" ]; then
         exec "$PCSX2" -fullscreen -nogui -disc "$DEV"

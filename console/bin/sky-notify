@@ -9,6 +9,7 @@ cada coisa que acontece, mesmo com um jogo aberto:
   carregador ligado / desligado          bateria do console em 15 %, 5 % e 3 %
   bateria do controle fraca              temperatura alta
   disco de PS1/PS2 no leitor (Fase 5.8): identifica e escreve $XDG_RUNTIME_DIR/skystation/disco.json
+  TV ligada/desligada no HDMI (Fase 6.0): o som vai para a TV e volta sozinho
 
 Cada aviso também vira uma linha em $XDG_RUNTIME_DIR/skystation/events.jsonl, que o launcher
 lê para mostrar a notificação na tela. Com a bateria em 3 % (descarregando), o jogo aberto é
@@ -102,6 +103,83 @@ def _event_write(kind, text):
             f.write(json.dumps({"t": time.time(), "kind": kind, "text": text}, ensure_ascii=False) + "\n")
     except OSError:
         pass
+
+
+# ------------------------------------------------------------------ Modo TV (Fase 6.0)
+SYSFS = os.environ.get("SKY_SYSFS", "")
+
+
+def tv_output():
+    """Saída externa conectada (HDMI/DP/DVI/VGA) ou "". eDP/LVDS = tela do notebook."""
+    for p in sorted(glob.glob(SYSFS + "/sys/class/drm/card*-*/status")):
+        m = re.match(r"card\d+-((HDMI|DP|DVI|VGA)-.+)$", os.path.basename(os.path.dirname(p)))
+        if m and read(p).strip() == "connected":
+            return m.group(1)
+    return ""
+
+
+def pactl_json(*args):
+    try:
+        r = subprocess.run(["pactl", "-f", "json", *args], capture_output=True, text=True, timeout=5)
+        return json.loads(r.stdout) if r.returncode == 0 else []
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+
+
+def pactl(*args):
+    try:
+        subprocess.run(["pactl", *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def default_sink():
+    try:
+        r = subprocess.run(["pactl", "get-default-sink"], capture_output=True, text=True, timeout=5)
+        return r.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def audio_tv(on):
+    """Liga: ativa o perfil HDMI da placa e põe a saída HDMI como padrão. Desliga: volta a anterior."""
+    saved = os.path.join(RUN, "audio-antes-da-tv")
+    if os.path.exists(os.path.join(CONF, "tv-som.off")):
+        return
+    if on:
+        for _ in range(4):               # a TV leva alguns segundos para anunciar o áudio (ELD)
+            for card in pactl_json("list", "cards"):
+                profs = card.get("profiles", {}) or {}
+                hdmi = [n for n, p in profs.items() if n.startswith("output:hdmi") and "input" not in n
+                        and p.get("available", True) is not False]
+                if hdmi and not str(card.get("active_profile", "")).startswith("output:hdmi"):
+                    hdmi.sort(key=lambda n: (profs[n].get("priority", 0)), reverse=True)
+                    pactl("set-card-profile", card.get("name", ""), hdmi[0])
+            time.sleep(1.0)
+            sinks = [x.get("name", "") for x in pactl_json("list", "sinks") if "hdmi" in x.get("name", "").lower()]
+            if sinks:
+                cur = default_sink()
+                if cur and "hdmi" not in cur.lower():
+                    os.makedirs(RUN, exist_ok=True)
+                    with open(saved, "w") as f:
+                        f.write(cur)
+                pactl("set-default-sink", sinks[0])
+                return
+            time.sleep(2.0)
+    else:
+        try:
+            with open(saved) as f:
+                prev = f.read().strip()
+            os.remove(saved)
+        except OSError:
+            prev = ""
+        names = [x.get("name", "") for x in pactl_json("list", "sinks")]
+        if prev in names:
+            pactl("set-default-sink", prev)
+        else:
+            other = [n for n in names if "hdmi" not in n.lower()]
+            if other:
+                pactl("set-default-sink", other[0])
 
 
 # ------------------------------------------------------------------ disco no leitor (Fase 5.8)
@@ -280,6 +358,9 @@ def main():
     critical = False
     tick = 0
     disc = {"ok": False, "busy": False, "warned": False}
+    tv = tv_output()
+    if tv:
+        threading.Thread(target=audio_tv, args=(True,), daemon=True).start()
     try:
         os.remove(DISCO_JSON)
     except OSError:
@@ -373,7 +454,8 @@ def main():
             pad_bat = npad
 
         # disco no leitor (a cada 2 s; com jogo aberto não mexe no leitor)
-        if disco and tick % 2 == 0 and not disc["busy"] and not os.path.exists(os.path.join(RUN, "game.pid")):
+        if disco and tick % 2 == 0 and not disc["busy"] and not os.path.exists(os.path.join(RUN, "game.pid")) \
+                and not os.path.exists(os.path.join(RUN, "disco.ocupado")):
             ds = disco.drives()
             ok = disco.disc_ok(ds[0][0]) if ds else False
             if ok is None:
@@ -392,6 +474,18 @@ def main():
                 event("disco", "Disco removido", "disco-off")
                 event("jogos", "recarregar")
             disc["ok"] = ok
+
+        # TV no HDMI (a cada 2 s). A imagem troca sozinha (cage -m last); aqui vai o som e o aviso.
+        if tick % 2 == 1:
+            cur_tv = tv_output()
+            if bool(cur_tv) != bool(tv):
+                if cur_tv:
+                    event("tv", "TV conectada: imagem e som na TV", "tv-on")
+                else:
+                    event("tv", "TV desconectada: de volta à tela do console", "tv-off")
+                threading.Thread(target=audio_tv, args=(bool(cur_tv),), daemon=True).start()
+                special = True
+            tv = cur_tv
 
         # temperatura (a cada 5 s): 90 °C por 15 s seguidos
         if tick % 5 == 0:

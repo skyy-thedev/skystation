@@ -37,6 +37,11 @@ fi
 # da VM (se existir). Assim dá para ler o log mesmo com o console aberto ou travado.
 ( sleep 10; [ -w /mnt/skystation ] && cp "$LOG" /mnt/skystation/session.log ) 2>/dev/null &
 
+# Modo TV (Fase 6.0): "-m last" = só a última tela conectada. Ligou o HDMI, a imagem vai para a
+# TV (a tela do notebook apaga); tirou o cabo, volta para a tela do console. Sem reiniciar nada.
+CAGE_OPTS="-m last"
+cage -h 2>&1 | grep -q -- "-m extend" || CAGE_OPTS=""
+
 # Modo de vídeo (comando skystation-vm):
 #   auto     -> tenta a GPU; se o compositor cair nos primeiros 20 s, usa só CPU (pixman)
 #   hibrido  -> compositor na CPU, launcher e jogos na GPU (útil na VM com aceleração 3D)
@@ -44,22 +49,22 @@ fi
 MODE="$(tr -d '[:space:]' 2>/dev/null <"$HOME/.config/skystation/video")"
 case "$MODE" in
     hibrido)
-        WLR_RENDERER=pixman cage -s -- $APP >"$LOG" 2>&1
+        WLR_RENDERER=pixman cage -s $CAGE_OPTS -- $APP >"$LOG" 2>&1
         code=$?
         ;;
     software)
-        WLR_RENDERER=pixman LIBGL_ALWAYS_SOFTWARE=1 cage -s -- $APP >"$LOG" 2>&1
+        WLR_RENDERER=pixman LIBGL_ALWAYS_SOFTWARE=1 cage -s $CAGE_OPTS -- $APP >"$LOG" 2>&1
         code=$?
         ;;
     *)
         # -s permite trocar de tty (Ctrl+Alt+F2) mesmo com o cage aberto.
         t0=$(date +%s)
-        WLR_RENDERER=gles2 cage -s -- $APP >"$LOG" 2>&1
+        WLR_RENDERER=gles2 cage -s $CAGE_OPTS -- $APP >"$LOG" 2>&1
         code=$?
         # Caiu logo no começo (sem GPU utilizável, driver abortou...)? Plano B: tudo na CPU.
         if [ $code -ne 0 ] && [ $(( $(date +%s) - t0 )) -lt 20 ]; then
             echo "--- GPU falhou (código $code): tentando WLR_RENDERER=pixman ---" >>"$LOG"
-            WLR_RENDERER=pixman LIBGL_ALWAYS_SOFTWARE=1 cage -s -- $APP >>"$LOG" 2>&1
+            WLR_RENDERER=pixman LIBGL_ALWAYS_SOFTWARE=1 cage -s $CAGE_OPTS -- $APP >>"$LOG" 2>&1
             code=$?
         fi
         ;;

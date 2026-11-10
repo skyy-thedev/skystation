@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
-"""SkyStation: receber jogos pelo Wi-Fi.
+"""SkyStation: Central web (antes "receber jogos pelo Wi-Fi").
 
-Abre uma página na rede local (porta 8080). No PC ou no celular, acesse o endereço que aparece
-na tela do console, digite o PIN e arraste os arquivos (.cue + .bin, .chd, .iso…). Eles vão
-direto para ~/skystation/roms/<sistema> ou para o pendrive SKYROMS.
+Abre uma página na rede local (porta 8080), só enquanto a tela "Central web" está aberta no
+console. No PC ou no celular, acesse o endereço que aparece na TV e digite o PIN. Abas:
+  Enviar     arraste jogos (.cue + .bin, .chd, .iso…), capas e a BIOS do PS2
+  Jogos      biblioteca com capa, tamanho e onde está; mover console ⇄ SKYROMS; apagar
+  Capturas   ver e baixar as capturas de tela
+  Saves      backup dos saves (cartões de memória) e, se quiser, dos estados salvos (.zip)
 
 Uso: sky-receber <pin>     (aberto pelo launcher; fecha quando você sai da tela)
 Saída: uma linha JSON por evento, para o launcher mostrar o progresso.
 """
+import base64
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 import threading
 import time
 import urllib.parse
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = 8080
@@ -25,7 +32,84 @@ EXTS = {"ps1": {"cue", "bin", "chd", "pbp", "m3u", "iso", "img", "png", "jpg"},
         "ps2": {"iso", "chd", "cso", "gz", "png", "jpg"},
         "bios": {"bin", "rom0", "rom1", "rom2", "erom", "nvm", "mec"}}
 BIOS_DIR = os.path.join(HOME, "skystation/bios/ps2")
+SHOTS = os.path.join(HOME, "skystation/capturas")
+SAVES = os.path.join(HOME, "skystation/saves")
+STATES = os.path.join(HOME, "skystation/states")
+GAME_EXTS = {"ps1": {"cue", "chd", "pbp", "m3u", "iso", "img"}, "ps2": {"iso", "chd", "cso", "gz"}}
+BIN = os.path.dirname(os.path.realpath(__file__))
 LOCK = threading.Lock()
+FAILS = {"n": 0}
+
+
+def _jogos_mod():
+    import importlib.machinery
+    return importlib.machinery.SourceFileLoader("sky_jogos", os.path.join(BIN, "sky-jogos")).load_module()
+
+
+JOGOS = _jogos_mod()
+
+
+def game_id(dest, sys_id, fname):
+    return base64.urlsafe_b64encode(f"{dest}|{sys_id}|{fname}".encode()).decode().rstrip("=")
+
+
+def game_path(gid):
+    """id -> caminho do jogo, só se estiver mesmo dentro de uma pasta de jogos."""
+    try:
+        raw = base64.urlsafe_b64decode(gid + "=" * (-len(gid) % 4)).decode()
+        dest, sys_id, fname = raw.split("|", 2)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if dest not in DESTS or sys_id not in GAME_EXTS or os.path.basename(fname) != fname or fname.startswith("."):
+        return None
+    path = os.path.join(DESTS[dest], sys_id, fname)
+    return path if os.path.isfile(path) else None
+
+
+def list_games():
+    games = []
+    for dest, base in DESTS.items():
+        if dest == "skyroms" and not skyroms_ok():
+            continue
+        for sys_id, exts in GAME_EXTS.items():
+            folder = os.path.join(base, sys_id)
+            try:
+                names = sorted(os.listdir(folder), key=str.lower)
+            except OSError:
+                continue
+            lower = {n.lower() for n in names}
+            for n in names:
+                ext = n.rsplit(".", 1)[-1].lower() if "." in n else ""
+                if ext not in exts or n.endswith(".parcial"):
+                    continue
+                if ext == "bin" and (n.rsplit(".", 1)[0] + ".cue").lower() in lower:
+                    continue
+                path = os.path.join(folder, n)
+                files = JOGOS.game_files(path)
+                size = sum(os.path.getsize(f) for f in files if not f.lower().endswith((".png", ".jpg")))
+                stem = n.rsplit(".", 1)[0]
+                games.append({"id": game_id(dest, sys_id, n), "sistema": sys_id, "arquivo": n,
+                              "nome": re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", "", stem).strip() or stem,
+                              "onde": dest, "tamanho": size, "formato": ext.upper(),
+                              "capa": any(f.lower().endswith((".png", ".jpg")) for f in files)})
+    return games
+
+
+def space():
+    out = {}
+    for dest, base in DESTS.items():
+        if dest == "skyroms" and not skyroms_ok():
+            continue
+        try:
+            u = shutil.disk_usage(base if os.path.isdir(base) else HOME)
+            out[dest] = {"livre": u.free, "total": u.total}
+        except OSError:
+            pass
+    return out
+
+
+def acao(texto):
+    emit({"evento": "acao", "texto": texto})
 
 
 def emit(obj):
@@ -42,26 +126,42 @@ def skyroms_ok():
 
 
 PAGE = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>SkyStation · Enviar jogos</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>SkyStation · Central web</title>
 <style>
 *{box-sizing:border-box}body{margin:0;font-family:system-ui,Segoe UI,Roboto,sans-serif;color:#eef2ff;
 background:radial-gradient(1200px 600px at 50% 120%,#1b3a8a 0,#0d1a4a 40%,#040817 100%);min-height:100vh}
-main{max-width:760px;margin:0 auto;padding:40px 20px}h1{font-size:30px;margin:0 0 4px}h1 b{color:#4fd1ff}
-p.sub{color:#a9b6d8;margin:0 0 28px}.row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+main{max-width:900px;margin:0 auto;padding:32px 18px 60px}h1{font-size:30px;margin:0 0 4px}h1 b{color:#4fd1ff}
+p.sub{color:#a9b6d8;margin:0 0 20px}.row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;align-items:end}
 label{font-size:13px;color:#a9b6d8;display:block;margin-bottom:6px}
 select,input{background:#0a1236;color:#eef2ff;border:1px solid #2a3a7a;border-radius:10px;padding:10px 12px;font-size:16px}
-#drop{border:2px dashed #3b5bb8;border-radius:18px;padding:48px 20px;text-align:center;color:#a9b6d8;
+nav{display:flex;gap:6px;margin:6px 0 20px;flex-wrap:wrap}nav button{flex:1;min-width:110px}
+button,.btn{background:#13205a;color:#eef2ff;border:1px solid #2a3a7a;border-radius:10px;padding:10px 14px;font-size:15px;cursor:pointer;text-decoration:none;display:inline-block}
+button.on{background:#4fd1ff;color:#04112e;border-color:#4fd1ff;font-weight:600}button.red{border-color:#7a2a3a;color:#ffb3b3}
+button:disabled{opacity:.5}
+#drop{border:2px dashed #3b5bb8;border-radius:18px;padding:44px 20px;text-align:center;color:#a9b6d8;
 background:rgba(10,18,54,.5);cursor:pointer;transition:.2s}#drop.on{border-color:#4fd1ff;background:rgba(79,209,255,.08);color:#fff}
 #drop strong{display:block;font-size:20px;color:#eef2ff;margin-bottom:6px}
-.f{background:rgba(10,18,54,.7);border:1px solid #1f2d63;border-radius:12px;padding:12px 14px;margin-top:10px}
+.f,.g{background:rgba(10,18,54,.7);border:1px solid #1f2d63;border-radius:12px;padding:12px 14px;margin-top:10px}
 .f .n{display:flex;justify-content:space-between;gap:10px;font-size:14px}.f .n span:last-child{color:#a9b6d8}
 .bar{height:6px;background:#1a2550;border-radius:3px;margin-top:8px;overflow:hidden}.bar i{display:block;height:100%;width:0;background:#4fd1ff}
 .ok .bar i{background:#54f0b8}.err{border-color:#ff7a7a}.err .n span:last-child{color:#ff9a9a}
 .tip{color:#6d7ba3;font-size:13px;margin-top:22px;line-height:1.5}
+.g{display:flex;gap:14px;align-items:center}.g img,.g .ph{width:58px;height:74px;object-fit:cover;border-radius:6px;background:#0a1236;flex:none}
+.g .t{flex:1;min-width:0}.g .t b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.g .t span{color:#a9b6d8;font-size:13px}.g .a{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.badge{font-size:11px;padding:2px 7px;border-radius:6px;background:#2a3a7a;margin-right:6px}
+.esp{display:flex;gap:12px;flex-wrap:wrap}.esp div{flex:1;min-width:200px;background:rgba(10,18,54,.7);border:1px solid #1f2d63;border-radius:12px;padding:10px 14px;font-size:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.grid a{display:block;background:#0a1236;border-radius:10px;overflow:hidden;color:#a9b6d8;text-decoration:none;font-size:12px}
+.grid img{width:100%;display:block;aspect-ratio:16/9;object-fit:cover}.grid span{display:block;padding:6px 8px}
+.hide{display:none}#msg{min-height:22px;color:#ffcf7a;margin:8px 0}
 </style></head><body><main>
-<h1>Sky<b>Station</b></h1><p class="sub">Enviar jogos pelo Wi-Fi para o seu console</p>
+<h1>Sky<b>Station</b></h1><p class="sub">Central web do seu console</p>
+<div class="row"><div><label>PIN (aparece na TV)</label><input id="pin" inputmode="numeric" maxlength="4" size="6" placeholder="0000"></div></div>
+<nav><button data-t="enviar" class="on">Enviar</button><button data-t="jogos">Jogos</button><button data-t="capturas">Capturas</button><button data-t="saves">Saves</button></nav>
+<div id="msg"></div>
+<section id="t-enviar">
 <div class="row">
- <div><label>PIN (aparece na TV)</label><input id="pin" inputmode="numeric" maxlength="4" size="6" placeholder="0000"></div>
  <div><label>Sistema</label><select id="sys"><option value="ps1">PlayStation (PS1)</option><option value="ps2">PlayStation 2</option><option value="bios">BIOS do PS2</option></select></div>
  <div><label>Guardar em</label><select id="dest"><option value="interno">Console</option><option value="skyroms" id="osk">Pendrive SKYROMS</option></select></div>
 </div>
@@ -70,20 +170,59 @@ background:rgba(10,18,54,.5);cursor:pointer;transition:.2s}#drop.on{border-color
 <div id="list"></div>
 <p class="tip">Envie o .cue junto com todos os .bin do jogo. Capas: um .png com o mesmo nome do jogo.<br>
 O jogo aparece no console assim que terminar. Use só cópias dos seus próprios discos.</p>
+</section>
+<section id="t-jogos" class="hide"><div class="esp" id="esp"></div><div id="jl"></div></section>
+<section id="t-capturas" class="hide"><div class="grid" id="cl"></div></section>
+<section id="t-saves" class="hide">
+<div class="g"><div class="t"><b>Saves (cartões de memória)</b><span>O progresso dos seus jogos de PS1 e PS2. Pequeno: faça sempre.</span></div>
+<div class="a"><a class="btn" id="bk1">Baixar .zip</a></div></div>
+<div class="g"><div class="t"><b>Saves + estados salvos</b><span>Inclui os "salvar estado" do menu Home. Pode ficar grande.</span></div>
+<div class="a"><a class="btn" id="bk2">Baixar .zip</a></div></div>
+<p class="tip">Guarde o .zip no PC ou na nuvem. Para restaurar, copie as pastas de volta para ~/skystation no console.</p>
+</section>
 </main><script>
 const $=s=>document.querySelector(s);let fila=[],ocupado=false;
+const pin=()=>$('#pin').value;$('#pin').value=localStorage.getItem('pin')||'';
+$('#pin').oninput=()=>{localStorage.setItem('pin',pin());links()};
+function fmt(b){return b>1e9?(b/1e9).toFixed(2)+' GB':(b/1e6).toFixed(1)+' MB'}
+function msg(t){$('#msg').textContent=t||''}
+function api(path,opt={}){opt.headers=Object.assign({'X-Pin':pin()},opt.headers||{});return fetch(path,opt).then(async r=>{
+ let j={};try{j=await r.json()}catch(e){}if(r.status==403){msg('PIN errado: confira na tela do console');throw 0}return j})}
+let tab='enviar';document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{tab=b.dataset.t;
+ document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x==b));
+ document.querySelectorAll('section').forEach(s=>s.classList.toggle('hide',s.id!='t-'+tab));msg();
+ if(tab=='jogos')jogos();if(tab=='capturas')capturas();links()});
+function links(){const q='?pin='+encodeURIComponent(pin());$('#bk1').href='/api/saves.zip'+q;$('#bk2').href='/api/saves.zip'+q+'&tudo=1'}links();
 fetch('/info').then(r=>r.json()).then(i=>{if(!i.skyroms){$('#osk').disabled=true;$('#osk').textContent+=' (não conectado)'}});
-$('#pin').value=localStorage.getItem('pin')||'';
+function jogos(){api('/api/jogos').then(j=>{const e=$('#esp');e.innerHTML='';
+ for(const[k,v]of Object.entries(j.espaco||{})){const d=document.createElement('div');
+  d.textContent=(k=='skyroms'?'Pendrive SKYROMS':'Console')+': '+fmt(v.livre)+' livres de '+fmt(v.total);e.appendChild(d)}
+ const l=$('#jl');l.innerHTML='';if(!(j.jogos||[]).length)l.innerHTML='<p class="tip">Nenhum jogo ainda. Use a aba Enviar.</p>';
+ for(const g of j.jogos||[]){const d=document.createElement('div');d.className='g';
+  const img=g.capa?'<img loading="lazy" src="/api/capa?id='+g.id+'&pin='+encodeURIComponent(pin())+'">':'<div class="ph"></div>';
+  const para=g.onde=='skyroms'?'interno':'skyroms';const pode=g.onde=='skyroms'||j.skyroms;
+  d.innerHTML=img+'<div class="t"><b></b><span><span class="badge">'+g.sistema.toUpperCase()+'</span>'+g.formato+' · '+fmt(g.tamanho)+' · '+(g.onde=='skyroms'?'SKYROMS':'console')+'</span></div><div class="a">'+
+   (pode?'<button data-m>'+(para=='skyroms'?'→ SKYROMS':'→ console')+'</button>':'')+'<button class="red" data-x>Apagar</button></div>';
+  d.querySelector('b').textContent=g.nome;
+  const bm=d.querySelector('[data-m]');if(bm)bm.onclick=()=>{bm.disabled=true;msg('Movendo '+g.nome+'… (pode levar alguns minutos)');
+   api('/api/mover?id='+g.id+'&para='+para,{method:'POST'}).then(r=>{msg(r.ok?r.message:(r.error||'erro'));jogos()})};
+  d.querySelector('[data-x]').onclick=()=>{if(!confirm('Apagar '+g.nome+' do '+(g.onde=='skyroms'?'pendrive':'console')+'?'))return;
+   api('/api/apagar?id='+g.id,{method:'POST'}).then(r=>{msg(r.ok?r.message:(r.error||'erro'));jogos()})};
+  l.appendChild(d)}}).catch(()=>{})}
+function capturas(){api('/api/capturas').then(j=>{const c=$('#cl');c.innerHTML='';
+ if(!(j.capturas||[]).length)c.innerHTML='<p class="tip">Nenhuma captura ainda. No jogo: botão Home → Capturar tela.</p>';
+ for(const s of j.capturas||[]){const q='?nome='+encodeURIComponent(s.nome)+'&pin='+encodeURIComponent(pin());
+  const a=document.createElement('a');a.href='/captura'+q+'&baixar=1';a.innerHTML='<img loading="lazy" src="/captura'+q+'"><span></span>';
+  a.querySelector('span').textContent=s.nome;c.appendChild(a)}}).catch(()=>{})}
 const drop=$('#drop');drop.onclick=()=>$('#pick').click();$('#pick').onchange=e=>add(e.target.files);
 ['dragenter','dragover'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add('on')}));
 ['dragleave','drop'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove('on')}));
 drop.addEventListener('drop',e=>add(e.dataTransfer.files));
-function fmt(b){return b>1e9?(b/1e9).toFixed(2)+' GB':(b/1e6).toFixed(1)+' MB'}
-function add(files){localStorage.setItem('pin',$('#pin').value);for(const f of files){const el=document.createElement('div');
+function add(files){for(const f of files){const el=document.createElement('div');
 el.className='f';el.innerHTML='<div class="n"><span></span><span>na fila · '+fmt(f.size)+'</span></div><div class="bar"><i></i></div>';
 el.querySelector('.n span').textContent=f.name;$('#list').appendChild(el);fila.push({f,el,sys:$('#sys').value,dest:$('#dest').value})}next()}
 function next(){if(ocupado||!fila.length)return;ocupado=true;const it=fila.shift(),x=new XMLHttpRequest(),st=it.el.querySelector('.n span:last-child');
-x.open('PUT','/enviar?nome='+encodeURIComponent(it.f.name)+'&sistema='+it.sys+'&destino='+it.dest);x.setRequestHeader('X-Pin',$('#pin').value);
+x.open('PUT','/enviar?nome='+encodeURIComponent(it.f.name)+'&sistema='+it.sys+'&destino='+it.dest);x.setRequestHeader('X-Pin',pin());
 x.upload.onprogress=e=>{if(e.lengthComputable){const p=e.loaded/e.total;it.el.querySelector('i').style.width=(p*100)+'%';st.textContent=Math.round(p*100)+'% · '+fmt(e.total)}};
 x.onload=()=>{let r={};try{r=JSON.parse(x.responseText)}catch(e){}if(x.status==200&&r.ok){it.el.classList.add('ok');st.textContent='enviado ✓'}
 else{it.el.classList.add('err');st.textContent=r.error||('erro '+x.status)}ocupado=false;next()};
@@ -105,11 +244,113 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def authed(self, q):
+        """PIN no cabeçalho X-Pin (páginas) ou em ?pin= (imagens e downloads)."""
+        if self.headers.get("X-Pin", "") == PIN or q.get("pin", "") == PIN:
+            FAILS["n"] = 0
+            return True
+        FAILS["n"] += 1
+        emit({"evento": "pin_errado"})
+        if FAILS["n"] > 5:
+            time.sleep(min(10, FAILS["n"]))   # freia quem tenta adivinhar o PIN
+        self.reply(403, json.dumps({"ok": False, "error": "PIN errado"}))
+        return False
+
+    def send_file(self, path, ctype, download=False):
+        try:
+            size = os.path.getsize(path)
+            f = open(path, "rb")
+        except OSError:
+            return self.reply(404, json.dumps({"ok": False, "error": "não encontrado"}))
+        with f:
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(size))
+            if download:
+                self.send_header("Content-Disposition",
+                                 "attachment; filename*=UTF-8''" + urllib.parse.quote(os.path.basename(path)))
+            self.end_headers()
+            shutil.copyfileobj(f, self.wfile, 1024 * 1024)
+
     def do_GET(self):
-        if self.path.startswith("/info"):
-            self.reply(200, json.dumps({"skyroms": skyroms_ok()}))
-        else:
-            self.reply(200, PAGE, "text/html; charset=utf-8")
+        u = urllib.parse.urlparse(self.path)
+        q = dict(urllib.parse.parse_qsl(u.query))
+        if u.path == "/info":
+            return self.reply(200, json.dumps({"skyroms": skyroms_ok()}))
+        if u.path == "/":
+            return self.reply(200, PAGE, "text/html; charset=utf-8")
+        if not self.authed(q):
+            return
+        if u.path == "/api/jogos":
+            return self.reply(200, json.dumps({"ok": True, "jogos": list_games(), "espaco": space(),
+                                               "skyroms": skyroms_ok()}, ensure_ascii=False))
+        if u.path == "/api/capa":
+            path = game_path(q.get("id", ""))
+            covers = [f for f in JOGOS.game_files(path) if f.lower().endswith((".png", ".jpg"))] if path else []
+            if not covers:
+                return self.reply(404, json.dumps({"ok": False}))
+            return self.send_file(covers[0], "image/png" if covers[0].lower().endswith(".png") else "image/jpeg")
+        if u.path == "/api/capturas":
+            items = []
+            try:
+                for n in sorted(os.listdir(SHOTS), reverse=True):
+                    if n.lower().endswith(".png"):
+                        items.append({"nome": n, "tamanho": os.path.getsize(os.path.join(SHOTS, n))})
+            except OSError:
+                pass
+            return self.reply(200, json.dumps({"ok": True, "capturas": items}, ensure_ascii=False))
+        if u.path == "/captura":
+            n = os.path.basename(q.get("nome", ""))
+            if not n.lower().endswith(".png") or n.startswith("."):
+                return self.reply(404, json.dumps({"ok": False}))
+            return self.send_file(os.path.join(SHOTS, n), "image/png", q.get("baixar") == "1")
+        if u.path == "/api/saves.zip":
+            return self.send_zip(q.get("tudo") == "1")
+        self.reply(404, json.dumps({"ok": False, "error": "não encontrado"}))
+
+    def send_zip(self, everything):
+        stamp = time.strftime("%Y-%m-%d")
+        name = f"skystation-saves{'-completo' if everything else ''}-{stamp}.zip"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        roots = [("saves", SAVES)] + ([("states", STATES)] if everything else [])
+        n = 0
+        try:
+            with zipfile.ZipFile(self.wfile, "w", zipfile.ZIP_DEFLATED, compresslevel=5) as z:
+                for arc, root in roots:
+                    for dirpath, _, files in os.walk(root):
+                        for fn in files:
+                            full = os.path.join(dirpath, fn)
+                            z.write(full, os.path.join(arc, os.path.relpath(full, root)))
+                            n += 1
+        except (OSError, BrokenPipeError):
+            return
+        acao(f"Backup dos saves baixado ({n} arquivos)")
+
+    def do_POST(self):
+        u = urllib.parse.urlparse(self.path)
+        q = dict(urllib.parse.parse_qsl(u.query))
+        if not self.authed(q):
+            return
+        path = game_path(q.get("id", ""))
+        if u.path not in ("/api/apagar", "/api/mover") or not path:
+            return self.reply(404, json.dumps({"ok": False, "error": "jogo não encontrado"}, ensure_ascii=False))
+        args = ["apagar", path] if u.path == "/api/apagar" else ["mover", path, q.get("para", "")]
+        if args[0] == "mover" and args[2] not in DESTS:
+            return self.reply(400, json.dumps({"ok": False, "error": "destino inválido"}, ensure_ascii=False))
+        try:
+            r = subprocess.run([os.path.join(BIN, "sky-jogos"), *args], capture_output=True, text=True, timeout=3600)
+            last = [l for l in r.stdout.splitlines() if l.startswith("{") and '"ok"' in l]
+            res = json.loads(last[-1]) if last else {"ok": False, "error": "sem resposta"}
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
+            res = {"ok": False, "error": str(e)}
+        if res.get("ok"):
+            acao(f"{os.path.basename(path)}: {res.get('message', 'ok')}")
+        self.reply(200, json.dumps(res, ensure_ascii=False))
 
     def do_PUT(self):
         u = urllib.parse.urlparse(self.path)
@@ -117,9 +358,8 @@ class Handler(BaseHTTPRequestHandler):
         fail = lambda c, m: self.reply(c, json.dumps({"ok": False, "error": m}, ensure_ascii=False))
         if u.path != "/enviar":
             return fail(404, "não encontrado")
-        if self.headers.get("X-Pin", "") != PIN:
-            emit({"evento": "pin_errado"})
-            return fail(403, "PIN errado (veja na tela do console)")
+        if not self.authed(q):
+            return
         name = os.path.basename(q.get("nome", "")).strip()
         sys_id, dest = q.get("sistema", ""), q.get("destino", "interno")
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""

@@ -20,6 +20,7 @@ skystation/
 │   ├── fase5-7.sh    som de ligar, modo de espera, receber jogos pelo Wi-Fi, mover jogos
 │   ├── som-ligar.sh  som de ligar no começo do boot (serviço skystation-som-ligar)
 │   ├── fase5-8.sh    jogar direto do disco (acesso ao leitor: udev + módulo sg)
+│   ├── fase6-0.sh    desempenho por jogo (PS2), Modo TV, Central web, copiar disco (cdrdao, chdman)
 │   ├── atualizar-menu.sh  "Atualizar o SkyStation" do menu, sem sudo (serviço + .path do systemd)
 │   ├── marca.sh      identidade do sistema (comando skystation-marca, reaplicado pelo pacman)
 │   ├── diag.sh       diagnóstico do boot (comando skystation-diag)
@@ -142,6 +143,21 @@ Coloque o disco no leitor: em poucos segundos toca um som, aparece o aviso e o j
 - **Permissão:** `fase5-8.sh` carrega o módulo `sg` e libera `/dev/sr*` e `/dev/sg*` do leitor
   para o usuário do console (grupo `optical` + `uaccess`).
 
+## Fase 5.9 e 6.0
+
+- **Desempenho por jogo (PS2):** botão Y no jogo → Desempenho: Normal / Rápido / Máximo.
+  Rápido = EE Cycle Rate -1 + MTVU; Máximo = EE Cycle Rate -2 + EE Cycle Skip 1 + MTVU.
+  Fica em `~/.config/skystation/ps2-desempenho.json` e é aplicado pelo `sky-pcsx2-ini`.
+- **Modo TV:** o cage roda com `-m last`: ligou o HDMI, a imagem vai para a TV (a tela do notebook
+  apaga); tirou, volta. O `sky-notify` troca o som para o HDMI (e volta) e avisa com som próprio.
+  Na TV a interface fica 20% maior (Sistema → Modo TV liga/desliga). `~/.config/skystation/tv-som.off`
+  impede a troca de som.
+- **Central web:** Sistema → Central web. Abas Enviar, Jogos (capa, tamanho, mover, apagar),
+  Capturas (ver/baixar) e Saves (backup .zip). Só funciona com a tela aberta e com o PIN.
+- **Copiar disco:** Y no disco → Copiar para o console/SKYROMS. PS2 vira `.iso`; PS1 é lido em modo
+  cru pelo `cdrdao` (com faixas de áudio) e compactado em `.chd`.
+- **Compactar (CHD):** Y em um jogo `.cue`/`.iso` → converte com `chdman`, confere e apaga o original.
+
 ## Visual
 
 - **Temas:** Sistema → Tema de cores (Automático muda com a hora do dia: Oceano, Aurora,
@@ -202,6 +218,9 @@ curl -fsSL https://raw.githubusercontent.com/skyy-thedev/skystation/main/setup/s
 - [x] Fase 5.7: som de ligar, modo de espera com "ligar pelo controle", receber jogos pelo Wi-Fi,
       mover jogos console ⇄ SKYROMS, apagar jogo, espaço total (sistema + SKYROMS)
 - [x] Fase 5.8: jogar direto do disco (PS1 em CD, PS2 em DVD/CD), com nome, capa e ejetar
+- [x] Fase 5.9: desempenho por jogo no PS2 (Normal / Rápido / Máximo)
+- [x] Fase 6.0: Modo TV automático, Central web (biblioteca, capturas, backup dos saves),
+      copiar disco para o console, compactar jogo em CHD
 - [ ] Porta USB ao lado do HDMI sem energia (provável defeito físico)
 - [ ] Drive de DVD: jogar PS1/PS2 direto do disco ou copiar para .chd
 - [ ] SSD SATA no lugar do pendrive

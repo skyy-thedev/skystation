@@ -251,6 +251,7 @@ func _ready() -> void:
 	if not THEME_ORDER.has(theme_key):
 		theme_key = "auto"
 	_apply_theme(true)
+	_apply_tv_scale()
 	_make_glow()
 	logo_tex = _load_tex(ProjectSettings.globalize_path("res://logo.png"))  # a mesma logo da tela de boot
 	sounds_dir = ProjectSettings.globalize_path("res://").path_join("../sounds").simplify_path()
@@ -616,6 +617,8 @@ func _game_item(g: Dictionary) -> Dictionary:
 	var sub: String = TYPE_NAMES.get(g["type"], str(g["type"]))
 	if g["sys"] != "":
 		sub = ROM_SYSTEMS[g["sys"]]["name"]
+	if g["sys"] == "ps2" and _ps2_speed(g["id"]) != "normal":
+		sub += "  ·  Desempenho: " + SPEED_NAMES[_ps2_speed(g["id"])]
 	var pt: Dictionary = playtime.get(g["id"], {})
 	if not pt.is_empty():
 		sub += "  ·  " + _fmt_time(int(pt.get("seconds", 0))) + " jogados  ·  " + _fmt_when(int(pt.get("last", 0)))
@@ -672,7 +675,8 @@ func _build_cats() -> void:
 		_act("Sons da interface", "Ligados" if sounds_on else "Desligados", "sounds", "note"),
 		_act("Bateria e temperatura", _power_txt(), "power_info", "battery"),
 		_act("Armazenamento", disk_txt, "storage", "drive"),
-		_act("Receber jogos pelo Wi-Fi", "Envie do PC ou do celular pelo navegador", "receive", "download"),
+		_act("Central web (celular/PC)", "Enviar jogos, ver a biblioteca, baixar capturas e saves", "receive", "download"),
+		_act("Modo TV", _tv_txt(), "tv", "monitor"),
 		_act("Som de ligar", "Ligado" if not FileAccess.file_exists(conf_dir + "/ligar.off") else "Desligado", "boot_sound", "note"),
 		_act("Ligar pelo controle", _wake_txt(), "wake_pad", "pad"),
 		_act("Medição de FPS", "Ligada: contador e log nos jogos" if _fps_on() else "Desligada", "fps", "gauge"),
@@ -757,6 +761,8 @@ func _refresh_sys_items() -> void:
 					it["sub"] = "Desligado" if FileAccess.file_exists(conf_dir + "/ligar.off") else "Ligado"
 				"wake_pad":
 					it["sub"] = _wake_txt()
+				"tv":
+					it["sub"] = _tv_txt()
 
 
 # ---------------------------------------------------------------- ações
@@ -801,6 +807,10 @@ func _activate() -> void:
 			_toggle_file(conf_dir + "/ligar.off")
 			if not FileAccess.file_exists(conf_dir + "/ligar.off"):
 				_play_file("ligar")
+		"tv":
+			_toggle_file(conf_dir + "/tv-grande.off")
+			_apply_tv_scale()
+			_toast("Interface maior na TV: " + ("desligada" if FileAccess.file_exists(conf_dir + "/tv-grande.off") else "ligada"), 2.5, "monitor")
 		"wake_pad":
 			_toggle_file(conf_dir + "/acordar.off")
 			_toast("Vale a partir do próximo minuto (o sistema aplica sozinho)", 3.0, "pad")
@@ -1013,13 +1023,20 @@ func _toggle_panel() -> void:
 		if it.get("kind", "") == "game":
 			panel_items.append(["Jogar", "play"])
 			if it["game"].get("disco", false):
+				panel_items.append(["Copiar disco para o console", "copy_disc:interno"])
+				if skyroms_present:
+					panel_items.append(["Copiar disco para o pendrive SKYROMS", "copy_disc:skyroms"])
 				panel_items.append(["Ejetar disco", "eject"])
+			if it["game"].get("sys", "") == "ps2":
+				panel_items.append(["Desempenho: " + SPEED_NAMES[_ps2_speed(it["game"]["id"])], "ps2_speed"])
 			var gpath := str(it["game"].get("path", ""))
 			if gpath != "":
 				if gpath.begins_with("/mnt/skyroms/"):
 					panel_items.append(["Mover para o console", "move:interno"])
 				elif skyroms_present and not gpath.begins_with("/mnt/skystation/"):
 					panel_items.append(["Mover para o pendrive SKYROMS", "move:skyroms"])
+				if gpath.get_extension().to_lower() in ["cue", "iso", "img"]:
+					panel_items.append(["Compactar (CHD): ocupa menos espaço", "compress"])
 				panel_items.append(["Apagar jogo", "delete_game"])
 		if it.get("kind", "") == "shot":
 			panel_items.append(["Ver captura", "play"])
@@ -1040,6 +1057,16 @@ func _panel_choose() -> void:
 	panel_open = false
 	if a != "delete_game":
 		confirm_delete = false
+	if a.begins_with("copy_disc:"):
+		_run_job(["copiar-disco", a.split(":")[1]], "Copiando o disco…")
+		return
+	if a == "compress":
+		var itc := _cur()
+		_run_job(["compactar", str(itc["game"]["path"])], "Compactando " + str(itc.get("title", "")) + "…")
+		return
+	if a == "ps2_speed":
+		_cycle_ps2_speed(str(_cur()["game"]["id"]))
+		return
 	if a.begins_with("move:"):
 		var it := _cur()
 		_run_job(["mover", str(it["game"]["path"]), a.split(":")[1]], "Movendo " + str(it.get("title", "")) + "…")
@@ -1368,7 +1395,10 @@ func _poll_events() -> void:
 			reload_at = t + 0.8
 			covers_at = t + 3.0
 			continue
-		var icons := {"controle": "pad", "usb": "usb", "pendrive": "drive", "jogo": "disc", "disco": "disc",
+		if kind == "tv":
+			_apply_tv_scale()
+			_refresh_sys_items()
+		var icons := {"controle": "pad", "usb": "usb", "pendrive": "drive", "jogo": "disc", "disco": "disc", "tv": "monitor",
 			"bateria": "battery", "energia": "battery", "calor": "thermo"}
 		_toast(text, 3.5, str(icons.get(kind, "info")))
 		if kind in ["controle", "energia", "bateria"]:
@@ -1446,6 +1476,63 @@ func _toggle_file(path: String) -> void:
 	_refresh_sys_items()
 
 
+# ---------------------------------------------------------------- Modo TV (Fase 6.0)
+
+func _tv_output() -> String:
+	# Saída externa conectada (HDMI/DP/VGA). eDP/LVDS é a tela do próprio notebook.
+	var base := OS.get_environment("SKY_SYSFS") + "/sys/class/drm" if OS.get_environment("SKY_SYSFS") != "" else "/sys/class/drm"
+	var da := DirAccess.open(base)
+	if da == null:
+		return ""
+	for d in da.get_directories():
+		var m := RegEx.create_from_string("^card\\d+-((HDMI|DP|DVI|VGA)-.+)$").search(d)
+		if m != null and _read_text(base + "/" + d + "/status", "").strip_edges() == "connected":
+			return m.get_string(1)
+	return ""
+
+
+func _tv_txt() -> String:
+	var o := _tv_output()
+	var big := "interface maior: " + ("não" if FileAccess.file_exists(conf_dir + "/tv-grande.off") else "sim")
+	if o == "":
+		return "Ligue um cabo HDMI: imagem e som vão para a TV sozinhos  ·  " + big
+	return "TV conectada (%s): imagem e som na TV  ·  %s" % [o, big]
+
+
+func _apply_tv_scale() -> void:
+	# Na TV o jogador fica longe: tudo 20% maior (o layout se ajusta ao espaço que sobra).
+	var big := _tv_output() != "" and not FileAccess.file_exists(conf_dir + "/tv-grande.off")
+	get_window().content_scale_factor = 1.2 if big else 1.0
+
+
+const SPEED_NAMES := {"normal": "Normal", "rapido": "Rápido", "maximo": "Máximo"}
+const SPEED_ORDER := ["normal", "rapido", "maximo"]
+
+
+func _ps2_speed(game_id: String) -> String:
+	var txt := _read_text(conf_dir + "/ps2-desempenho.json", "{}")
+	var d = JSON.parse_string(txt) if txt.begins_with("{") else {}
+	return str(d.get(game_id, "normal")) if typeof(d) == TYPE_DICTIONARY else "normal"
+
+
+func _cycle_ps2_speed(game_id: String) -> void:
+	var txt := _read_text(conf_dir + "/ps2-desempenho.json", "{}")
+	var d = JSON.parse_string(txt) if txt.begins_with("{") else {}
+	if typeof(d) != TYPE_DICTIONARY:
+		d = {}
+	var cur := str(d.get(game_id, "normal"))
+	var nxt: String = SPEED_ORDER[(SPEED_ORDER.find(cur) + 1) % SPEED_ORDER.size()]
+	if nxt == "normal":
+		d.erase(game_id)
+	else:
+		d[game_id] = nxt
+	_write_text(conf_dir + "/ps2-desempenho.json", JSON.stringify(d))
+	var why := {"normal": "velocidade real do PS2", "rapido": "mais FPS, quase sem efeito colateral",
+		"maximo": "o máximo de FPS; alguns jogos engasgam ou falham"}
+	_toast("Desempenho: %s (%s)" % [SPEED_NAMES[nxt], why[nxt]], 3.5, "gauge")
+	_reload_games()
+
+
 func _wake_txt() -> String:
 	if FileAccess.file_exists(conf_dir + "/acordar.off"):
 		return "Desligado"
@@ -1518,6 +1605,9 @@ func _on_recv_line(line: String) -> void:
 			recv_cur = ""
 			recv_log.push_front("✗ " + str(ev.get("nome", "")) + ": " + str(ev.get("erro", "")))
 			recv_log = recv_log.slice(0, 6)
+		"acao":
+			recv_log.push_front("✓ " + str(ev.get("texto", "")))
+			recv_log = recv_log.slice(0, 6)
 		"pin_errado":
 			recv_log.push_front("✗ Alguém digitou o PIN errado")
 			recv_log = recv_log.slice(0, 6)
@@ -1555,6 +1645,8 @@ func _on_job_line(line: String) -> void:
 	var ev = JSON.parse_string(line) if line.begins_with("{") else null
 	if typeof(ev) != TYPE_DICTIONARY:
 		return
+	if ev.has("etapa"):
+		busy_msg = str(ev["etapa"]) + "…"
 	if ev.has("p"):
 		var base := busy_msg.split("  ")[0]
 		busy_msg = "%s  %d%%" % [base, int(float(ev["p"]) * 100)]
@@ -1583,7 +1675,7 @@ func _draw_receive(w: float, h: float) -> void:
 	var x := r.position.x + 48.0
 	var y := r.position.y + 62.0
 	_icon("download", Vector2(x + 14, y - 12), 34.0, accent)
-	_text("Receber jogos pelo Wi-Fi", Vector2(x + 48, y), 26, WHITE, true)
+	_text("Central web", Vector2(x + 48, y), 26, WHITE, true)
 	y += 56.0
 	_text("1.  No PC ou no celular (mesma rede Wi-Fi), abra no navegador:", Vector2(x, y), 18, MUTED)
 	y += 54.0
@@ -1593,7 +1685,7 @@ func _draw_receive(w: float, h: float) -> void:
 	_text("2.  Digite o PIN:", Vector2(x, y), 18, MUTED)
 	_text(recv_pin, Vector2(x + 190, y + 6), 40, WHITE, true)
 	y += 48.0
-	_text("3.  Arraste os arquivos do jogo (.cue + .bin, .chd, .iso). Ele aparece aqui sozinho.", Vector2(x, y), 18, MUTED)
+	_text("3.  Envie jogos, veja a biblioteca, baixe capturas e faça backup dos saves.", Vector2(x, y), 18, MUTED)
 	y += 46.0
 	if recv_cur != "":
 		_text("Recebendo:  " + recv_cur, Vector2(x, y), 18, WHITE, false, r.size.x - 96)
@@ -1601,7 +1693,7 @@ func _draw_receive(w: float, h: float) -> void:
 	for line in recv_log:
 		_text(str(line), Vector2(x, y), 16, MUTED, false, r.size.x - 96)
 		y += 26.0
-	_text("B  fechar (o recebimento para)", Vector2(x, r.end.y - 28), 15, DIM)
+	_text("B  fechar (a central web desliga)", Vector2(x, r.end.y - 28), 15, DIM)
 
 
 # ---------------------------------------------------------------- música ambiente
@@ -2257,9 +2349,11 @@ func _draw_panel(w: float, h: float) -> void:
 	draw_rect(Rect2(0, 0, w, h), Color(0, 0, 0, 0.35 * e))
 	draw_texture_rect(side_tex, Rect2(x, 0, pw, h), false, Color(palette[1].darkened(0.35), e))
 	draw_line(Vector2(x, 0), Vector2(x, h), Color(accent, 0.35 * e), 1.0)
-	var y0 := h * 0.30
+	# Muitas opções (disco, PS2) ou interface maior na TV: aperta o espaçamento para caber tudo.
+	var step := clampf((h * 0.88 - 60.0) / maxf(1.0, panel_items.size()), 40.0, 54.0)
+	var y0 := clampf(h * 0.30, 60.0, h - step * panel_items.size() + 10.0)
 	for i in panel_items.size():
-		var y := y0 + i * 54.0
+		var y := y0 + i * step
 		var on := i == panel_sel
 		if on:
 			_rrect(Rect2(x + 22, y - 32, pw - 44, 46), Color(accent, 0.16 * e), 10, Color(accent, 0.5 * e), 1)

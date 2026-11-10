@@ -4,13 +4,32 @@
 Só altera as chaves do SkyStation; o resto do arquivo (ajustes que o próprio PCSX2 grava)
 é preservado.
 
-Uso: sky-pcsx2-ini <leve|potente> <pasta-skystation> <arquivo-bios>
+Uso: sky-pcsx2-ini <leve|potente> <pasta-skystation> <arquivo-bios> [id-do-jogo]
+
+Fase 5.9: desempenho por jogo (menu Y do jogo), guardado em ~/.config/skystation/ps2-desempenho.json:
+  normal  -> PS2 na velocidade real
+  rapido  -> EE Cycle Rate -1 + MTVU (o processador do PS2 emulado roda um pouco mais devagar)
+  maximo  -> EE Cycle Rate -2 + EE Cycle Skip 1 + MTVU (mais FPS; alguns jogos engasgam ou falham)
 """
+import json
 import configparser
 import os
 import sys
 
 profile, sky, bios = sys.argv[1], sys.argv[2], sys.argv[3]
+game_id = sys.argv[4] if len(sys.argv) > 4 else ""
+
+# Desempenho por jogo.
+SPEED = {
+    "normal": {"EECycleRate": "0", "EECycleSkip": "0"},
+    "rapido": {"EECycleRate": "-1", "EECycleSkip": "0"},
+    "maximo": {"EECycleRate": "-2", "EECycleSkip": "1"},
+}
+try:
+    with open(os.path.expanduser("~/.config/skystation/ps2-desempenho.json")) as f:
+        speed = json.load(f).get(game_id, "normal")
+except (OSError, ValueError, AttributeError):
+    speed = "normal"
 
 # Renderer do PCSX2: 12 = OpenGL, 14 = Vulkan.
 # HD 4400 (notebook): OpenGL é o driver maduro; o Vulkan dessa geração é incompleto.
@@ -46,6 +65,11 @@ put("Folders", "Savestates", os.path.join(sky, "states", "ps2"))
 put("Filenames", "BIOS", bios)
 for k, v in PROFILES.get(profile, PROFILES["leve"]).items():
     put("EmuCore/GS", k, v)
+for k, v in SPEED.get(speed, SPEED["normal"]).items():
+    put("EmuCore/Speedhacks", k, v)
+# MTVU (VU1 numa thread própria): padrão do PCSX2 é desligado; nos modos rápido/máximo liga se
+# houver 4 threads (o i5-4200U tem 2 núcleos + hyperthreading).
+put("EmuCore/Speedhacks", "vuThread", "true" if speed != "normal" and (os.cpu_count() or 1) >= 4 else "false")
 
 # Controle: o PCSX2 lê controles pelo SDL. Se o Jogador 1 ainda não tem controle mapeado,
 # aplica o mapeamento padrão de "controle de videogame" do SDL (DS4, DualSense, Xbox, 8BitDo...).

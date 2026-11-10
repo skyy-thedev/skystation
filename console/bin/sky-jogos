@@ -6,6 +6,10 @@
                                        -> move o jogo inteiro (.cue + .bin, .m3u + discos, capa);
                                           imprime {"p": 0.0..1.0} durante a cópia e {"ok": ...} no fim
   sky-jogos apagar <arquivo>           -> apaga o jogo inteiro (mesmos arquivos)
+  sky-jogos compactar <arquivo>        -> converte .cue/.iso para .chd (chdman), confere e apaga o original
+  sky-jogos copiar-disco <interno|skyroms>
+                                       -> copia o disco do leitor (Fase 6.0): PS2 vira .iso;
+                                          PS1 vira .bin/.cue (cdrdao, com faixas de áudio) e depois .chd
 
 A cópia é verificada (tamanho) antes de apagar a origem: se faltar espaço ou der erro no
 meio, nada é apagado.
@@ -14,7 +18,9 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
+import time
 
 HOME = os.path.expanduser("~")
 INTERNO = os.path.join(HOME, "skystation/roms")
@@ -155,6 +161,212 @@ def apagar(path):
     out({"ok": True, "message": "Jogo apagado"})
 
 
+RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
+
+
+def etapa(texto, p=None):
+    o = {"etapa": texto}
+    if p is not None:
+        o["p"] = round(max(0.0, min(1.0, p)), 3)
+    out(o)
+
+
+def chd_cmd(path, sys_id):
+    """createcd para CD (PS1, .cue), createdvd para DVD de PS2 (.iso grande)."""
+    ext = path.rsplit(".", 1)[-1].lower()
+    if ext == "cue" or (ext == "iso" and sys_id == "ps1"):
+        return "createcd"
+    if ext == "iso" and os.path.getsize(path) < 850 * 1024 * 1024 and sys_id == "ps2":
+        return "createcd"     # PS2 em CD (capa azul): imagem pequena
+    return "createdvd"
+
+
+def compactar(path, quiet_ok=False):
+    """Converte para CHD. Devolve o caminho do .chd ou None (já avisou o erro)."""
+    chdman = shutil.which("chdman")
+    if not chdman:
+        out({"ok": False, "error": "Compactar precisa do chdman: rode a Fase 6.0"})
+        return None
+    sys_id = system_of(path)
+    ext = path.rsplit(".", 1)[-1].lower()
+    if not os.path.isfile(path) or not sys_id or ext not in ("cue", "iso", "img"):
+        out({"ok": False, "error": "Só dá para compactar jogos .cue ou .iso"})
+        return None
+    files = [f for f in game_files(path) if not f.lower().endswith((".png", ".jpg"))]
+    total = sum(os.path.getsize(f) for f in files)
+    folder = os.path.dirname(path)
+    target = os.path.join(folder, os.path.basename(path).rsplit(".", 1)[0] + ".chd")
+    if os.path.exists(target):
+        out({"ok": False, "error": "Já existe uma versão .chd deste jogo"})
+        return None
+    if total * 0.9 + 50 * 1024 * 1024 > shutil.disk_usage(folder).free:
+        out({"ok": False, "error": f"Falta espaço para compactar (precisa de até {total * 0.9 / 1e9:.1f} GB livres)"})
+        return None
+    tmp = target + ".parcial.chd"
+    etapa("Compactando", 0.0)
+    proc = subprocess.Popen([chdman, chd_cmd(path, sys_id), "-i", path, "-o", tmp, "-f"],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    buf, last = b"", 0.0
+    while True:
+        c = proc.stdout.read(64)
+        if not c:
+            break
+        buf = (buf + c)[-200:]
+        m = re.findall(rb"(\d+(?:\.\d+)?)% complete", buf)
+        if m and time.monotonic() - last > 0.5:
+            last = time.monotonic()
+            etapa("Compactando", float(m[-1]) / 100)
+    if proc.wait() != 0:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        out({"ok": False, "error": "O chdman não conseguiu compactar este jogo"})
+        return None
+    etapa("Conferindo", 1.0)
+    if subprocess.run([chdman, "verify", "-i", tmp], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
+        os.remove(tmp)
+        out({"ok": False, "error": "A versão compactada não passou na conferência; o original foi mantido"})
+        return None
+    os.replace(tmp, target)
+    for f in files:
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+    novo = os.path.getsize(target)
+    if not quiet_ok:
+        out({"ok": True, "message": f"Compactado: {total / 1e9:.2f} GB → {novo / 1e9:.2f} GB"})
+    return target
+
+
+def _disco():
+    import importlib.machinery
+    return importlib.machinery.SourceFileLoader(
+        "sky_disco", os.path.join(os.path.dirname(os.path.realpath(__file__)), "sky-disco")).load_module()
+
+
+def copiar_disco(dest_kind):
+    disco = _disco()
+    info = disco.detect(online=True)
+    if not info.get("disco") or info.get("sistema") not in ("ps1", "ps2"):
+        out({"ok": False, "error": "Não há um jogo de PS1/PS2 no leitor"})
+        return
+    sys_id, dev = info["sistema"], info["dev"]
+    if dest_kind == "skyroms" and not mounted(SKYROMS):
+        out({"ok": False, "error": "Pendrive SKYROMS não está conectado"})
+        return
+    dest_dir = os.path.join(SKYROMS if dest_kind == "skyroms" else INTERNO, sys_id)
+    os.makedirs(os.path.join(dest_dir, "covers"), exist_ok=True)
+    nome = re.sub(r'[\\/:*?"<>|]', "_", info.get("titulo") or info.get("serial") or "Disco").strip() or "Disco"
+    try:
+        with open(f"/sys/class/block/{os.path.basename(dev)}/size") as f:
+            size = int(f.read()) * 512
+    except (OSError, ValueError):
+        size = 0
+    need = size * (1.2 if sys_id == "ps1" else 1.0)
+    free = shutil.disk_usage(dest_dir).free
+    if need + 100 * 1024 * 1024 > free:
+        out({"ok": False, "error": f"Falta espaço: o disco tem {need / 1e9:.1f} GB e há {free / 1e9:.1f} GB livres"})
+        return
+    for ext in (".iso", ".cue", ".chd"):
+        if os.path.exists(os.path.join(dest_dir, nome + ext)):
+            out({"ok": False, "error": "Este jogo já está copiado"})
+            return
+    os.makedirs(RUN, exist_ok=True)
+    lock = os.path.join(RUN, "disco.ocupado")       # o sky-notify não mexe no leitor durante a cópia
+    open(lock, "w").close()
+    try:
+        final = _copiar_ps2(dev, dest_dir, nome, size) if sys_id == "ps2" else _copiar_ps1(dev, dest_dir, nome, size)
+    finally:
+        try:
+            os.remove(lock)
+        except OSError:
+            pass
+    if not final:
+        return
+    if info.get("capa") and os.path.exists(info["capa"]):
+        try:
+            shutil.copyfile(info["capa"], os.path.join(dest_dir, "covers", os.path.basename(final).rsplit(".", 1)[0] + ".png"))
+        except OSError:
+            pass
+    if sys_id == "ps1" and shutil.which("chdman"):
+        chd = compactar(final, quiet_ok=True)
+        if chd:
+            final = chd
+    onde = "pendrive SKYROMS" if dest_kind == "skyroms" else "console"
+    out({"ok": True, "message": f"Disco copiado para o {onde}: {os.path.basename(final)}"})
+
+
+def _copiar_ps2(dev, dest_dir, nome, size):
+    target = os.path.join(dest_dir, nome + ".iso")
+    tmp = target + ".parcial"
+    done, last = 0, 0.0
+    etapa("Copiando o disco", 0.0)
+    try:
+        with open(dev, "rb", buffering=0) as a, open(tmp, "wb") as b:
+            while True:
+                chunk = a.read(2 * 1024 * 1024)
+                if not chunk:
+                    break
+                b.write(chunk)
+                done += len(chunk)
+                if time.monotonic() - last > 0.5:
+                    last = time.monotonic()
+                    etapa("Copiando o disco", done / max(1, size))
+            b.flush()
+            os.fsync(b.fileno())
+        if size and done != size:
+            raise OSError(f"leitura incompleta ({done} de {size} bytes)")
+        os.replace(tmp, target)
+        return target
+    except OSError as e:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        out({"ok": False, "error": f"Erro lendo o disco (risco ou sujeira?): {e}"})
+        return None
+
+
+def _copiar_ps1(dev, dest_dir, nome, size):
+    if not shutil.which("cdrdao"):
+        out({"ok": False, "error": "Copiar CD de PS1 precisa do cdrdao: rode a Fase 6.0"})
+        return None
+    base = os.path.join(dest_dir, nome)
+    binf, toc, cue = base + ".bin", base + ".toc", base + ".cue"
+    expect = max(1, size // 2048 * 2352)
+    etapa("Copiando o CD", 0.0)
+    proc = subprocess.Popen(["cdrdao", "read-cd", "--read-raw", "--datafile", binf, "--driver", "generic-mmc-raw",
+                             "--device", dev, toc], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    while proc.poll() is None:
+        time.sleep(0.7)
+        try:
+            etapa("Copiando o CD", min(0.99, os.path.getsize(binf) / expect))
+        except OSError:
+            pass
+    err = proc.stderr.read()[-300:] if proc.stderr else ""
+    ok = proc.returncode == 0 and os.path.exists(toc)
+    if ok:
+        ok = subprocess.run(["toc2cue", toc, cue], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    if ok:
+        # o toc2cue escreve o caminho do .bin; o cue fica na mesma pasta: só o nome do arquivo
+        with open(cue, errors="replace") as f:
+            txt = f.read()
+        txt = re.sub(r'FILE\s+"[^"]*"', f'FILE "{os.path.basename(binf)}"', txt)
+        with open(cue, "w") as f:
+            f.write(txt)
+    for f in ([toc] if ok else [toc, binf, cue]):
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+    if not ok:
+        out({"ok": False, "error": "Não consegui copiar o CD: " + (err.strip().splitlines()[-1] if err.strip() else "erro do cdrdao")})
+        return None
+    return cue
+
+
 def main():
     a = sys.argv[1:]
     if not a:
@@ -165,6 +377,10 @@ def main():
         mover(a[1], a[2])
     elif a[0] == "apagar" and len(a) == 2:
         apagar(a[1])
+    elif a[0] == "compactar" and len(a) == 2:
+        compactar(a[1])
+    elif a[0] == "copiar-disco" and len(a) == 2:
+        copiar_disco(a[1])
     else:
         out({"ok": False, "error": "comando inválido"})
 
