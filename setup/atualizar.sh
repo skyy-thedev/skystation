@@ -36,12 +36,44 @@ fi
 # Comandos do sistema (skystation-*) sempre na versão mais nova do projeto.
 for pair in skystation-atualizar.sh:skystation-atualizar expandir.sh:skystation-expandir \
             diag.sh:skystation-diag marca.sh:skystation-marca diag-controle.sh:skystation-diag-controle \
-            energia.sh:skystation-energia som-ligar.sh:skystation-som-ligar; do
+            energia.sh:skystation-energia som-ligar.sh:skystation-som-ligar \
+            atualizar-menu.sh:skystation-atualizar-menu; do
     f="$SRC/setup/${pair%%:*}"; [ -f "$f" ] || continue
     sed 's/\r$//' "$f" > "/usr/local/bin/${pair##*:}.new"
     chmod 755 "/usr/local/bin/${pair##*:}.new"
     mv -f "/usr/local/bin/${pair##*:}.new" "/usr/local/bin/${pair##*:}"
 done
+
+# Atualizar pelo menu (Fase 5.7.2): o launcher cria /var/lib/skystation/pedidos/atualizar e o
+# systemd roda a atualização como root. Sem sudo no menu, então nunca pede senha/permissão.
+install -d -m 755 -o "$USER_NAME" -g "$USER_NAME" /var/lib/skystation/pedidos
+install -d -m 755 /var/lib/skystation/atualizar
+cat >/etc/systemd/system/skystation-atualizar.service <<'UNIT'
+[Unit]
+Description=SkyStation: atualizar pelo menu do console
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/skystation-atualizar-menu
+TimeoutStartSec=20min
+UNIT
+cat >/etc/systemd/system/skystation-atualizar.path <<'UNIT'
+[Unit]
+Description=SkyStation: pedido de atualização vindo do menu
+
+[Path]
+PathExists=/var/lib/skystation/pedidos/atualizar
+Unit=skystation-atualizar.service
+
+[Install]
+WantedBy=paths.target
+UNIT
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+    systemctl enable --now skystation-atualizar.path >/dev/null 2>&1 || true
+fi
 
 # Versão: commit do Git, commit baixado do GitHub, ou data da atualização.
 if [ -f "$SRC/.commit" ]; then

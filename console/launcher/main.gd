@@ -268,6 +268,7 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
+	update_stop = true
 	if busy_thread != null and busy_thread.is_started():
 		busy_thread.wait_to_finish()
 	if recv_pid != -1:
@@ -899,10 +900,64 @@ func _start_update() -> void:
 	busy_thread.start(_update_worker)
 
 
+const UPD_DIR := "/var/lib/skystation/atualizar"
+const UPD_REQ := "/var/lib/skystation/pedidos/atualizar"
+var update_stop: bool = false
+
+
 func _update_worker() -> void:
-	var out: Array = []
-	var code := OS.execute("sudo", ["-n", "/usr/local/bin/skystation-atualizar", "--github"], out, true)
-	call_deferred("_update_done", code, "\n".join(out))
+	# Fase 5.7.2: sem sudo. O menu cria um pedido e o systemd roda a atualização como root.
+	if not DirAccess.dir_exists_absolute(UPD_REQ.get_base_dir()):
+		var out: Array = []
+		var code := OS.execute("sudo", ["-n", "/usr/local/bin/skystation-atualizar", "--github"], out, true)
+		call_deferred("_update_done", code, "\n".join(out))
+		return
+	var estado := UPD_DIR + "/estado"
+	var antes := FileAccess.get_modified_time(estado) if FileAccess.file_exists(estado) else 0
+	var f := FileAccess.open(UPD_REQ, FileAccess.WRITE)
+	if f == null:
+		call_deferred("_update_done", 1, "não consegui fazer o pedido de atualização")
+		return
+	f.store_string("1\n")
+	f.close()
+	var esperou := 0.0
+	var comecou := false
+	while not update_stop:
+		OS.delay_msec(500)
+		esperou += 0.5
+		var mudou := FileAccess.file_exists(estado) and FileAccess.get_modified_time(estado) > antes
+		var st := _read_text(estado, "").strip_edges() if mudou else ""
+		if st == "rodando":
+			comecou = true
+			var ult := _last_line(_read_text(UPD_DIR + "/log", ""))
+			if ult != "":
+				call_deferred("_update_progress", ult)
+		elif st == "ok" or st == "erro":
+			var txt := _read_text(UPD_DIR + "/log", "")
+			call_deferred("_update_done", 0 if st == "ok" else 1, txt)
+			return
+		if not comecou and esperou > 15.0:
+			call_deferred("_update_done", 1, "o serviço de atualização não respondeu. Rode uma vez no terminal: sudo skystation-atualizar")
+			return
+		if esperou > 1500.0:
+			call_deferred("_update_done", 1, "a atualização demorou demais. Confira a internet e tente de novo")
+			return
+
+
+func _last_line(txt: String) -> String:
+	var ult := ""
+	for l in txt.split("\n"):
+		if l.strip_edges() != "":
+			ult = l.strip_edges()
+	return ult
+
+
+func _update_progress(line: String) -> void:
+	if busy_thread == null:
+		return
+	if line.begins_with("==> "):
+		line = line.substr(4)
+	busy_msg = "Atualizando: " + line.left(70)
 
 
 func _update_done(code: int, out: String) -> void:
@@ -914,12 +969,9 @@ func _update_done(code: int, out: String) -> void:
 		_play("chime")
 	else:
 		busy_msg = ""
-		var line := ""
-		for l in out.split("\n"):
-			if l.strip_edges() != "":
-				line = l.strip_edges()
-		if out.contains("password") or out.contains("senha") or code == 1 and line == "":
-			line = "Falta permissão: rode a Fase 5.5 uma vez pelo terminal"
+		var line := _last_line(out)
+		if out.contains("a password is required") or (code == 1 and line == ""):
+			line = "falta permissão. Rode uma vez no terminal: sudo skystation-atualizar"
 		_toast("Não foi possível atualizar: " + line, 7.0)
 
 

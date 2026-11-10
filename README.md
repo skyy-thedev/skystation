@@ -19,6 +19,7 @@ skystation/
 │   ├── energia.sh    perfil da CPU na tomada/bateria + acordar pelo controle (skystation-energia)
 │   ├── fase5-7.sh    som de ligar, modo de espera, receber jogos pelo Wi-Fi, mover jogos
 │   ├── som-ligar.sh  som de ligar no começo do boot (serviço skystation-som-ligar)
+│   ├── atualizar-menu.sh  "Atualizar o SkyStation" do menu, sem sudo (serviço + .path do systemd)
 │   ├── marca.sh      identidade do sistema (comando skystation-marca, reaplicado pelo pacman)
 │   ├── diag.sh       diagnóstico do boot (comando skystation-diag)
 │   ├── expandir.sh   ocupa a mídia inteira após clonar (comando skystation-expandir)
@@ -119,6 +120,9 @@ Dica: `.chd` ocupa bem menos que `.bin/.cue` (converta com o `chdman` no PC).
 - **Mover / apagar jogo:** no jogo, botão Y → Mover para o pendrive SKYROMS (ou para o console),
   Apagar jogo (pede confirmação). O jogo inteiro vai junto (.cue + .bin, capa).
 - **Espaço total:** Sistema → Armazenamento soma o sistema e o SKYROMS.
+- **Atualizar pelo menu (5.7.2):** o menu só cria um pedido em `/var/lib/skystation/pedidos/`;
+  o systemd (`skystation-atualizar.path` → `.service`) roda a atualização como root e o menu
+  mostra o andamento. Instalado sozinho pelo `sudo skystation-atualizar`.
 - **BIOS do PS2 (5.7.1):** envie pelo Wi-Fi escolhendo "BIOS do PS2" (vai sempre para o console), ou
   deixe o arquivo de 4 MB em `SKYROMS/bios/`: ao abrir um jogo de PS2 ela é copiada sozinha.
 
