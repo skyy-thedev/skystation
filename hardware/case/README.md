@@ -19,7 +19,31 @@ Gerar uma peça:  `openscad -o base.stl -D 'PART="tray"' skystation-case.scad`
 
 Montagem: insertos de latão M3 (furo 4,2 mm), parafusos M3 6/10 mm, 4 pés de borracha 12 mm.
 
-## Pendências para a v0.2 (anotadas em 09/11)
+## Protótipo v0.2 (10/11): console de 2 andares
+
+Arquivo: `skystation-case-v02.scad` (a v0.1 continua em `skystation-case.scad`).
+Tamanho: 227 × 233 × 64 mm (+ dock da tela). Cada peça cabe na mesa de 260 × 260 mm.
+
+- **Andar de baixo (`deck`, peça nova):** leitor de DVD slim com a bandeja saindo pela frente
+  (preso por uma cinta, `dvd_strap`), bateria atravessada atrás do leitor, alto-falante na
+  frente-direita com grade, entrada de ar no fundo e nas laterais.
+- **Andar de cima (`tray`, revisado):** placa, SSD e plaquinha USB como na v0.1, mais as
+  **antenas** em nervuras nas paredes laterais (longe do dissipador) e uma passagem de cabos
+  para o andar de baixo.
+- **União:** 4 parafusos M3×30 sobem pelo andar de baixo até insertos no fundo da bandeja.
+- **Tampa, painéis, botão, moldura da tela e tampa do modo TV:** iguais à v0.1.
+
+Peças novas/alteradas em `stl/v02/`. Outras peças: gerar com `-D 'PART="..."'` como na v0.1
+(mais `deck`, `dvd_strap`, `assembly_explode`, `deck_open`).
+
+**Antes de imprimir, medir** (`[MEDIR]` no `.scad`): altura do leitor (9,5 ou 12,7 mm), bateria,
+alto-falante, e conferir se os cabos do leitor e da bateria alcançam o andar de baixo
+(o leitor provavelmente precisa de um extensor "slim SATA 13 pinos").
+
+Fica para depois: segunda baia de SSD (os dois conectores SATA já estão em uso: SSD + leitor).
+
+## Notas de 09/11 que originaram a v0.2
+
 
 - **Antenas Wi-Fi/Bluetooth** (MAIN e AUX): ficavam na tampa do notebook. Na case, ir para o alto
   da base ou do módulo da tela, longe de metal (PETG não bloqueia o sinal; o dissipador e a
