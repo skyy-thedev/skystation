@@ -1423,7 +1423,10 @@ func _on_recv_line(line: String) -> void:
 			recv_cur = "%s  %d%%" % [str(ev.get("nome", "")), int(float(ev.get("p", 0)) * 100)]
 		"recebido":
 			recv_cur = ""
-			recv_log.push_front("✓ " + str(ev.get("nome", "")) + ("  → SKYROMS" if ev.get("destino", "") == "skyroms" else ""))
+			var onde := "  → SKYROMS" if ev.get("destino", "") == "skyroms" else ""
+			if ev.get("sistema", "") == "bios":
+				onde = "  → BIOS do PS2 instalada"
+			recv_log.push_front("✓ " + str(ev.get("nome", "")) + onde)
 			recv_log = recv_log.slice(0, 6)
 		"erro":
 			recv_cur = ""

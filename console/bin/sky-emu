@@ -33,8 +33,20 @@ ps1)
 ps2)
     PCSX2="/opt/pcsx2/AppRun"
     [ -x "$PCSX2" ] || fail "Emulador de PS2 não instalado. Rode a Fase 4 de novo."
-    BIOS="$(find "$SKY/bios/ps2" -maxdepth 1 -type f \( -iname '*.bin' -o -iname '*.rom0' \) | head -1)"
-    [ -n "$BIOS" ] || fail "Falta a BIOS do PS2 em ~/skystation/bios/ps2 (extraia do seu console)."
+    # BIOS do PS2 tem 4 MB; prefere esse tamanho para não pegar outro .bin qualquer.
+    acha_bios() {
+        find "$@" -maxdepth 1 -type f \( -iname '*.bin' -o -iname '*.rom0' \) -size 4096k 2>/dev/null | sort | head -1
+    }
+    BIOS="$(acha_bios "$SKY/bios/ps2")"
+    if [ -z "$BIOS" ]; then
+        # Fase 5.7.1: aceita a BIOS deixada no pendrive SKYROMS (pasta bios/ ou bios/ps2/) e copia para o console.
+        ACHADA="$(acha_bios /mnt/skyroms/bios/ps2 /mnt/skyroms/bios /mnt/skyroms)"
+        if [ -n "$ACHADA" ]; then
+            cp --update=none "$(dirname "$ACHADA")"/"$(basename "${ACHADA%.*}")".* "$SKY/bios/ps2/" 2>/dev/null
+            BIOS="$(acha_bios "$SKY/bios/ps2")"
+        fi
+    fi
+    [ -n "$BIOS" ] || fail "Falta a BIOS do PS2. Envie pelo Wi-Fi (Sistema: BIOS do PS2) ou coloque em SKYROMS/bios."
     python3 /opt/skystation/bin/sky-pcsx2-ini "$PROFILE" "$SKY" "$(basename "$BIOS")" \
         || fail "Não consegui preparar a configuração do PCSX2."
     exec "$PCSX2" -fullscreen -nogui -- "$ROM"

@@ -119,6 +119,8 @@ Dica: `.chd` ocupa bem menos que `.bin/.cue` (converta com o `chdman` no PC).
 - **Mover / apagar jogo:** no jogo, botão Y → Mover para o pendrive SKYROMS (ou para o console),
   Apagar jogo (pede confirmação). O jogo inteiro vai junto (.cue + .bin, capa).
 - **Espaço total:** Sistema → Armazenamento soma o sistema e o SKYROMS.
+- **BIOS do PS2 (5.7.1):** envie pelo Wi-Fi escolhendo "BIOS do PS2" (vai sempre para o console), ou
+  deixe o arquivo de 4 MB em `SKYROMS/bios/`: ao abrir um jogo de PS2 ela é copiada sozinha.
 
 ## Visual
 

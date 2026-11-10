@@ -22,7 +22,9 @@ PIN = sys.argv[1] if len(sys.argv) > 1 else "0000"
 HOME = os.path.expanduser("~")
 DESTS = {"interno": os.path.join(HOME, "skystation/roms"), "skyroms": "/mnt/skyroms"}
 EXTS = {"ps1": {"cue", "bin", "chd", "pbp", "m3u", "iso", "img", "png", "jpg"},
-        "ps2": {"iso", "chd", "cso", "gz", "png", "jpg"}}
+        "ps2": {"iso", "chd", "cso", "gz", "png", "jpg"},
+        "bios": {"bin", "rom0", "rom1", "rom2", "erom", "nvm", "mec"}}
+BIOS_DIR = os.path.join(HOME, "skystation/bios/ps2")
 LOCK = threading.Lock()
 
 
@@ -60,7 +62,7 @@ background:rgba(10,18,54,.5);cursor:pointer;transition:.2s}#drop.on{border-color
 <h1>Sky<b>Station</b></h1><p class="sub">Enviar jogos pelo Wi-Fi para o seu console</p>
 <div class="row">
  <div><label>PIN (aparece na TV)</label><input id="pin" inputmode="numeric" maxlength="4" size="6" placeholder="0000"></div>
- <div><label>Sistema</label><select id="sys"><option value="ps1">PlayStation (PS1)</option><option value="ps2">PlayStation 2</option></select></div>
+ <div><label>Sistema</label><select id="sys"><option value="ps1">PlayStation (PS1)</option><option value="ps2">PlayStation 2</option><option value="bios">BIOS do PS2</option></select></div>
  <div><label>Guardar em</label><select id="dest"><option value="interno">Console</option><option value="skyroms" id="osk">Pendrive SKYROMS</option></select></div>
 </div>
 <div id="drop"><strong>Arraste os arquivos aqui</strong>ou clique para escolher (.cue + .bin, .chd, .iso, .pbp, capas .png)
@@ -123,10 +125,15 @@ class Handler(BaseHTTPRequestHandler):
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
         if not name or name.startswith(".") or sys_id not in EXTS or ext not in EXTS[sys_id]:
             return fail(400, "tipo de arquivo não aceito")
+        if sys_id == "bios":
+            dest = "interno"  # a BIOS mora sempre no console
         if dest not in DESTS or (dest == "skyroms" and not skyroms_ok()):
             return fail(400, "destino indisponível")
         size = int(self.headers.get("Content-Length", "0") or 0)
-        folder = os.path.join(DESTS[dest], sys_id, "covers" if ext in ("png", "jpg") else "")
+        if sys_id == "bios":
+            folder = BIOS_DIR
+        else:
+            folder = os.path.join(DESTS[dest], sys_id, "covers" if ext in ("png", "jpg") else "")
         os.makedirs(folder, exist_ok=True)
         if size + 50 * 1024 * 1024 > shutil.disk_usage(folder).free:
             return fail(507, "sem espaço no destino")
