@@ -29,7 +29,8 @@ echo "==> [2/3] Console (launcher, Central web, Modo TV, sky-jogos, sky-pcsx2-in
 bash "$SRC/setup/atualizar.sh"
 
 echo "==> [3/3] Modo TV"
-if cage -h 2>&1 | grep -q -- "-m extend"; then
+# O cage pode responder diferente como root: pergunta como o usuário do console e olha a sessão aberta.
+if { cage -h; runuser -u sky -- cage -h; } 2>&1 | grep -q -- "-m extend" || pgrep -a cage | grep -q -- "-m last"; then
     echo "    cage com '-m last': ao ligar o HDMI, a imagem vai para a TV sozinha"
 else
     echo "    AVISO: este cage não tem a opção -m (atualize o sistema): a imagem não troca sozinha"
