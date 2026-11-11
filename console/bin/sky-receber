@@ -49,6 +49,14 @@ def _jogos_mod():
 JOGOS = _jogos_mod()
 
 
+def _backup_mod():
+    import importlib.machinery
+    return importlib.machinery.SourceFileLoader("sky_backup", os.path.join(BIN, "sky-backup")).load_module()
+
+
+BACKUP = _backup_mod()
+
+
 def game_id(dest, sys_id, fname):
     return base64.urlsafe_b64encode(f"{dest}|{sys_id}|{fname}".encode()).decode().rstrip("=")
 
@@ -178,6 +186,8 @@ O jogo aparece no console assim que terminar. Use só cópias dos seus próprios
 <div class="a"><a class="btn" id="bk1">Baixar .zip</a></div></div>
 <div class="g"><div class="t"><b>Saves + estados salvos</b><span>Inclui os "salvar estado" do menu Home. Pode ficar grande.</span></div>
 <div class="a"><a class="btn" id="bk2">Baixar .zip</a></div></div>
+<h3 style="margin:22px 0 4px">Cópias automáticas</h3>
+<p class="tip" style="margin-top:0">O console guarda uma cópia sempre que um save muda (as 10 mais recentes).</p><div id="bl"></div>
 <p class="tip">Guarde o .zip no PC ou na nuvem. Para restaurar, copie as pastas de volta para ~/skystation no console.</p>
 </section>
 </main><script>
@@ -191,7 +201,16 @@ function api(path,opt={}){opt.headers=Object.assign({'X-Pin':pin()},opt.headers|
 let tab='enviar';document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{tab=b.dataset.t;
  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x==b));
  document.querySelectorAll('section').forEach(s=>s.classList.toggle('hide',s.id!='t-'+tab));msg();
- if(tab=='jogos')jogos();if(tab=='capturas')capturas();links()});
+ if(tab=='jogos')jogos();if(tab=='capturas')capturas();if(tab=='saves')copias();links()});
+function copias(){api('/api/copias').then(j=>{const l=$('#bl');l.innerHTML='';
+ if(!(j.copias||[]).length)l.innerHTML='<p class="tip">Nenhuma cópia ainda: ela aparece depois da próxima partida com save.</p>';
+ for(const c of j.copias||[]){const m=c.nome.match(/(\\d{4})(\\d\\d)(\\d\\d)-(\\d\\d)(\\d\\d)/);const d=document.createElement('div');d.className='g';
+  d.innerHTML='<div class="t"><b></b><span>'+fmt(c.tamanho)+(c.nome.includes('antes')?' · antes de uma restauração':'')+'</span></div><div class="a"><a class="btn">Baixar</a><button>Restaurar</button></div>';
+  d.querySelector('b').textContent=m?m[3]+'/'+m[2]+'/'+m[1]+' às '+m[4]+':'+m[5]:c.nome;
+  d.querySelector('a').href='/api/copia?nome='+encodeURIComponent(c.nome)+'&pin='+encodeURIComponent(pin());
+  d.querySelector('button').onclick=()=>{if(!confirm('Voltar os saves para esta cópia? A situação atual é guardada antes.'))return;
+   api('/api/restaurar?nome='+encodeURIComponent(c.nome),{method:'POST'}).then(r=>{msg(r.ok?r.message:(r.error||'erro'));copias()})};
+  l.appendChild(d)}}).catch(()=>{})}
 function links(){const q='?pin='+encodeURIComponent(pin());$('#bk1').href='/api/saves.zip'+q;$('#bk2').href='/api/saves.zip'+q+'&tudo=1'}links();
 fetch('/info').then(r=>r.json()).then(i=>{if(!i.skyroms){$('#osk').disabled=true;$('#osk').textContent+=' (não conectado)'}});
 function jogos(){api('/api/jogos').then(j=>{const e=$('#esp');e.innerHTML='';
@@ -304,6 +323,13 @@ class Handler(BaseHTTPRequestHandler):
             if not n.lower().endswith(".png") or n.startswith("."):
                 return self.reply(404, json.dumps({"ok": False}))
             return self.send_file(os.path.join(SHOTS, n), "image/png", q.get("baixar") == "1")
+        if u.path == "/api/copias":
+            return self.reply(200, json.dumps({"ok": True, "copias": BACKUP.listar()}, ensure_ascii=False))
+        if u.path == "/api/copia":
+            n = os.path.basename(q.get("nome", ""))
+            if not (n.startswith("saves-") and n.endswith(".zip")):
+                return self.reply(404, json.dumps({"ok": False}))
+            return self.send_file(os.path.join(BACKUP.DEST, n), "application/zip", True)
         if u.path == "/api/saves.zip":
             return self.send_zip(q.get("tudo") == "1")
         self.reply(404, json.dumps({"ok": False, "error": "não encontrado"}))
@@ -336,6 +362,11 @@ class Handler(BaseHTTPRequestHandler):
         q = dict(urllib.parse.parse_qsl(u.query))
         if not self.authed(q):
             return
+        if u.path == "/api/restaurar":
+            res = BACKUP.restaurar(q.get("nome", ""))
+            if res.get("ok"):
+                acao(res["message"])
+            return self.reply(200, json.dumps(res, ensure_ascii=False))
         path = game_path(q.get("id", ""))
         if u.path not in ("/api/apagar", "/api/mover") or not path:
             return self.reply(404, json.dumps({"ok": False, "error": "jogo não encontrado"}, ensure_ascii=False))

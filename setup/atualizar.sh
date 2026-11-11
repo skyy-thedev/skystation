@@ -11,6 +11,11 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "Rode com sudo."; exit 1
 fi
 
+# Fase 6.1: guarda a versão que está funcionando antes de trocar (Sistema → Voltar à versão anterior).
+if [ -f /opt/skystation/VERSION ]; then
+    rm -rf /opt/skystation.anterior
+    cp -a /opt/skystation /opt/skystation.anterior
+fi
 install -d /opt/skystation
 cp -r "$SRC/console/." /opt/skystation/
 
@@ -37,7 +42,7 @@ fi
 for pair in skystation-atualizar.sh:skystation-atualizar expandir.sh:skystation-expandir \
             diag.sh:skystation-diag marca.sh:skystation-marca diag-controle.sh:skystation-diag-controle \
             energia.sh:skystation-energia som-ligar.sh:skystation-som-ligar \
-            atualizar-menu.sh:skystation-atualizar-menu diag-ps2.sh:skystation-diag-ps2 verificar.sh:skystation-verificar; do
+            atualizar-menu.sh:skystation-atualizar-menu diag-ps2.sh:skystation-diag-ps2 verificar.sh:skystation-verificar; do  # (o sky-backup vai junto com console/bin)
     f="$SRC/setup/${pair%%:*}"; [ -f "$f" ] || continue
     sed 's/\r$//' "$f" > "/usr/local/bin/${pair##*:}.new"
     chmod 755 "/usr/local/bin/${pair##*:}.new"
@@ -65,6 +70,7 @@ Description=SkyStation: pedido de atualização vindo do menu
 
 [Path]
 PathExists=/var/lib/skystation/pedidos/atualizar
+PathExists=/var/lib/skystation/pedidos/reverter
 Unit=skystation-atualizar.service
 
 [Install]
@@ -72,7 +78,8 @@ WantedBy=paths.target
 UNIT
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
-    systemctl enable --now skystation-atualizar.path >/dev/null 2>&1 || true
+    systemctl enable skystation-atualizar.path >/dev/null 2>&1 || true
+    systemctl restart skystation-atualizar.path >/dev/null 2>&1 || true
 fi
 
 # Versão: commit do Git, commit baixado do GitHub, ou data da atualização.

@@ -78,6 +78,9 @@ if secs >= 10:
 PY
 echo "$code" >"$RUN/last_exit"
 
+# Fase 6.1: se algum save mudou nesta partida, guarda uma cópia de segurança (em segundo plano).
+[ -x /opt/skystation/bin/sky-backup ] && (/opt/skystation/bin/sky-backup auto >/dev/null 2>&1 &)
+
 # Wine deixa um servidor rodando em segundo plano; encerra o do prefixo deste jogo.
 if [ -n "${SKY_WINEPREFIX:-}" ] || [ -f "$RUN/wineprefix" ]; then
     WP="${SKY_WINEPREFIX:-$(cat "$RUN/wineprefix" 2>/dev/null)}"

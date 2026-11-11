@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""SkyStation: cópias de segurança automáticas dos saves (Fase 6.1).
+
+    sky-backup auto              depois de cada partida: se algum save mudou, guarda um .zip em
+                                 ~/skystation/backups (ficam as 10 cópias mais recentes)
+    sky-backup listar            JSON com as cópias
+    sky-backup restaurar <nome>  volta os saves para aquela cópia (antes, guarda a situação atual)
+
+Só os saves (cartões de memória, tempo de jogo); os "estados salvos" ficam de fora por serem grandes.
+"""
+import hashlib
+import json
+import os
+import shutil
+import sys
+import time
+import zipfile
+
+HOME = os.path.expanduser("~")
+SAVES = os.path.join(HOME, "skystation/saves")
+DEST = os.path.join(HOME, "skystation/backups")
+MARK = os.path.join(DEST, ".ultimo")
+RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
+KEEP = 10
+
+
+def files():
+    out = []
+    for d, _, fs in os.walk(SAVES):
+        for f in fs:
+            if not f.endswith(".tmp"):
+                out.append(os.path.join(d, f))
+    return sorted(out)
+
+
+def digest(fl):
+    h = hashlib.sha1()
+    for p in fl:
+        if os.path.basename(p) == "tempo.json":
+            continue                      # muda a cada partida; sozinho não justifica uma cópia
+        h.update(os.path.relpath(p, SAVES).encode())
+        try:
+            with open(p, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+        except OSError:
+            pass
+    return h.hexdigest()
+
+
+def snapshot(tag=""):
+    fl = files()
+    if not fl:
+        return None
+    os.makedirs(DEST, exist_ok=True)
+    name = "saves-" + time.strftime("%Y%m%d-%H%M%S") + (f"-{tag}" if tag else "") + ".zip"
+    tmp = os.path.join(DEST, name + ".tmp")
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+        for p in fl:
+            z.write(p, os.path.relpath(p, SAVES))
+    os.replace(tmp, os.path.join(DEST, name))
+    with open(MARK, "w") as f:
+        f.write(digest(fl))
+    olds = sorted(n for n in os.listdir(DEST) if n.startswith("saves-") and n.endswith(".zip"))
+    for n in olds[:-KEEP]:
+        os.remove(os.path.join(DEST, n))
+    return name
+
+
+def listar():
+    try:
+        names = sorted((n for n in os.listdir(DEST) if n.startswith("saves-") and n.endswith(".zip")), reverse=True)
+    except OSError:
+        names = []
+    return [{"nome": n, "tamanho": os.path.getsize(os.path.join(DEST, n))} for n in names]
+
+
+def auto():
+    fl = files()
+    try:
+        last = open(MARK).read().strip()
+    except OSError:
+        last = ""
+    if fl and digest(fl) != last:
+        return snapshot()
+    return None
+
+
+def restaurar(name):
+    name = os.path.basename(name)
+    path = os.path.join(DEST, name)
+    if not (name.startswith("saves-") and name.endswith(".zip") and os.path.isfile(path)):
+        return {"ok": False, "error": "cópia não encontrada"}
+    if os.path.exists(os.path.join(RUN, "game.pid")):
+        return {"ok": False, "error": "feche o jogo antes de restaurar os saves"}
+    with zipfile.ZipFile(path) as z:
+        if z.testzip() is not None:
+            return {"ok": False, "error": "esta cópia está danificada"}
+        members = [m for m in z.namelist() if not (m.startswith("/") or ".." in m.split("/"))]
+        snapshot("antes-de-restaurar")
+        for m in members:
+            target = os.path.join(SAVES, m)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with z.open(m) as src, open(target + ".tmp", "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            os.replace(target + ".tmp", target)
+    with open(MARK, "w") as f:
+        f.write(digest(files()))
+    return {"ok": True, "message": f"Saves restaurados da cópia {name}"}
+
+
+def main():
+    a = sys.argv[1:]
+    if a[:1] == ["auto"]:
+        n = auto()
+        print(json.dumps({"ok": True, "novo": n}))
+    elif a[:1] == ["listar"]:
+        print(json.dumps({"ok": True, "copias": listar()}))
+    elif a[:1] == ["restaurar"] and len(a) == 2:
+        print(json.dumps(restaurar(a[1]), ensure_ascii=False))
+    else:
+        print(__doc__)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

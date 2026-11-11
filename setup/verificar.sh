@@ -47,6 +47,11 @@ v "sessão com Modo TV configurada" "sudo skystation-atualizar" grep -q 'CAGE_OP
 v "Modo TV ativo agora (precisa reiniciar após a 6.0)" "sudo reboot" sh -c 'pgrep -a cage | grep -q -- "-m last"'
 v "sons novos (disco, TV)" "sudo skystation-atualizar" test -f /opt/skystation/sounds/tv-on.wav
 
+echo "== 6.1 Favoritos / cópias dos saves / versão anterior"
+v "cópia automática dos saves" "Sistema → Atualizar o SkyStation" test -x /opt/skystation/bin/sky-backup
+v "pedido de voltar versão aceito" "sudo skystation-atualizar (uma vez)" grep -q reverter /etc/systemd/system/skystation-atualizar.path
+v "versão anterior guardada" "aparece depois da próxima atualização" test -f /opt/skystation.anterior/VERSION
+
 echo
 if [ "$falhas" -eq 0 ]; then echo "Tudo certo: $ok de $ok verificações ✓"
 else echo "$ok ok, $falhas com problema (veja as dicas →)"; fi

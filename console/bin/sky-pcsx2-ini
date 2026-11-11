@@ -35,7 +35,8 @@ except (OSError, ValueError, AttributeError):
 # HD 4400 (notebook): OpenGL é o driver maduro; o Vulkan dessa geração é incompleto.
 # Ryzen (potente): Vulkan via RADV é o melhor caminho.
 PROFILES = {
-    "leve": {"Renderer": "12", "upscale_multiplier": "1"},
+    # Fase 6.1: mistura de cores no mínimo e sem pontilhado: menos trabalho para a HD 4400
+    "leve": {"Renderer": "12", "upscale_multiplier": "1", "accurate_blending_unit": "0", "dithering_ps2": "0"},
     "potente": {"Renderer": "14", "upscale_multiplier": "2"},
 }
 

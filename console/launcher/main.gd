@@ -622,8 +622,30 @@ func _game_item(g: Dictionary) -> Dictionary:
 	var pt: Dictionary = playtime.get(g["id"], {})
 	if not pt.is_empty():
 		sub += "  ·  " + _fmt_time(int(pt.get("seconds", 0))) + " jogados  ·  " + _fmt_when(int(pt.get("last", 0)))
-	return {"title": g["title"], "sub": sub, "desc": g["description"], "kind": "game",
-		"game": g, "color": g["color"], "cover": g["cover"], "glyph": ""}
+	var fav: bool = favs.has(g["id"])
+	return {"title": ("★ " if fav else "") + str(g["title"]), "sub": sub, "desc": g["description"], "kind": "game",
+		"game": g, "color": g["color"], "cover": g["cover"], "glyph": "", "fav": fav}
+
+
+var favs: Array = []
+
+
+func _load_favs() -> Array:
+	var txt := _read_text(conf_dir + "/favoritos.json", "[]")
+	var d = JSON.parse_string(txt) if txt.begins_with("[") else []
+	return d if typeof(d) == TYPE_ARRAY else []
+
+
+func _toggle_fav(game_id: String) -> void:
+	var f := _load_favs()
+	if f.has(game_id):
+		f.erase(game_id)
+		_toast("Tirado dos favoritos", 2.0, "disc")
+	else:
+		f.append(game_id)
+		_toast("Favorito: aparece no topo da lista", 2.5, "disc")
+	_write_text(conf_dir + "/favoritos.json", JSON.stringify(f))
+	_reload_games()
 
 
 func _act(title: String, sub: String, action: String, glyph: String, color: Color = Color(0, 0, 0, 0)) -> Dictionary:
@@ -642,6 +664,7 @@ func _build_cats() -> void:
 	var c_recent := {"id": "recentes", "title": "Recentes", "icon": "clock", "items": []}
 	var c_shots := {"id": "capturas", "title": "Capturas", "icon": "camera", "items": []}
 
+	favs = _load_favs()
 	for g in games:
 		var it := _game_item(g)
 		match str(g["type"]):
@@ -683,6 +706,14 @@ func _build_cats() -> void:
 		_act("Informações do sistema", "Hardware e versão", "settings:3", "info"),
 		_act("Atualizar o SkyStation", _update_txt(), "update", "refresh"),
 	]
+	var prev := _read_text("/opt/skystation.anterior/VERSION", "").strip_edges()
+	if prev != "":
+		c_sys["items"].append(_act("Voltar à versão anterior", "Se a atualização deu problema: volta para " + prev, "rollback", "refresh"))
+	# Favoritos (Fase 6.1) primeiro em cada lista, na mesma ordem de antes
+	for c in [c_games, c_ps1, c_ps2, c_pc]:
+		var fav_items: Array = c["items"].filter(func(i): return i.get("fav", false))
+		if not fav_items.is_empty():
+			c["items"] = fav_items + c["items"].filter(func(i): return not i.get("fav", false))
 	# Recentes: os 8 últimos jogados (que ainda existem)
 	var by_id := {}
 	for g in games:
@@ -836,6 +867,8 @@ func _activate() -> void:
 			_toggle_fps()
 		"update":
 			_start_update()
+		"rollback":
+			_start_update(true)
 		"reload":
 			_reload_games()
 			_toast("%d jogo(s) encontrado(s)" % games.size())
@@ -930,16 +963,17 @@ func _toggle_fps() -> void:
 		_toast("Medição de FPS ligada: contador na tela + log em ~/skystation/benchmarks")
 
 
-func _start_update() -> void:
+func _start_update(rollback: bool = false) -> void:
 	if busy_thread != null:
 		return
-	busy_msg = "Baixando a versão mais nova do SkyStation…"
+	UPD_REQ = "/var/lib/skystation/pedidos/" + ("reverter" if rollback else "atualizar")
+	busy_msg = "Voltando para a versão anterior…" if rollback else "Baixando a versão mais nova do SkyStation…"
 	busy_thread = Thread.new()
 	busy_thread.start(_update_worker)
 
 
 const UPD_DIR := "/var/lib/skystation/atualizar"
-const UPD_REQ := "/var/lib/skystation/pedidos/atualizar"
+var UPD_REQ := "/var/lib/skystation/pedidos/atualizar"
 var update_stop: bool = false
 
 
@@ -1002,7 +1036,7 @@ func _update_done(code: int, out: String) -> void:
 	busy_thread.wait_to_finish()
 	busy_thread = null
 	if code == 0:
-		busy_msg = "Atualizado! Reabrindo o SkyStation…"
+		busy_msg = "Pronto! Reabrindo o SkyStation…"
 		quit_at = t + 2.0
 		_play("chime")
 	else:
@@ -1022,6 +1056,8 @@ func _toggle_panel() -> void:
 		panel_items = []
 		if it.get("kind", "") == "game":
 			panel_items.append(["Jogar", "play"])
+			if not it["game"].get("disco", false):
+				panel_items.append(["Tirar dos favoritos" if it.get("fav", false) else "Favoritar ★", "fav"])
 			if it["game"].get("disco", false):
 				panel_items.append(["Copiar disco para o console", "copy_disc:interno"])
 				if skyroms_present:
@@ -1063,6 +1099,9 @@ func _panel_choose() -> void:
 	if a == "compress":
 		var itc := _cur()
 		_run_job(["compactar", str(itc["game"]["path"])], "Compactando " + str(itc.get("title", "")) + "…")
+		return
+	if a == "fav":
+		_toggle_fav(str(_cur()["game"]["id"]))
 		return
 	if a == "ps2_speed":
 		_cycle_ps2_speed(str(_cur()["game"]["id"]))

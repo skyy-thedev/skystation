@@ -158,6 +158,16 @@ Coloque o disco no leitor: em poucos segundos toca um som, aparece o aviso e o j
   cru pelo `cdrdao` (com faixas de áudio) e compactado em `.chd`.
 - **Compactar (CHD):** Y em um jogo `.cue`/`.iso` → converte com `chdman`, confere e apaga o original.
 
+## Fase 6.1
+
+- **Favoritos:** Y no jogo → Favoritar ★. Favoritos ficam no topo de Jogos/PS1/PS2
+  (`~/.config/skystation/favoritos.json`).
+- **Cópias automáticas dos saves:** depois de cada partida o `sky-backup` guarda um `.zip` em
+  `~/skystation/backups` se algum save mudou (10 mais recentes). Baixar/restaurar: Central web → Saves.
+- **Voltar à versão anterior:** cada atualização guarda a versão em uso em `/opt/skystation.anterior`;
+  Sistema → Voltar à versão anterior troca as duas (pedir de novo desfaz).
+- **PS2 no perfil leve:** mistura de cores no mínimo e sem pontilhado (menos carga na GPU integrada).
+
 ## Visual
 
 - **Temas:** Sistema → Tema de cores (Automático muda com a hora do dia: Oceano, Aurora,
