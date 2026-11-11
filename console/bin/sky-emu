@@ -27,13 +27,21 @@ fi
 mkdir -p "$SKY/saves/$SYS" "$SKY/states/$SYS" "$SKY/bios/$SYS"
 
 case "$SYS" in
-ps1)
-    CORE="/opt/skystation/emu/cores/pcsx_rearmed_libretro.so"
-    [ -f "$CORE" ] || fail "Emulador de PS1 não instalado. Rode a Fase 4 de novo."
+ps1|snes|n64)
+    case "$SYS" in
+        ps1)  CORE=pcsx_rearmed ;;
+        snes) CORE=snes9x ;;
+        n64)  CORE=mupen64plus_next ;;
+    esac
+    CORE="/opt/skystation/emu/cores/${CORE}_libretro.so"
+    [ -f "$CORE" ] || fail "Emulador de ${SYS^^} não instalado. Rode a Fase 6.2 (fase6-2.sh)."
     CFG="$HOME/.config/skystation/retroarch.cfg"
     mkdir -p "$(dirname "$CFG")"
     # Configuração base do SkyStation, sempre regenerada (o RetroArch não salva por cima).
     sed -e "s|@SKY@|$SKY|g" /opt/skystation/emu/retroarch.cfg >"$CFG"
+    if [ "$SYS" != "ps1" ]; then   # o modelo aponta saves/estados para ps1: troca pela pasta do sistema
+        sed -i -e "s|/saves/ps1\"|/saves/$SYS\"|" -e "s|/states/ps1\"|/states/$SYS\"|" "$CFG"
+    fi
     if [ -n "$DISCO" ]; then
         # O core de PS1 lê o CD pelo /dev/sgN (comandos SCSI: dados + faixas de áudio).
         [ -n "$SG" ] || fail "O leitor não expõe /dev/sg (módulo sg). Rode a Fase 5.8 e reinicie."

@@ -22,6 +22,8 @@ BASES = [os.path.join(HOME, "skystation/roms"), "/mnt/skyroms", "/mnt/skystation
 SYSTEMS = {
     "ps1": ("Sony_-_PlayStation", {"cue", "chd", "pbp", "m3u", "iso", "img"}),
     "ps2": ("Sony_-_PlayStation_2", {"iso", "chd", "cso", "gz"}),
+    "snes": ("Nintendo_-_Super_Nintendo_Entertainment_System", {"sfc", "smc"}),
+    "n64": ("Nintendo_-_Nintendo_64", {"z64", "n64", "v64"}),
 }
 URL = "https://raw.githubusercontent.com/libretro-thumbnails/{repo}/master/Named_Boxarts/{name}.png"
 FAILS = os.path.join(HOME, ".cache/skystation/capas-falhas.json")

@@ -52,6 +52,15 @@ v "cópia automática dos saves" "Sistema → Atualizar o SkyStation" test -x /o
 v "pedido de voltar versão aceito" "sudo skystation-atualizar (uma vez)" grep -q reverter /etc/systemd/system/skystation-atualizar.path
 v "versão anterior guardada" "aparece depois da próxima atualização" test -f /opt/skystation.anterior/VERSION
 
+echo "== 6.2 QR / teclado pelo celular / terminal / touchpad / SNES e N64"
+F62="sudo bash /opt/skystation-src/setup/fase6-2.sh"
+v "QR code (python-qrcode)" "$F62" python3 -c "import qrcode"
+v "celular como teclado (wtype)" "$F62" command -v wtype
+v "terminal (foot)" "$F62" command -v foot
+v "emulador de SNES" "$F62" test -f /opt/skystation/emu/cores/snes9x_libretro.so
+v "emulador de N64" "$F62" test -f /opt/skystation/emu/cores/mupen64plus_next_libretro.so
+v "gestos do touchpad no sky-notify" "Sistema → Atualizar o SkyStation" grep -q touchpad_worker /opt/skystation/bin/sky-notify
+
 echo
 if [ "$falhas" -eq 0 ]; then echo "Tudo certo: $ok de $ok verificações ✓"
 else echo "$ok ok, $falhas com problema (veja as dicas →)"; fi

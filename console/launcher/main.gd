@@ -28,6 +28,10 @@ const ROM_SYSTEMS := {
 		"exts": ["cue", "chd", "pbp", "m3u", "iso", "img", "bin"]},
 	"ps2": {"badge": "PS2", "name": "PlayStation 2", "color": "#4f8cff",
 		"exts": ["iso", "chd", "cso", "gz"]},
+	"snes": {"badge": "SNES", "name": "Super Nintendo", "color": "#b06cf0",
+		"exts": ["sfc", "smc"]},
+	"n64": {"badge": "N64", "name": "Nintendo 64", "color": "#3fbf6b",
+		"exts": ["z64", "n64", "v64"]},
 }
 const ROM_BASES := ["/mnt/skyroms", "/mnt/skystation/roms"]  # + ~/skystation/roms
 
@@ -210,6 +214,8 @@ var recv_pin: String = ""
 var recv_ip: String = ""
 var recv_log: Array = []         # últimas linhas do que chegou
 var recv_cur: String = ""
+var recv_qr: Array = []          # linhas "0101…" do QR code da Central web
+var storage_data: Dictionary = {}   # tela Armazenamento (vazio = fechada)
 var recv_thread: Thread = null
 var job_thread: Thread = null
 var confirm_delete: bool = false
@@ -394,6 +400,8 @@ func _input(event: InputEvent) -> void:
 func _handle_input(delta: float) -> void:
 	if cooldown > 0.0:
 		return
+	if panel_open == false and recv_pid == -1 and storage_data.is_empty():
+		_tick_secret(delta)
 	if slider_kind != "":
 		_slider_input(delta)
 		return
@@ -403,6 +411,11 @@ func _handle_input(delta: float) -> void:
 	if recv_pid != -1:
 		if Input.is_action_just_pressed("sky_back") or Input.is_action_just_pressed("sky_accept"):
 			_close_receive()
+		return
+	if not storage_data.is_empty():
+		if Input.is_action_just_pressed("sky_back") or Input.is_action_just_pressed("sky_accept"):
+			storage_data = {}
+			_play("back")
 		return
 	var d := _nav_dir()
 	if d != hold_dir:
@@ -658,6 +671,9 @@ func _build_cats() -> void:
 	var c_games := {"id": "jogos", "title": "Jogos", "icon": "pad", "items": []}
 	var c_ps1 := {"id": "ps1", "title": "PS1", "icon": "disc1", "items": []}
 	var c_ps2 := {"id": "ps2", "title": "PS2", "icon": "disc2", "items": []}
+	var c_snes := {"id": "snes", "title": "SNES", "icon": "cartS", "items": []}
+	var c_n64 := {"id": "n64", "title": "N64", "icon": "cart64", "items": []}
+	var by_sys := {"ps1": c_ps1, "ps2": c_ps2, "snes": c_snes, "n64": c_n64}
 	var c_pc := {"id": "pc", "title": "PC", "icon": "monitor", "items": []}
 	var c_apps := {"id": "apps", "title": "Apps", "icon": "apps", "items": []}
 	var c_power := {"id": "energia", "title": "Energia", "icon": "power", "items": []}
@@ -669,7 +685,7 @@ func _build_cats() -> void:
 		var it := _game_item(g)
 		match str(g["type"]):
 			"retro":
-				(c_ps2 if g["sys"] == "ps2" else c_ps1)["items"].append(it)
+				by_sys.get(g["sys"], c_ps1)["items"].append(it)
 				if g.get("disco", false):
 					c_games["items"].insert(0, it)  # como no PS3: o disco aparece no topo de Jogos
 			"windows":
@@ -702,6 +718,7 @@ func _build_cats() -> void:
 		_act("Modo TV", _tv_txt(), "tv", "monitor"),
 		_act("Som de ligar", "Ligado" if not FileAccess.file_exists(conf_dir + "/ligar.off") else "Desligado", "boot_sound", "note"),
 		_act("Ligar pelo controle", _wake_txt(), "wake_pad", "pad"),
+		_act("Gestos no touchpad", _touch_txt(), "touchpad", "pad"),
 		_act("Medição de FPS", "Ligada: contador e log nos jogos" if _fps_on() else "Desligada", "fps", "gauge"),
 		_act("Informações do sistema", "Hardware e versão", "settings:3", "info"),
 		_act("Atualizar o SkyStation", _update_txt(), "update", "refresh"),
@@ -710,7 +727,7 @@ func _build_cats() -> void:
 	if prev != "":
 		c_sys["items"].append(_act("Voltar à versão anterior", "Se a atualização deu problema: volta para " + prev, "rollback", "refresh"))
 	# Favoritos (Fase 6.1) primeiro em cada lista, na mesma ordem de antes
-	for c in [c_games, c_ps1, c_ps2, c_pc]:
+	for c in [c_games, c_ps1, c_ps2, c_snes, c_n64, c_pc]:
 		var fav_items: Array = c["items"].filter(func(i): return i.get("fav", false))
 		if not fav_items.is_empty():
 			c["items"] = fav_items + c["items"].filter(func(i): return not i.get("fav", false))
@@ -745,6 +762,9 @@ func _build_cats() -> void:
 	if not c_recent["items"].is_empty():
 		cats.append(c_recent)
 	cats += [c_games, c_ps1, c_ps2]
+	for c in [c_snes, c_n64]:   # cartuchos: só aparecem quando há jogos
+		if not c["items"].is_empty():
+			cats.append(c)
 	if not c_pc["items"].is_empty():
 		cats.append(c_pc)
 	cats.append(c_apps)
@@ -794,6 +814,8 @@ func _refresh_sys_items() -> void:
 					it["sub"] = _wake_txt()
 				"tv":
 					it["sub"] = _tv_txt()
+				"touchpad":
+					it["sub"] = _touch_txt()
 
 
 # ---------------------------------------------------------------- ações
@@ -823,8 +845,7 @@ func _activate() -> void:
 		return
 	match action:
 		"storage":
-			_refresh_status()
-			_toast(disk_detail, 4.0, "drive")
+			_open_storage()
 		"power_info":
 			_refresh_status()
 			_toast(_power_txt(), 2.8, "battery")
@@ -842,6 +863,9 @@ func _activate() -> void:
 			_toggle_file(conf_dir + "/tv-grande.off")
 			_apply_tv_scale()
 			_toast("Interface maior na TV: " + ("desligada" if FileAccess.file_exists(conf_dir + "/tv-grande.off") else "ligada"), 2.5, "monitor")
+		"touchpad":
+			_toggle_file(conf_dir + "/touchpad.off")
+			_refresh_sys_items()
 		"wake_pad":
 			_toggle_file(conf_dir + "/acordar.off")
 			_toast("Vale a partir do próximo minuto (o sistema aplica sozinho)", 3.0, "pad")
@@ -1572,6 +1596,32 @@ func _cycle_ps2_speed(game_id: String) -> void:
 	_reload_games()
 
 
+func _touch_txt() -> String:
+	if FileAccess.file_exists(conf_dir + "/touchpad.off"):
+		return "Desligados"
+	return "Ligados: 2 dedos no touchpad do DS4. Esquerda = brilho, direita = volume"
+
+
+# Segredo de desenvolvedor (Fase 6.2): segurar L3 + R3 (os dois analógicos apertados) por 2 s abre o terminal.
+var secret_t: float = 0.0
+
+
+func _tick_secret(delta: float) -> void:
+	var held := false
+	for j in Input.get_connected_joypads():
+		if Input.is_joy_button_pressed(j, JOY_BUTTON_LEFT_STICK) and Input.is_joy_button_pressed(j, JOY_BUTTON_RIGHT_STICK):
+			held = true
+	secret_t = secret_t + delta if held else 0.0
+	if secret_t < 2.0:
+		return
+	secret_t = -5.0   # não dispara de novo enquanto os botões continuam apertados
+	var out: Array = []
+	if OS.execute("sh", ["-c", "command -v foot"], out) != 0:
+		_toast("Terminal não instalado: rode a Fase 6.2", 4.0)
+		return
+	_launch({"id": "terminal", "dir": home_dir, "exec": "foot", "title": "Terminal", "type": "app", "sys": ""})
+
+
 func _wake_txt() -> String:
 	if FileAccess.file_exists(conf_dir + "/acordar.off"):
 		return "Desligado"
@@ -1605,6 +1655,7 @@ func _open_receive() -> void:
 	if m != null:
 		recv_ip = m.get_string(1)
 	recv_log = []
+	recv_qr = []
 	recv_cur = ""
 	var info := OS.execute_with_pipe(SKY_BIN + "/sky-receber", [recv_pin])
 	if info.is_empty():
@@ -1631,6 +1682,8 @@ func _on_recv_line(line: String) -> void:
 	if typeof(ev) != TYPE_DICTIONARY:
 		return
 	match str(ev.get("evento", "")):
+		"pronto":
+			recv_qr = ev.get("qr", []) if typeof(ev.get("qr", [])) == TYPE_ARRAY else []
 		"recebendo":
 			recv_cur = "%s  %d%%" % [str(ev.get("nome", "")), int(float(ev.get("p", 0)) * 100)]
 		"recebido":
@@ -1716,10 +1769,11 @@ func _draw_receive(w: float, h: float) -> void:
 	_icon("download", Vector2(x + 14, y - 12), 34.0, accent)
 	_text("Central web", Vector2(x + 48, y), 26, WHITE, true)
 	y += 56.0
-	_text("1.  No PC ou no celular (mesma rede Wi-Fi), abra no navegador:", Vector2(x, y), 18, MUTED)
+	var tw := r.size.x - 96.0 - (270.0 if not recv_qr.is_empty() else 0.0)
+	_text("1.  No celular ou PC (mesmo Wi-Fi), abra no navegador:", Vector2(x, y), 18, MUTED, false, tw)
 	y += 54.0
 	var url := ("http://%s:8080" % recv_ip) if recv_ip != "" else "sem rede: conecte o Wi-Fi em Sistema"
-	_text(url, Vector2(x + 24, y), 40, accent, true)
+	_text(url, Vector2(x + 24, y), 40 if recv_qr.is_empty() else 32, accent, true, tw - 24)
 	y += 54.0
 	_text("2.  Digite o PIN:", Vector2(x, y), 18, MUTED)
 	_text(recv_pin, Vector2(x + 190, y + 6), 40, WHITE, true)
@@ -1733,6 +1787,84 @@ func _draw_receive(w: float, h: float) -> void:
 		_text(str(line), Vector2(x, y), 16, MUTED, false, r.size.x - 96)
 		y += 26.0
 	_text("B  fechar (a central web desliga)", Vector2(x, r.end.y - 28), 15, DIM)
+	# QR code: aponte a câmera do celular (o PIN já vai junto)
+	var n := recv_qr.size()
+	if n > 0:
+		var side := minf(r.size.y * 0.42, 230.0)
+		var cell := floorf(side / n)
+		var q0 := Vector2(r.end.x - 48.0 - cell * n, r.position.y + 44.0)
+		draw_rect(Rect2(q0 - Vector2(10, 10), Vector2(cell * n + 20, cell * n + 20)), Color.WHITE)
+		for iy in n:
+			var row := str(recv_qr[iy])
+			for ix in row.length():
+				if row[ix] == "1":
+					draw_rect(Rect2(q0.x + ix * cell, q0.y + iy * cell, cell, cell), Color.BLACK)
+		_text("ou aponte a câmera", Vector2(q0.x - 10, q0.y + cell * n + 34), 15, MUTED, false, cell * n + 20,
+			HORIZONTAL_ALIGNMENT_CENTER)
+
+
+# ---------------------------------------------------------------- tela Armazenamento (Fase 6.2)
+
+const STORAGE_COLORS := ["#8b7cf6", "#4f8cff", "#b06cf0", "#3fbf6b", "#ffb347", "#54f0b8", "#ff7a9c", "#7d8aa8"]
+
+
+func _open_storage() -> void:
+	var out: Array = []
+	if FileAccess.file_exists(SKY_BIN + "/sky-jogos"):
+		OS.execute(SKY_BIN + "/sky-jogos", ["uso"], out)
+	var d = JSON.parse_string(str(out[0]).strip_edges()) if not out.is_empty() and str(out[0]).begins_with("{") else null
+	if typeof(d) != TYPE_DICTIONARY or not d.get("ok", false):
+		_refresh_status()
+		_toast(disk_detail, 4.0, "drive")
+		return
+	storage_data = d
+	_play("accept")
+
+
+func _gb(b: float) -> String:
+	return ("%.1f GB" % (b / 1e9)) if b >= 1e9 else ("%d MB" % int(b / 1e6))
+
+
+func _draw_storage(w: float, h: float) -> void:
+	draw_rect(Rect2(0, 0, w, h), Color(0, 0, 0, 0.55))
+	var r := Rect2(w * 0.12, h * 0.14, w * 0.76, h * 0.72)
+	_rrect(r, Color(palette[1].darkened(0.3), 0.94), 22, Color(accent, 0.45), 1)
+	var x := r.position.x + 48.0
+	var y := r.position.y + 62.0
+	var bw := r.size.x - 96.0
+	_icon("drive", Vector2(x + 14, y - 12), 34.0, accent)
+	_text("Armazenamento", Vector2(x + 48, y), 26, WHITE, true)
+	var total := float(storage_data.get("total", 1))
+	var free := float(storage_data.get("livre", 0))
+	y += 50.0
+	_text("Console:  %s livres de %s" % [_gb(free), _gb(total)], Vector2(x, y), 20, WHITE)
+	y += 18.0
+	_rrect(Rect2(x, y, bw, 26), Color(1, 1, 1, 0.08), 8)
+	var items: Array = storage_data.get("itens", [])
+	var px := x
+	for i in items.size():
+		var seg := bw * float(items[i][1]) / total
+		if seg >= 1.0:
+			draw_rect(Rect2(px, y, seg, 26), Color.from_string(STORAGE_COLORS[i % STORAGE_COLORS.size()], WHITE))
+		px += seg
+	y += 58.0
+	for i in items.size():
+		var col := Color.from_string(STORAGE_COLORS[i % STORAGE_COLORS.size()], WHITE)
+		var cx := x + (i % 2) * bw * 0.5
+		draw_rect(Rect2(cx, y - 14, 14, 14), col)
+		_text("%s   %s" % [str(items[i][0]), _gb(float(items[i][1]))], Vector2(cx + 26, y), 18, MUTED)
+		if i % 2 == 1 or i == items.size() - 1:
+			y += 32.0
+	var sk = storage_data.get("skyroms")
+	if typeof(sk) == TYPE_DICTIONARY:
+		y += 22.0
+		var st := float(sk.get("total", 1))
+		var sf := float(sk.get("livre", 0))
+		_text("Pendrive SKYROMS:  %s livres de %s" % [_gb(sf), _gb(st)], Vector2(x, y), 20, WHITE)
+		y += 18.0
+		_rrect(Rect2(x, y, bw, 18), Color(1, 1, 1, 0.08), 6)
+		draw_rect(Rect2(x, y, bw * (st - sf) / st, 18), accent)
+	_text("B  fechar", Vector2(x, r.end.y - 28), 15, DIM)
 
 
 # ---------------------------------------------------------------- música ambiente
@@ -2072,6 +2204,8 @@ func _draw() -> void:
 		_draw_viewer(w, h)
 	elif recv_pid != -1:
 		_draw_receive(w, h)
+	elif not storage_data.is_empty():
+		_draw_storage(w, h)
 	else:
 		_draw_header(w, h, a)
 		_draw_xmb(w, h, a)
@@ -2442,6 +2576,11 @@ func _icon(kind: String, c: Vector2, s: float, col: Color) -> void:
 				_text(n, Vector2(c.x + s * 0.30 - s * 0.17, c.y + s * 0.30 + s * 0.09), int(s * 0.24),
 					Color(palette[1], 1.0) if not palette.is_empty() else Color.BLACK, true, s * 0.34,
 					HORIZONTAL_ALIGNMENT_CENTER)
+		"cartS", "cart64":
+			_rrect(Rect2(c.x - s * 0.36, c.y - s * 0.40, s * 0.72, s * 0.80), Color(0, 0, 0, 0), 5, col, int(lw))
+			draw_line(c + Vector2(-s * 0.22, -s * 0.22), c + Vector2(s * 0.22, -s * 0.22), Color(col, col.a * 0.5), lw)
+			_text("S" if kind == "cartS" else "64", Vector2(c.x - s * 0.36, c.y + s * 0.24), int(s * 0.34), col, true,
+				s * 0.72, HORIZONTAL_ALIGNMENT_CENTER)
 		"monitor":
 			_rrect(Rect2(c.x - s * 0.42, c.y - s * 0.32, s * 0.84, s * 0.52), Color(0, 0, 0, 0), 4, col, int(lw))
 			draw_line(c + Vector2(0, s * 0.2), c + Vector2(0, s * 0.34), col, lw)

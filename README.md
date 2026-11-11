@@ -168,6 +168,17 @@ Coloque o disco no leitor: em poucos segundos toca um som, aparece o aviso e o j
   Sistema → Voltar à versão anterior troca as duas (pedir de novo desfaz).
 - **PS2 no perfil leve:** mistura de cores no mínimo e sem pontilhado (menos carga na GPU integrada).
 
+## Fase 6.2
+
+- **QR code na Central web:** a tela mostra um QR com o endereço e o PIN embutidos.
+- **Celular como teclado:** Central web → Teclado digita no console (via `wtype`).
+- **Terminal secreto:** segurar L3 + R3 por 2 s no menu abre o `foot`. Home fecha.
+- **Armazenamento:** Sistema → Armazenamento mostra uma barra com o que cada coisa ocupa.
+- **Gestos no touchpad do DS4:** dois dedos deslizando; esquerda = brilho, direita = volume.
+  Vale no menu e nos jogos. Desligar: Sistema → Gestos no touchpad.
+- **SNES e N64:** `roms/snes` (.sfc, .smc) e `roms/n64` (.z64, .n64, .v64), cores Snes9x e
+  Mupen64Plus-Next no RetroArch, com salvar/carregar estado. As categorias aparecem quando há jogos.
+
 ## Visual
 
 - **Temas:** Sistema → Tema de cores (Automático muda com a hora do dia: Oceano, Aurora,

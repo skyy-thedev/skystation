@@ -105,6 +105,102 @@ def _event_write(kind, text):
         pass
 
 
+# ------------------------------------------------------------------ gestos no touchpad do DS4 (Fase 6.2)
+# Dois dedos deslizando: metade esquerda = brilho, metade direita = volume (cima aumenta).
+# Vale no menu e dentro dos jogos. Desligar: ~/.config/skystation/touchpad.off
+class Gesto:
+    """Transforma posições de dedos em passos (+1/-1) de brilho ou volume. Sem E/S: fácil de testar."""
+
+    def __init__(self, xmax, ymax, passos=9):
+        self.xmax, self.step = xmax, max(1.0, ymax / passos)
+        self.slots, self.slot = {}, 0
+        self.lado, self.ref = None, 0.0
+
+    def abs(self, code, value):
+        if code == "SLOT":
+            self.slot = value
+        elif code == "ID":
+            if value < 0:
+                self.slots.pop(self.slot, None)
+            else:
+                self.slots.setdefault(self.slot, [None, None])
+        elif code in ("X", "Y") and self.slot in self.slots:
+            self.slots[self.slot][0 if code == "X" else 1] = value
+
+    def sync(self):
+        """Chamar a cada SYN_REPORT. Devolve (lado, passos) ou None."""
+        pts = [p for p in self.slots.values() if p[0] is not None and p[1] is not None]
+        if len(pts) != 2:
+            self.lado = None
+            return None
+        x = (pts[0][0] + pts[1][0]) / 2
+        y = (pts[0][1] + pts[1][1]) / 2
+        if self.lado is None:
+            self.lado, self.ref = ("brilho" if x < self.xmax / 2 else "volume"), y
+            return None
+        n = int((self.ref - y) / self.step)      # para cima o Y diminui
+        if n == 0:
+            return None
+        self.ref -= n * self.step
+        return self.lado, n
+
+
+def ajustar(lado, n):
+    sinal = "+" if n > 0 else "-"
+    try:
+        if lado == "volume":
+            subprocess.run(["wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", f"{abs(n) * 5}%{sinal}"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+            r = subprocess.run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"], capture_output=True, text=True, timeout=3)
+            m = re.search(r"([0-9.]+)", r.stdout)
+            return f"Volume {round(float(m.group(1)) * 100)}%" if m else "Volume"
+        subprocess.run(["brightnessctl", "-q", "-n", "set", f"{abs(n) * 5}%{sinal}"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+        r = subprocess.run(["brightnessctl", "-m"], capture_output=True, text=True, timeout=3)
+        m = re.search(r",(\d+)%", r.stdout)
+        return f"Brilho {m.group(1)}%" if m else "Brilho"
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def touchpad_worker():
+    if evdev is None:
+        return
+    E = evdev.ecodes
+    nomes = {E.ABS_MT_SLOT: "SLOT", E.ABS_MT_TRACKING_ID: "ID", E.ABS_MT_POSITION_X: "X", E.ABS_MT_POSITION_Y: "Y"}
+    while True:
+        dev = None
+        for path in evdev.list_devices():
+            try:
+                d = evdev.InputDevice(path)
+                caps = d.capabilities().get(E.EV_ABS, [])
+                if "touchpad" in d.name.lower() and any(c[0] == E.ABS_MT_POSITION_X for c in caps):
+                    dev = d
+                    break
+                d.close()
+            except OSError:
+                continue
+        if dev is None:
+            time.sleep(5)
+            continue
+        try:
+            g = Gesto(dev.absinfo(E.ABS_MT_POSITION_X).max, dev.absinfo(E.ABS_MT_POSITION_Y).max)
+            ultimo = 0.0
+            for ev in dev.read_loop():
+                if ev.type == E.EV_ABS and ev.code in nomes:
+                    g.abs(nomes[ev.code], ev.value)
+                elif ev.type == E.EV_SYN and ev.code == E.SYN_REPORT:
+                    r = g.sync()
+                    if r and not os.path.exists(os.path.join(CONF, "touchpad.off")):
+                        txt = ajustar(*r)
+                        if txt and time.monotonic() - ultimo > 0.35:
+                            ultimo = time.monotonic()
+                            event("ajuste", txt, None)
+        except OSError:
+            pass
+        time.sleep(2)
+
+
 # ------------------------------------------------------------------ Modo TV (Fase 6.0)
 SYSFS = os.environ.get("SKY_SYSFS", "")
 
@@ -345,6 +441,7 @@ def close_game_and_poweroff():
 # ------------------------------------------------------------------ laço principal
 def main():
     log("iniciado")
+    threading.Thread(target=touchpad_worker, daemon=True).start()
     pads = controllers()
     usb = usb_devices()
     mounted = skyroms_mounted()

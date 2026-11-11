@@ -76,7 +76,7 @@ def game_files(path):
 
 def system_of(path):
     parts = os.path.normpath(path).split(os.sep)
-    for s in ("ps1", "ps2"):
+    for s in ("ps1", "ps2", "snes", "n64"):
         if s in parts:
             return s
     return None
@@ -367,12 +367,48 @@ def _copiar_ps1(dev, dest_dir, nome, size):
     return cue
 
 
+def _du(path):
+    total = 0
+    for d, _, fs in os.walk(path):
+        for f in fs:
+            try:
+                total += os.lstat(os.path.join(d, f)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def uso():
+    """Quanto cada coisa ocupa (tela Armazenamento, Fase 6.2)."""
+    sky = os.path.join(HOME, "skystation")
+    u = shutil.disk_usage("/")
+    itens = []
+    for nome, sub in (("PS1", "roms/ps1"), ("PS2", "roms/ps2"), ("SNES", "roms/snes"), ("N64", "roms/n64"),
+                      ("Jogos próprios", "games"), ("Saves e estados", "saves"), ("Saves e estados", "states"),
+                      ("Capturas e cópias", "capturas"), ("Capturas e cópias", "backups")):
+        b = _du(os.path.join(sky, sub))
+        if itens and itens[-1][0] == nome:
+            itens[-1][1] += b
+        else:
+            itens.append([nome, b])
+    itens = [i for i in itens if i[1] > 0]
+    usado = u.total - u.free
+    itens.append(["Sistema e emuladores", max(0, usado - sum(i[1] for i in itens))])
+    res = {"ok": True, "total": u.total, "livre": u.free, "itens": itens, "skyroms": None}
+    if mounted(SKYROMS):
+        s = shutil.disk_usage(SKYROMS)
+        res["skyroms"] = {"total": s.total, "livre": s.free}
+    out(res)
+
+
 def main():
     a = sys.argv[1:]
     if not a:
         out({"ok": False, "error": "uso: sky-jogos espaco | mover <arquivo> <interno|skyroms> | apagar <arquivo>"})
     elif a[0] == "espaco":
         out({"ok": True, "sistema": space("/"), "skyroms": space(SKYROMS) if mounted(SKYROMS) else None})
+    elif a[0] == "uso":
+        uso()
     elif a[0] == "mover" and len(a) == 3:
         mover(a[1], a[2])
     elif a[0] == "apagar" and len(a) == 2:

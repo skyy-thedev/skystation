@@ -30,12 +30,14 @@ HOME = os.path.expanduser("~")
 DESTS = {"interno": os.path.join(HOME, "skystation/roms"), "skyroms": "/mnt/skyroms"}
 EXTS = {"ps1": {"cue", "bin", "chd", "pbp", "m3u", "iso", "img", "png", "jpg"},
         "ps2": {"iso", "chd", "cso", "gz", "png", "jpg"},
+        "snes": {"sfc", "smc", "png", "jpg"}, "n64": {"z64", "n64", "v64", "png", "jpg"},
         "bios": {"bin", "rom0", "rom1", "rom2", "erom", "nvm", "mec"}}
 BIOS_DIR = os.path.join(HOME, "skystation/bios/ps2")
 SHOTS = os.path.join(HOME, "skystation/capturas")
 SAVES = os.path.join(HOME, "skystation/saves")
 STATES = os.path.join(HOME, "skystation/states")
-GAME_EXTS = {"ps1": {"cue", "chd", "pbp", "m3u", "iso", "img"}, "ps2": {"iso", "chd", "cso", "gz"}}
+GAME_EXTS = {"ps1": {"cue", "chd", "pbp", "m3u", "iso", "img"}, "ps2": {"iso", "chd", "cso", "gz"},
+             "snes": {"sfc", "smc"}, "n64": {"z64", "n64", "v64"}}
 BIN = os.path.dirname(os.path.realpath(__file__))
 LOCK = threading.Lock()
 FAILS = {"n": 0}
@@ -116,6 +118,58 @@ def space():
     return out
 
 
+def lan_ip():
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("10.255.255.255", 1))   # não envia nada: só descobre a interface de saída
+        return s.getsockname()[0]
+    except OSError:
+        return ""
+    finally:
+        s.close()
+
+
+def qr_rows():
+    """QR code do endereço com o PIN embutido (linhas de 0/1), ou [] sem rede/sem a biblioteca."""
+    ip = lan_ip()
+    if not ip:
+        return []
+    try:
+        import qrcode
+        q = qrcode.QRCode(border=0, error_correction=qrcode.constants.ERROR_CORRECT_M)
+        q.add_data(f"http://{ip}:{PORT}/?pin={PIN}")
+        q.make(fit=True)
+        return ["".join("1" if c else "0" for c in row) for row in q.get_matrix()]
+    except Exception:
+        return []
+
+
+# Teclado pelo celular (Fase 6.2): o texto é digitado no console pelo wtype (teclado virtual do Wayland).
+TECLAS = {"enter": ["-k", "Return"], "apagar": ["-k", "BackSpace"], "tab": ["-k", "Tab"], "esc": ["-k", "Escape"],
+          "cima": ["-k", "Up"], "baixo": ["-k", "Down"], "esquerda": ["-k", "Left"], "direita": ["-k", "Right"],
+          "ctrl-c": ["-M", "ctrl", "c", "-m", "ctrl"], "ctrl-d": ["-M", "ctrl", "d", "-m", "ctrl"]}
+
+
+def teclar(q):
+    if not shutil.which("wtype"):
+        return {"ok": False, "error": "falta o wtype no console: rode a Fase 6.2"}
+    if q.get("tecla"):
+        args = TECLAS.get(q["tecla"])
+        if not args:
+            return {"ok": False, "error": "tecla desconhecida"}
+    else:
+        texto = q.get("texto", "")[:500]
+        if not texto:
+            return {"ok": False, "error": "nada para digitar"}
+        args = ["--", texto]
+    try:
+        r = subprocess.run(["wtype", *args], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": r.returncode == 0, "error": r.stderr.strip()[:200]}
+
+
 def acao(texto):
     emit({"evento": "acao", "texto": texto})
 
@@ -166,11 +220,11 @@ background:rgba(10,18,54,.5);cursor:pointer;transition:.2s}#drop.on{border-color
 </style></head><body><main>
 <h1>Sky<b>Station</b></h1><p class="sub">Central web do seu console</p>
 <div class="row"><div><label>PIN (aparece na TV)</label><input id="pin" inputmode="numeric" maxlength="4" size="6" placeholder="0000"></div></div>
-<nav><button data-t="enviar" class="on">Enviar</button><button data-t="jogos">Jogos</button><button data-t="capturas">Capturas</button><button data-t="saves">Saves</button></nav>
+<nav><button data-t="enviar" class="on">Enviar</button><button data-t="jogos">Jogos</button><button data-t="capturas">Capturas</button><button data-t="saves">Saves</button><button data-t="teclado">Teclado</button></nav>
 <div id="msg"></div>
 <section id="t-enviar">
 <div class="row">
- <div><label>Sistema</label><select id="sys"><option value="ps1">PlayStation (PS1)</option><option value="ps2">PlayStation 2</option><option value="bios">BIOS do PS2</option></select></div>
+ <div><label>Sistema</label><select id="sys"><option value="ps1">PlayStation (PS1)</option><option value="ps2">PlayStation 2</option><option value="snes">Super Nintendo</option><option value="n64">Nintendo 64</option><option value="bios">BIOS do PS2</option></select></div>
  <div><label>Guardar em</label><select id="dest"><option value="interno">Console</option><option value="skyroms" id="osk">Pendrive SKYROMS</option></select></div>
 </div>
 <div id="drop"><strong>Arraste os arquivos aqui</strong>ou clique para escolher (.cue + .bin, .chd, .iso, .pbp, capas .png)
@@ -190,9 +244,22 @@ O jogo aparece no console assim que terminar. Use só cópias dos seus próprios
 <p class="tip" style="margin-top:0">O console guarda uma cópia sempre que um save muda (as 10 mais recentes).</p><div id="bl"></div>
 <p class="tip">Guarde o .zip no PC ou na nuvem. Para restaurar, copie as pastas de volta para ~/skystation no console.</p>
 </section>
+<section id="t-teclado" class="hide">
+<p class="tip" style="margin-top:0">Digite aqui e o texto aparece no console (terminal, buscas, senhas). Abra antes o que vai receber o texto.</p>
+<div class="row"><input id="kt" placeholder="texto ou comando" style="flex:1;min-width:200px" autocapitalize="off" autocomplete="off" spellcheck="false">
+<button id="ks" class="on">Enviar + Enter</button><button id="kn">Só enviar</button></div>
+<div class="row" id="kk"></div>
+</section>
 </main><script>
 const $=s=>document.querySelector(s);let fila=[],ocupado=false;
-const pin=()=>$('#pin').value;$('#pin').value=localStorage.getItem('pin')||'';
+const pin=()=>$('#pin').value;$('#pin').value=new URLSearchParams(location.search).get('pin')||localStorage.getItem('pin')||'';
+localStorage.setItem('pin',pin());
+function tecla(k){return api('/api/teclar?tecla='+k,{method:'POST'}).then(r=>{if(!r.ok)msg(r.error)})}
+function texto(enter){const t=$('#kt').value;if(!t){if(enter)tecla('enter');return}
+ api('/api/teclar?texto='+encodeURIComponent(t),{method:'POST'}).then(r=>{if(!r.ok)return msg(r.error);$('#kt').value='';msg();if(enter)tecla('enter')})}
+$('#ks').onclick=()=>texto(true);$('#kn').onclick=()=>texto(false);$('#kt').onkeydown=e=>{if(e.key=='Enter')texto(true)};
+for(const[k,n]of[['enter','Enter'],['apagar','⌫'],['tab','Tab'],['esc','Esc'],['cima','↑'],['baixo','↓'],['esquerda','←'],['direita','→'],['ctrl-c','Ctrl+C'],['ctrl-d','Ctrl+D']]){
+ const b=document.createElement('button');b.textContent=n;b.onclick=()=>tecla(k);$('#kk').appendChild(b)}
 $('#pin').oninput=()=>{localStorage.setItem('pin',pin());links()};
 function fmt(b){return b>1e9?(b/1e9).toFixed(2)+' GB':(b/1e6).toFixed(1)+' MB'}
 function msg(t){$('#msg').textContent=t||''}
@@ -362,6 +429,8 @@ class Handler(BaseHTTPRequestHandler):
         q = dict(urllib.parse.parse_qsl(u.query))
         if not self.authed(q):
             return
+        if u.path == "/api/teclar":
+            return self.reply(200, json.dumps(teclar(q), ensure_ascii=False))
         if u.path == "/api/restaurar":
             res = BACKUP.restaurar(q.get("nome", ""))
             if res.get("ok"):
@@ -445,7 +514,7 @@ def main():
     except OSError as e:
         emit({"evento": "erro", "erro": f"porta {PORT} ocupada: {e}"})
         sys.exit(1)
-    emit({"evento": "pronto", "porta": PORT})
+    emit({"evento": "pronto", "porta": PORT, "qr": qr_rows()})
     srv.serve_forever()
 
 
