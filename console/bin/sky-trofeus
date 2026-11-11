@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""SkyStation: troféus do perfil atual (Fase 6.3), calculados pelo tempo de jogo (saves/tempo.json).
+
+    sky-trofeus listar      {"ganhos": 3, "total": 17, "trofeus": [{"id","nome","desc","nivel","ganho"}]}
+    sky-trofeus conferir    marca os recém-conquistados, avisa na tela e toca o som (o sky-run chama
+                            depois de cada partida)
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+SAVES = os.path.join(HOME, "skystation/saves")
+RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
+SISTEMAS = ("ps1", "ps2", "snes", "n64")
+
+
+def sistema(gid):
+    p = gid.split("-", 1)[0]
+    return p if p in SISTEMAS else "proprio"
+
+
+def stats():
+    try:
+        with open(os.path.join(SAVES, "tempo.json")) as f:
+            t = json.load(f)
+    except (OSError, ValueError):
+        t = {}
+    t = {k: v for k, v in t.items() if isinstance(v, dict) and k != "terminal"}
+    secs = [int(v.get("seconds", 0)) for v in t.values()]
+    plays = [int(v.get("plays", 0)) for v in t.values()]
+    return {"total": sum(secs), "maior": max(secs, default=0), "jogos": len(t), "partidas": sum(plays),
+            "maior_partidas": max(plays, default=0), "sistemas": {sistema(k) for k in t}}
+
+
+H = 3600
+# (id, nome, descrição, nível, condição)
+TROFEUS = [
+    ("primeira", "Primeira partida", "Jogue qualquer jogo", "bronze", lambda s: s["partidas"] >= 1),
+    ("h1", "Aquecendo", "1 hora de jogo no total", "bronze", lambda s: s["total"] >= H),
+    ("h10", "Jogador de verdade", "10 horas de jogo no total", "prata", lambda s: s["total"] >= 10 * H),
+    ("h50", "Veterano", "50 horas de jogo no total", "ouro", lambda s: s["total"] >= 50 * H),
+    ("h100", "Lenda do SkyStation", "100 horas de jogo no total", "platina", lambda s: s["total"] >= 100 * H),
+    ("foco5", "Vidrado", "5 horas em um único jogo", "prata", lambda s: s["maior"] >= 5 * H),
+    ("foco20", "Zerando tudo", "20 horas em um único jogo", "ouro", lambda s: s["maior"] >= 20 * H),
+    ("jogos5", "Curioso", "Jogue 5 jogos diferentes", "bronze", lambda s: s["jogos"] >= 5),
+    ("jogos15", "Colecionador", "Jogue 15 jogos diferentes", "prata", lambda s: s["jogos"] >= 15),
+    ("partidas10", "De volta", "10 partidas no mesmo jogo", "bronze", lambda s: s["maior_partidas"] >= 10),
+    ("partidas50", "Rotina", "50 partidas no total", "prata", lambda s: s["partidas"] >= 50),
+    ("ps1", "Era dos 32 bits", "Jogue um jogo de PS1", "bronze", lambda s: "ps1" in s["sistemas"]),
+    ("ps2", "Era de ouro", "Jogue um jogo de PS2", "bronze", lambda s: "ps2" in s["sistemas"]),
+    ("snes", "Cartucho soprado", "Jogue um jogo de SNES", "bronze", lambda s: "snes" in s["sistemas"]),
+    ("n64", "Três alças", "Jogue um jogo de N64", "bronze", lambda s: "n64" in s["sistemas"]),
+    ("proprio", "Feito em casa", "Jogue um jogo próprio do SkyStation", "bronze", lambda s: "proprio" in s["sistemas"]),
+    ("todos", "Volta ao mundo", "Jogue em 4 sistemas diferentes", "ouro", lambda s: len(s["sistemas"]) >= 4),
+]
+
+
+def ganhos():
+    try:
+        with open(os.path.join(SAVES, "trofeus.json")) as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def listar():
+    g = ganhos()
+    lst = [{"id": i, "nome": n, "desc": d, "nivel": lv, "ganho": int(g.get(i, 0))} for i, n, d, lv, _ in TROFEUS]
+    return {"ok": True, "ganhos": sum(1 for x in lst if x["ganho"]), "total": len(lst), "trofeus": lst}
+
+
+def conferir():
+    s, g, novos = stats(), ganhos(), []
+    for i, nome, _, nivel, cond in TROFEUS:
+        if i not in g and cond(s):
+            g[i] = int(time.time())
+            novos.append((nome, nivel))
+    if not novos:
+        return []
+    os.makedirs(SAVES, exist_ok=True)
+    with open(os.path.join(SAVES, "trofeus.json.tmp"), "w") as f:
+        json.dump(g, f)
+    os.replace(os.path.join(SAVES, "trofeus.json.tmp"), os.path.join(SAVES, "trofeus.json"))
+    os.makedirs(RUN, exist_ok=True)
+    with open(os.path.join(RUN, "events.jsonl"), "a") as f:
+        for k, (nome, nivel) in enumerate(novos):
+            f.write(json.dumps({"t": time.time() + k * 0.01, "kind": "trofeu",
+                                "text": f"Troféu de {nivel}: {nome}"}, ensure_ascii=False) + "\n")
+    som = "/opt/skystation/sounds/trofeu.wav"
+    player = shutil.which("pw-play") or shutil.which("aplay")
+    if player and os.path.exists(som) and not os.path.exists(os.path.join(HOME, ".config/skystation/avisos.off")):
+        subprocess.Popen([player, som], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return [n for n, _ in novos]
+
+
+if __name__ == "__main__":
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "listar"
+    if cmd == "conferir":
+        print(json.dumps({"ok": True, "novos": conferir()}, ensure_ascii=False))
+    else:
+        print(json.dumps(listar(), ensure_ascii=False))

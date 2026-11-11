@@ -61,6 +61,14 @@ v "emulador de SNES" "$F62" test -f /opt/skystation/emu/cores/snes9x_libretro.so
 v "emulador de N64" "$F62" test -f /opt/skystation/emu/cores/mupen64plus_next_libretro.so
 v "gestos do touchpad no sky-notify" "Sistema → Atualizar o SkyStation" grep -q touchpad_worker /opt/skystation/bin/sky-notify
 
+echo "== 6.3 Perfis / troféus / YouTube / Moonlight"
+F63="sudo bash /opt/skystation-src/setup/fase6-3.sh"
+v "perfis e troféus" "Sistema → Atualizar o SkyStation" test -x /opt/skystation/bin/sky-perfis -a -x /opt/skystation/bin/sky-trofeus
+v "saves separados por perfil" "abra o menu uma vez depois de atualizar" test -L "$H/skystation/saves"
+v "YouTube: WebKit" "sudo skystation-atualizar" python3 -c "import gi; gi.require_version('WebKit','6.0')"
+v "YouTube: codecs de vídeo" "$F63" sh -c "pacman -Q gst-libav gst-plugins-good"
+v "Moonlight instalado" "$F63" sh -c "command -v moonlight || command -v moonlight-qt || test -x /opt/moonlight/AppRun"
+
 echo
 if [ "$falhas" -eq 0 ]; then echo "Tudo certo: $ok de $ok verificações ✓"
 else echo "$ok ok, $falhas com problema (veja as dicas →)"; fi

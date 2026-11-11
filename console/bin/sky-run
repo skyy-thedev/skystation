@@ -78,6 +78,9 @@ if secs >= 10:
 PY
 echo "$code" >"$RUN/last_exit"
 
+# Fase 6.3: troféus do perfil (avisa na tela se conquistou algum nesta partida).
+[ -x /opt/skystation/bin/sky-trofeus ] && /opt/skystation/bin/sky-trofeus conferir >/dev/null 2>&1
+
 # Fase 6.1: se algum save mudou nesta partida, guarda uma cópia de segurança (em segundo plano).
 [ -x /opt/skystation/bin/sky-backup ] && (/opt/skystation/bin/sky-backup auto >/dev/null 2>&1 &)
 

@@ -179,6 +179,16 @@ Coloque o disco no leitor: em poucos segundos toca um som, aparece o aviso e o j
 - **SNES e N64:** `roms/snes` (.sfc, .smc) e `roms/n64` (.z64, .n64, .v64), cores Snes9x e
   Mupen64Plus-Next no RetroArch, com salvar/carregar estado. As categorias aparecem quando há jogos.
 
+## Fase 6.3
+
+- **Perfis:** até 4 jogadores, cada um com saves, estados, cópias, tempo de jogo, favoritos e troféus.
+  `~/skystation/saves`, `states` e `backups` são atalhos para `~/skystation/perfis/<id>/…`
+  (`sky-perfis`). Trocar: Sistema → Perfil. Renomear: Central web → Saves.
+- **Troféus:** 17 troféus do SkyStation por perfil (`sky-trofeus`), conferidos depois de cada
+  partida, com aviso e som. Categoria Troféus no menu e contagem no topo da tela.
+- **YouTube:** app que abre `youtube.com/tv` no WebKitGTK com identificação de smart TV.
+- **Moonlight:** app para jogar por streaming os jogos do PC (o PC precisa do Sunshine).
+
 ## Visual
 
 - **Temas:** Sistema → Tema de cores (Automático muda com a hora do dia: Oceano, Aurora,

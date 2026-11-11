@@ -1,0 +1,9 @@
+{
+  "title": "Moonlight",
+  "type": "app",
+  "exec": "/opt/skystation/bin/sky-moonlight",
+  "cover": "cover.png",
+  "color": "#a78bfa",
+  "order": 71,
+  "description": "Jogue os jogos do seu PC aqui: o PC roda o jogo (com o Sunshine instalado) e o console mostra a imagem. Home do controle para sair."
+}

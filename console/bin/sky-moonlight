@@ -1,0 +1,14 @@
+#!/bin/bash
+# SkyStation: Moonlight (Fase 6.3) — jogar no console os jogos que rodam no PC.
+# No PC: instalar o Sunshine (gratuito). Aqui: o Moonlight acha o PC na rede, mostra um PIN para
+# digitar na página do Sunshine (uma vez só) e depois lista os jogos. O controle navega tudo.
+MSG="${SKY_MSG_FILE:-/dev/null}"
+BIN="$(command -v moonlight || command -v moonlight-qt || true)"
+[ -z "$BIN" ] && [ -x /opt/moonlight/AppRun ] && BIN=/opt/moonlight/AppRun
+if [ -z "$BIN" ]; then
+    echo "Moonlight não instalado. Rode a Fase 6.3 (fase6-3.sh)." >"$MSG"
+    exit 1
+fi
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland;xcb}"
+export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-wayland,x11}"
+exec "$BIN"

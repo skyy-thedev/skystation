@@ -481,7 +481,53 @@ func _cur() -> Dictionary:
 
 # ---------------------------------------------------------------- jogos e categorias
 
+# ---------------------------------------------------------------- perfis e troféus (Fase 6.3)
+var profiles: Array = []
+var profile_id: String = ""
+var profile_name: String = ""
+var trophies: Dictionary = {}
+
+
+func _sky_json(tool: String, args: Array) -> Dictionary:
+	var out: Array = []
+	if not FileAccess.file_exists(SKY_BIN + "/" + tool):
+		return {}
+	OS.execute(SKY_BIN + "/" + tool, args, out)
+	var d = JSON.parse_string(str(out[0]).strip_edges()) if not out.is_empty() and str(out[0]).begins_with("{") else null
+	return d if typeof(d) == TYPE_DICTIONARY else {}
+
+
+func _load_profile(args: Array = ["listar"]) -> void:
+	var d := _sky_json("sky-perfis", args)
+	if d.has("perfis"):
+		profiles = d["perfis"]
+		profile_id = str(d.get("atual", ""))
+		for p in profiles:
+			if str(p["id"]) == profile_id:
+				profile_name = str(p["nome"])
+	if d.has("error"):
+		_toast(str(d["error"]), 3.5)
+	trophies = _sky_json("sky-trofeus", ["listar"])
+
+
+func _next_profile() -> void:
+	if profiles.size() < 2:
+		_toast("Só há um perfil. Use \"Novo perfil\" para criar outro", 3.5)
+		return
+	var i := 0
+	for k in profiles.size():
+		if str(profiles[k]["id"]) == profile_id:
+			i = k
+	_load_profile(["usar", str(profiles[(i + 1) % profiles.size()]["id"])])
+	_reload_games()
+	_toast("Perfil: " + profile_name, 2.5, "pad")
+
+
 func _reload_games() -> void:
+	if profile_id == "":
+		_load_profile()
+	else:
+		trophies = _sky_json("sky-trofeus", ["listar"])
 	var pt_txt := _read_text(home_dir + "/skystation/saves/tempo.json", "{}")
 	var pt = JSON.parse_string(pt_txt) if pt_txt.begins_with("{") else {}
 	playtime = pt if typeof(pt) == TYPE_DICTIONARY else {}
@@ -644,7 +690,7 @@ var favs: Array = []
 
 
 func _load_favs() -> Array:
-	var txt := _read_text(conf_dir + "/favoritos.json", "[]")
+	var txt := _read_text(home_dir + "/skystation/saves/favoritos.json", "[]")
 	var d = JSON.parse_string(txt) if txt.begins_with("[") else []
 	return d if typeof(d) == TYPE_ARRAY else []
 
@@ -657,7 +703,7 @@ func _toggle_fav(game_id: String) -> void:
 	else:
 		f.append(game_id)
 		_toast("Favorito: aparece no topo da lista", 2.5, "disc")
-	_write_text(conf_dir + "/favoritos.json", JSON.stringify(f))
+	_write_text(home_dir + "/skystation/saves/favoritos.json", JSON.stringify(f))
 	_reload_games()
 
 
@@ -704,6 +750,7 @@ func _build_cats() -> void:
 		c_games["items"].append(_act("Nenhum jogo", "Pastas com game.json em ~/skystation/games", "", "pad"))
 
 	c_sys["items"] = [
+		_act("Perfil: " + profile_name, "A troca para o próximo perfil. Cada um tem saves, favoritos e troféus próprios", "profile", "pad"),
 		_act("Wi-Fi", "Redes sem fio", "settings:0", "wifi"),
 		_act("Bluetooth", "Parear controles e fones", "settings:1", "bt"),
 		_act("Volume", "Ajuste com ◀ ▶", "slider:volume", "sound"),
@@ -723,6 +770,8 @@ func _build_cats() -> void:
 		_act("Informações do sistema", "Hardware e versão", "settings:3", "info"),
 		_act("Atualizar o SkyStation", _update_txt(), "update", "refresh"),
 	]
+	if profiles.size() < 4 and not profiles.is_empty():
+		c_sys["items"].insert(1, _act("Novo perfil", "Cria outro jogador (o nome pode ser trocado na Central web → Saves)", "profile_new", "pad"))
 	var prev := _read_text("/opt/skystation.anterior/VERSION", "").strip_edges()
 	if prev != "":
 		c_sys["items"].append(_act("Voltar à versão anterior", "Se a atualização deu problema: volta para " + prev, "rollback", "refresh"))
@@ -768,6 +817,18 @@ func _build_cats() -> void:
 	if not c_pc["items"].is_empty():
 		cats.append(c_pc)
 	cats.append(c_apps)
+	var tl: Array = trophies.get("trofeus", [])
+	if not tl.is_empty():
+		var c_tro := {"id": "trofeus", "title": "Troféus", "icon": "trophy", "items": []}
+		var tier := {"bronze": Color("#cd7f32"), "prata": Color("#c0c8d8"), "ouro": Color("#ffd24a"), "platina": Color("#9fe8ff")}
+		tl.sort_custom(func(x, y): return int(x["ganho"]) > int(y["ganho"]))
+		for tr in tl:
+			var got := int(tr["ganho"]) > 0
+			var when := ("Conquistado " + _fmt_when(int(tr["ganho"]))) if got else "Bloqueado"
+			var it := _act(str(tr["nome"]), "%s  ·  %s  ·  %s" % [str(tr["desc"]), str(tr["nivel"]).capitalize(), when], "", "trophy",
+				tier.get(str(tr["nivel"]), WHITE) if got else Color(1, 1, 1, 0.25))
+			c_tro["items"].append(it)
+		cats.append(c_tro)
 	if not c_shots["items"].is_empty():
 		cats.append(c_shots)
 	cats.append(c_power)
@@ -863,6 +924,11 @@ func _activate() -> void:
 			_toggle_file(conf_dir + "/tv-grande.off")
 			_apply_tv_scale()
 			_toast("Interface maior na TV: " + ("desligada" if FileAccess.file_exists(conf_dir + "/tv-grande.off") else "ligada"), 2.5, "monitor")
+		"profile":
+			_next_profile()
+		"profile_new":
+			_load_profile(["criar"])
+			_next_profile()
 		"touchpad":
 			_toggle_file(conf_dir + "/touchpad.off")
 			_refresh_sys_items()
@@ -1461,7 +1527,7 @@ func _poll_events() -> void:
 		if kind == "tv":
 			_apply_tv_scale()
 			_refresh_sys_items()
-		var icons := {"controle": "pad", "usb": "usb", "pendrive": "drive", "jogo": "disc", "disco": "disc", "tv": "monitor",
+		var icons := {"controle": "pad", "usb": "usb", "pendrive": "drive", "jogo": "disc", "disco": "disc", "tv": "monitor", "trofeu": "trophy",
 			"bateria": "battery", "energia": "battery", "calor": "thermo"}
 		_toast(text, 3.5, str(icons.get(kind, "info")))
 		if kind in ["controle", "energia", "bateria"]:
@@ -2271,6 +2337,11 @@ func _draw_header(w: float, _h: float, a: float) -> void:
 	_text_shadow("Sky", Vector2(52, 58), 26, Color(WHITE, a), true)
 	var sw := font_bold.get_string_size("Sky", HORIZONTAL_ALIGNMENT_LEFT, -1, 26).x
 	_text_shadow("Station", Vector2(52 + sw, 58), 26, Color(accent, a), true)
+	if profile_name != "":   # perfil e troféus
+		var who := profile_name
+		if int(trophies.get("total", 0)) > 0:
+			who += "   %d/%d troféus" % [int(trophies.get("ganhos", 0)), int(trophies.get("total", 0))]
+		_text(who, Vector2(54, 84), 15, Color(MUTED, a))
 
 	var dt := Time.get_datetime_dict_from_system()
 	var clock := "%02d:%02d" % [dt["hour"], dt["minute"]]
@@ -2388,7 +2459,8 @@ func _draw_item(it: Dictionary, c: Vector2, sel: float, a: float, is_cur: bool) 
 			_text(ini, Vector2(r.position.x, c.y + fs * 0.35), fs, Color(col.lightened(0.45), a), true, iw,
 				HORIZONTAL_ALIGNMENT_CENTER)
 	else:
-		_icon(str(it["glyph"]), c, ih * 0.72, Color(WHITE, a))
+		var gcol: Color = it["color"] if it.get("kind", "") == "action" and it["color"].a > 0.0 else WHITE
+		_icon(str(it["glyph"]), c, ih * 0.72, Color(gcol, a * (gcol.a if gcol != WHITE else 1.0)))
 
 	var tx := c.x + maxf(iw, 66.0) / 2.0 + 26.0
 	var ts := int(20 + 8 * sel)
@@ -2576,6 +2648,14 @@ func _icon(kind: String, c: Vector2, s: float, col: Color) -> void:
 				_text(n, Vector2(c.x + s * 0.30 - s * 0.17, c.y + s * 0.30 + s * 0.09), int(s * 0.24),
 					Color(palette[1], 1.0) if not palette.is_empty() else Color.BLACK, true, s * 0.34,
 					HORIZONTAL_ALIGNMENT_CENTER)
+		"trophy":
+			var cup := PackedVector2Array([c + Vector2(-s * 0.26, -s * 0.36), c + Vector2(s * 0.26, -s * 0.36),
+				c + Vector2(s * 0.18, s * 0.04), c + Vector2(-s * 0.18, s * 0.04)])
+			draw_colored_polygon(cup, col)
+			draw_arc(c + Vector2(-s * 0.26, -s * 0.2), s * 0.12, PI * 0.5, PI * 1.5, 12, col, lw, true)
+			draw_arc(c + Vector2(s * 0.26, -s * 0.2), s * 0.12, -PI * 0.5, PI * 0.5, 12, col, lw, true)
+			draw_rect(Rect2(c.x - s * 0.04, c.y + s * 0.04, s * 0.08, s * 0.2), col)
+			draw_rect(Rect2(c.x - s * 0.2, c.y + s * 0.24, s * 0.4, s * 0.1), col)
 		"cartS", "cart64":
 			_rrect(Rect2(c.x - s * 0.36, c.y - s * 0.40, s * 0.72, s * 0.80), Color(0, 0, 0, 0), 5, col, int(lw))
 			draw_line(c + Vector2(-s * 0.22, -s * 0.22), c + Vector2(s * 0.22, -s * 0.22), Color(col, col.a * 0.5), lw)

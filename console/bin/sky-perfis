@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""SkyStation: perfis de jogador (Fase 6.3). Cada perfil tem os próprios saves, estados salvos,
+cópias de segurança, tempo de jogo, favoritos e troféus.
+
+    sky-perfis listar            {"atual": "p1", "perfis": [{"id", "nome", "cor"}]}  (cria o 1º perfil se preciso)
+    sky-perfis usar <id>         troca de perfil (não troca com jogo aberto)
+    sky-perfis criar [nome]      cria um perfil novo (até 4) e devolve a lista
+    sky-perfis renomear <id> <nome>
+
+Como funciona: ~/skystation/saves, states e backups viram atalhos (symlinks) para
+~/skystation/perfis/<id>/…; trocar de perfil é só apontar os atalhos para outra pasta. Emuladores,
+cópias e Central web continuam usando os mesmos caminhos de sempre.
+"""
+import json
+import os
+import shutil
+import sys
+
+HOME = os.path.expanduser("~")
+BASE = os.path.join(HOME, "skystation")
+PERF = os.path.join(BASE, "perfis")
+CFG = os.path.join(PERF, "perfis.json")
+RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
+LINKS = ("saves", "states", "backups")
+CORES = ["#4fd1ff", "#ff7a9c", "#54f0b8", "#ffb347"]
+MAX = 4
+
+
+def load():
+    try:
+        with open(CFG) as f:
+            d = json.load(f)
+        if d.get("perfis"):
+            return d
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def save(d):
+    os.makedirs(PERF, exist_ok=True)
+    with open(CFG + ".tmp", "w") as f:
+        json.dump(d, f, ensure_ascii=False, indent=1)
+    os.replace(CFG + ".tmp", CFG)
+
+
+def point(pid):
+    """Aponta os atalhos para o perfil (troca atômica)."""
+    for name in LINKS:
+        os.makedirs(os.path.join(PERF, pid, name), exist_ok=True)
+        link = os.path.join(BASE, name)
+        tmp = link + ".novo"
+        if os.path.lexists(tmp):
+            os.remove(tmp)
+        os.symlink(os.path.join("perfis", pid, name), tmp)
+        os.replace(tmp, link)
+
+
+def ensure():
+    d = load()
+    if d is None:
+        d = {"atual": "p1", "perfis": [{"id": "p1", "nome": "Jogador 1", "cor": CORES[0]}]}
+        os.makedirs(os.path.join(PERF, "p1"), exist_ok=True)
+        for name in LINKS:                      # o que já existe passa a ser do primeiro perfil
+            cur = os.path.join(BASE, name)
+            dst = os.path.join(PERF, "p1", name)
+            if os.path.isdir(cur) and not os.path.islink(cur) and not os.path.exists(dst):
+                shutil.move(cur, dst)
+        old_fav = os.path.join(HOME, ".config/skystation/favoritos.json")
+        if os.path.exists(old_fav):
+            os.makedirs(os.path.join(PERF, "p1", "saves"), exist_ok=True)
+            shutil.move(old_fav, os.path.join(PERF, "p1", "saves", "favoritos.json"))
+        save(d)
+    if not all(os.path.islink(os.path.join(BASE, n)) for n in LINKS):
+        for name in LINKS:                      # pasta comum no lugar do atalho: não apaga nada
+            cur = os.path.join(BASE, name)
+            if os.path.isdir(cur) and not os.path.islink(cur):
+                os.rename(cur, cur + ".antigo-%d" % os.getpid())
+        point(d["atual"])
+    return d
+
+
+def main():
+    a = sys.argv[1:]
+    d = ensure()
+    ids = [p["id"] for p in d["perfis"]]
+    if a[:1] == ["usar"] and len(a) == 2:
+        if a[1] not in ids:
+            d["error"] = "perfil não existe"
+        elif os.path.exists(os.path.join(RUN, "game.pid")):
+            d["error"] = "feche o jogo antes de trocar de perfil"
+        else:
+            point(a[1])
+            d["atual"] = a[1]
+            save(d)
+    elif a[:1] == ["criar"]:
+        if len(ids) >= MAX:
+            d["error"] = f"limite de {MAX} perfis"
+        else:
+            n = 1
+            while f"p{n}" in ids:
+                n += 1
+            nome = " ".join(a[1:]).strip()[:20] or f"Jogador {n}"
+            d["perfis"].append({"id": f"p{n}", "nome": nome, "cor": CORES[(n - 1) % len(CORES)]})
+            for name in LINKS:
+                os.makedirs(os.path.join(PERF, f"p{n}", name), exist_ok=True)
+            save(d)
+    elif a[:1] == ["renomear"] and len(a) >= 3:
+        nome = " ".join(a[2:]).strip()[:20]
+        for p in d["perfis"]:
+            if p["id"] == a[1] and nome:
+                p["nome"] = nome
+        save(d)
+    elif a[:1] != ["listar"]:
+        print(__doc__)
+        return 2
+    d["ok"] = "error" not in d
+    print(json.dumps(d, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

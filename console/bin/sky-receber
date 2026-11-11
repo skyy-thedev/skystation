@@ -236,6 +236,7 @@ O jogo aparece no console assim que terminar. Use só cópias dos seus próprios
 <section id="t-jogos" class="hide"><div class="esp" id="esp"></div><div id="jl"></div></section>
 <section id="t-capturas" class="hide"><div class="grid" id="cl"></div></section>
 <section id="t-saves" class="hide">
+<div class="row"><div style="flex:1;min-width:200px"><label>Perfil em uso no console (os saves abaixo são dele)</label><input id="pn" maxlength="20" style="width:100%"></div><button id="pb">Renomear</button></div>
 <div class="g"><div class="t"><b>Saves (cartões de memória)</b><span>O progresso dos seus jogos de PS1 e PS2. Pequeno: faça sempre.</span></div>
 <div class="a"><a class="btn" id="bk1">Baixar .zip</a></div></div>
 <div class="g"><div class="t"><b>Saves + estados salvos</b><span>Inclui os "salvar estado" do menu Home. Pode ficar grande.</span></div>
@@ -269,7 +270,8 @@ let tab='enviar';document.querySelectorAll('nav button').forEach(b=>b.onclick=()
  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x==b));
  document.querySelectorAll('section').forEach(s=>s.classList.toggle('hide',s.id!='t-'+tab));msg();
  if(tab=='jogos')jogos();if(tab=='capturas')capturas();if(tab=='saves')copias();links()});
-function copias(){api('/api/copias').then(j=>{const l=$('#bl');l.innerHTML='';
+$('#pb').onclick=()=>api('/api/perfil?nome='+encodeURIComponent($('#pn').value),{method:'POST'}).then(r=>msg(r.ok?'Perfil renomeado':r.error));
+function copias(){api('/api/perfil',{method:'POST'}).then(r=>{if(r.ok)$('#pn').value=r.nome}).catch(()=>{});api('/api/copias').then(j=>{const l=$('#bl');l.innerHTML='';
  if(!(j.copias||[]).length)l.innerHTML='<p class="tip">Nenhuma cópia ainda: ela aparece depois da próxima partida com save.</p>';
  for(const c of j.copias||[]){const m=c.nome.match(/(\\d{4})(\\d\\d)(\\d\\d)-(\\d\\d)(\\d\\d)/);const d=document.createElement('div');d.className='g';
   d.innerHTML='<div class="t"><b></b><span>'+fmt(c.tamanho)+(c.nome.includes('antes')?' · antes de uma restauração':'')+'</span></div><div class="a"><a class="btn">Baixar</a><button>Restaurar</button></div>';
@@ -429,6 +431,20 @@ class Handler(BaseHTTPRequestHandler):
         q = dict(urllib.parse.parse_qsl(u.query))
         if not self.authed(q):
             return
+        if u.path == "/api/perfil":
+            try:
+                r = subprocess.run([os.path.join(BIN, "sky-perfis"), "listar"], capture_output=True, text=True, timeout=10)
+                d = json.loads(r.stdout)
+                nome = q.get("nome", "").strip()
+                if nome:
+                    r = subprocess.run([os.path.join(BIN, "sky-perfis"), "renomear", d["atual"], nome],
+                                       capture_output=True, text=True, timeout=10)
+                    d = json.loads(r.stdout)
+                    acao("Perfil renomeado para " + nome[:20] + " (aparece ao recarregar os jogos)")
+                atual = [p for p in d["perfis"] if p["id"] == d["atual"]]
+                return self.reply(200, json.dumps({"ok": True, "nome": atual[0]["nome"] if atual else ""}, ensure_ascii=False))
+            except (OSError, ValueError, KeyError, subprocess.SubprocessError) as e:
+                return self.reply(200, json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
         if u.path == "/api/teclar":
             return self.reply(200, json.dumps(teclar(q), ensure_ascii=False))
         if u.path == "/api/restaurar":

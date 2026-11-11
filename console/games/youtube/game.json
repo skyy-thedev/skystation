@@ -1,0 +1,9 @@
+{
+  "title": "YouTube",
+  "type": "app",
+  "exec": "python3 main.py",
+  "cover": "cover.png",
+  "color": "#ff4d4d",
+  "order": 70,
+  "description": "YouTube na versão para TV, feita para controle. Direcional navega, A abre, B volta; Home do controle para sair."
+}

@@ -141,6 +141,10 @@ save("tv-on.wav", echo(seq([(0, sweep_up()), (.28, note(C5, .6, .3, decay=.3)), 
                             (.36, note(E6, .6, .22, decay=.3))], 1.3), .15, .3))
 save("tv-off.wav", seq([(0, note(E6, .25, .25, decay=.1)), (.06, note(C5, .3, .25, decay=.12)),
                        (.1, sweep_up(.3, 1200, 250))], .55))
+# troféu conquistado: fanfarra curta de quatro notas subindo
+save("trofeu.wav", echo(seq([(0, note(C5, .18, .32, decay=.1)), (.13, note(E6 / 2, .18, .32, decay=.1)),
+                             (.26, note(G5, .18, .32, decay=.1)), (.40, note(C5 * 2, .9, .36, decay=.45)),
+                             (.40, note(G5, .9, .2, decay=.45))], 1.5), .16, .3))
 save("disco-off.wav", seq([(0, note(D6, .25, .3, decay=.1)), (.07, note(G5, .3, .3, decay=.12)),
                           (.12, spin(False, .5))], .7))
 
