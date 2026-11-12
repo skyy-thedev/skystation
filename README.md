@@ -189,6 +189,17 @@ Coloque o disco no leitor: em poucos segundos toca um som, aparece o aviso e o j
 - **YouTube:** app que abre `youtube.com/tv` no WebKitGTK com identificação de smart TV.
 - **Moonlight:** app para jogar por streaming os jogos do PC (o PC precisa do Sunshine).
 
+## Fase 6.4 e 6.5
+
+- **Cópia de disco robusta (6.4):** vigia de progresso (desiste após minutos sem ler), B cancela,
+  setores ilegíveis de DVD preenchidos com zeros (até 256); o `cdrdao` não trava mais no meio.
+- **Sessão (6.4):** se o cage cair ao fechar, o console reabre sozinho (máx. 3 em 5 min).
+- **PSP (6.5):** `roms/psp` (.iso, .cso), core PPSSPP no RetroArch, apoio em `bios/psp/PPSSPP`.
+- **Desempenho automático no PS2 (6.5):** padrão "Automático": jogos de uma lista de títulos
+  pesados abrem em Rápido; os outros em Normal. Y no jogo troca (Automático/Normal/Rápido/Máximo).
+- **Conferir cópia (6.5):** Y num jogo de PS2 em `.iso` compara tamanho + CRC32 com o registro Redump.
+- **Diagnóstico:** com Medição de FPS ligada, o PCSX2 mostra velocidade e uso de EE/GS/VU/GPU.
+
 ## Visual
 
 - **Temas:** Sistema → Tema de cores (Automático muda com a hora do dia: Oceano, Aurora,

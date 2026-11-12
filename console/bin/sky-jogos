@@ -76,7 +76,7 @@ def game_files(path):
 
 def system_of(path):
     parts = os.path.normpath(path).split(os.sep)
-    for s in ("ps1", "ps2", "snes", "n64"):
+    for s in ("ps1", "ps2", "psp", "snes", "n64"):
         if s in parts:
             return s
     return None
@@ -482,6 +482,61 @@ def _copiar_ps1(dev, dest_dir, nome, size):
     return cue
 
 
+def conferir(path):
+    """Compara a cópia (.iso de PS2) com o registro Redump daquele disco: tamanho + CRC32."""
+    import urllib.parse
+    import urllib.request
+    import zlib
+    if not os.path.isfile(path) or system_of(path) != "ps2" or not path.lower().endswith(".iso"):
+        out({"ok": False, "error": "A conferência vale para jogos de PS2 em .iso"})
+        return
+    cache = os.path.join(HOME, ".cache/skystation/discos/crc-ps2.tsv")
+    if not os.path.exists(cache):
+        etapa("Baixando a lista de discos")
+        try:
+            url = "https://raw.githubusercontent.com/libretro/libretro-database/master/metadat/redump/" + \
+                urllib.parse.quote("Sony - PlayStation 2.dat")
+            req = urllib.request.Request(url, headers={"User-Agent": "SkyStation"})
+            raw = urllib.request.urlopen(req, timeout=90).read().decode("utf-8", "replace")
+            rows = re.findall(r'rom \( name "([^"]+)" size (\d+) crc ([0-9A-Fa-f]{8})', raw)
+            if not rows:
+                raise ValueError("lista vazia")
+            os.makedirs(os.path.dirname(cache), exist_ok=True)
+            with open(cache + ".tmp", "w") as f:
+                for n, sz, crc in rows:
+                    f.write(f"{crc.upper()}\t{sz}\t{n}\n")
+            os.replace(cache + ".tmp", cache)
+        except Exception as e:
+            out({"ok": False, "error": f"Sem a lista de discos (precisa de internet): {e}"})
+            return
+    vigiar(0)
+    total, done, crc, last = os.path.getsize(path), 0, 0, 0.0
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(4 * 1024 * 1024)
+            if not chunk:
+                break
+            crc = zlib.crc32(chunk, crc)
+            done += len(chunk)
+            if time.monotonic() - last > 0.5:
+                last = time.monotonic()
+                etapa("Conferindo a cópia", done / max(1, total))
+    key = f"{crc & 0xFFFFFFFF:08X}"
+    achou, mesmo_tam = "", False
+    with open(cache) as f:
+        for line in f:
+            c, sz, n = line.rstrip("\n").split("\t", 2)
+            if c == key and int(sz) == total:
+                achou = n
+                break
+            mesmo_tam = mesmo_tam or int(sz) == total
+    if achou:
+        out({"ok": True, "message": "Cópia perfeita: idêntica ao disco original (" + achou.rsplit(".", 1)[0][:40] + ")"})
+    else:
+        out({"ok": False, "error": "Não bate com nenhum disco registrado: a cópia pode estar com defeito"
+             + ("" if mesmo_tam else " (o tamanho também não confere)") + ", ou é uma edição não catalogada"})
+
+
 def _du(path):
     total = 0
     for d, _, fs in os.walk(path):
@@ -498,7 +553,7 @@ def uso():
     sky = os.path.join(HOME, "skystation")
     u = shutil.disk_usage("/")
     itens = []
-    for nome, sub in (("PS1", "roms/ps1"), ("PS2", "roms/ps2"), ("SNES", "roms/snes"), ("N64", "roms/n64"),
+    for nome, sub in (("PS1", "roms/ps1"), ("PS2", "roms/ps2"), ("PSP", "roms/psp"), ("SNES", "roms/snes"), ("N64", "roms/n64"),
                       ("Jogos próprios", "games"), ("Saves e estados", "saves"), ("Saves e estados", "states"),
                       ("Capturas e cópias", "capturas"), ("Capturas e cópias", "backups")):
         b = _du(os.path.join(sky, sub))
@@ -522,6 +577,8 @@ def main():
         out({"ok": False, "error": "uso: sky-jogos espaco | mover <arquivo> <interno|skyroms> | apagar <arquivo>"})
     elif a[0] == "espaco":
         out({"ok": True, "sistema": space("/"), "skyroms": space(SKYROMS) if mounted(SKYROMS) else None})
+    elif a[0] == "conferir" and len(a) == 2:
+        conferir(a[1])
     elif a[0] == "uso":
         uso()
     elif a[0] == "mover" and len(a) == 3:

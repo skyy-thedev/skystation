@@ -69,6 +69,12 @@ v "YouTube: WebKit" "sudo skystation-atualizar" python3 -c "import gi; gi.requir
 v "YouTube: codecs de vídeo" "$F63" sh -c "pacman -Q gst-libav gst-plugins-good"
 v "Moonlight instalado" "$F63" sh -c "command -v moonlight || command -v moonlight-qt || test -x /opt/moonlight/AppRun"
 
+echo "== 6.5 PSP / desempenho automático / conferir cópia"
+F65="sudo bash /opt/skystation-src/setup/fase6-5.sh"
+v "emulador de PSP" "$F65" test -f /opt/skystation/emu/cores/ppsspp_libretro.so
+v "arquivos de apoio do PSP" "$F65" test -d "$H/skystation/bios/psp/PPSSPP"
+v "desempenho automático no PS2" "Sistema → Atualizar o SkyStation" grep -q PESADOS /opt/skystation/bin/sky-pcsx2-ini
+
 echo
 if [ "$falhas" -eq 0 ]; then echo "Tudo certo: $ok de $ok verificações ✓"
 else echo "$ok ok, $falhas com problema (veja as dicas →)"; fi

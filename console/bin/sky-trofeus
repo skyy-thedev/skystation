@@ -15,7 +15,7 @@ import time
 HOME = os.path.expanduser("~")
 SAVES = os.path.join(HOME, "skystation/saves")
 RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
-SISTEMAS = ("ps1", "ps2", "snes", "n64")
+SISTEMAS = ("ps1", "ps2", "snes", "n64", "psp")
 
 
 def sistema(gid):
@@ -54,6 +54,7 @@ TROFEUS = [
     ("ps2", "Era de ouro", "Jogue um jogo de PS2", "bronze", lambda s: "ps2" in s["sistemas"]),
     ("snes", "Cartucho soprado", "Jogue um jogo de SNES", "bronze", lambda s: "snes" in s["sistemas"]),
     ("n64", "Três alças", "Jogue um jogo de N64", "bronze", lambda s: "n64" in s["sistemas"]),
+    ("psp", "No bolso", "Jogue um jogo de PSP", "bronze", lambda s: "psp" in s["sistemas"]),
     ("proprio", "Feito em casa", "Jogue um jogo próprio do SkyStation", "bronze", lambda s: "proprio" in s["sistemas"]),
     ("todos", "Volta ao mundo", "Jogue em 4 sistemas diferentes", "ouro", lambda s: len(s["sistemas"]) >= 4),
 ]

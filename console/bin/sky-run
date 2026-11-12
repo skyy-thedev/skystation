@@ -21,7 +21,7 @@ mkdir -p "$RUN" "$STATE"
 rm -f "$RUN/last_exit" "$RUN/last_msg"
 echo "$TITLE" >"$RUN/game.title"     # o menu Home mostra o nome do jogo
 echo "$ID" >"$RUN/game.id"
-case "$ID" in ps1-*) echo ps1 ;; ps2-*) echo ps2 ;; snes-*) echo snes ;; n64-*) echo n64 ;; *) echo "" ;; esac >"$RUN/game.sys"   # salvar estado só no PS1
+case "$ID" in ps1-*) echo ps1 ;; ps2-*) echo ps2 ;; snes-*) echo snes ;; n64-*) echo n64 ;; psp-*) echo psp ;; *) echo "" ;; esac >"$RUN/game.sys"   # salvar estado só no PS1
 START=$(date +%s)
 
 export SKY_MSG_FILE="$RUN/last_msg"     # sky-emu escreve aqui mensagens para o jogador

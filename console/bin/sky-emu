@@ -27,11 +27,12 @@ fi
 mkdir -p "$SKY/saves/$SYS" "$SKY/states/$SYS" "$SKY/bios/$SYS"
 
 case "$SYS" in
-ps1|snes|n64)
+ps1|snes|n64|psp)
     case "$SYS" in
         ps1)  CORE=pcsx_rearmed ;;
         snes) CORE=snes9x ;;
         n64)  CORE=mupen64plus_next ;;
+        psp)  CORE=ppsspp ;;
     esac
     CORE="/opt/skystation/emu/cores/${CORE}_libretro.so"
     [ -f "$CORE" ] || fail "Emulador de ${SYS^^} não instalado. Rode a Fase 6.2 (fase6-2.sh)."
@@ -41,6 +42,8 @@ ps1|snes|n64)
     sed -e "s|@SKY@|$SKY|g" /opt/skystation/emu/retroarch.cfg >"$CFG"
     if [ "$SYS" != "ps1" ]; then   # o modelo aponta saves/estados para ps1: troca pela pasta do sistema
         sed -i -e "s|/saves/ps1\"|/saves/$SYS\"|" -e "s|/states/ps1\"|/states/$SYS\"|" "$CFG"
+        # PSP: o core procura fontes e arquivos de apoio em <system>/PPSSPP
+        [ "$SYS" = psp ] && sed -i -e "s|/bios/ps1\"|/bios/psp\"|" "$CFG"
     fi
     if [ -n "$DISCO" ]; then
         # O core de PS1 lê o CD pelo /dev/sgN (comandos SCSI: dados + faixas de áudio).

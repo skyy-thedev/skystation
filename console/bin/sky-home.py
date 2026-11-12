@@ -242,7 +242,7 @@ class Home:
             except (OSError, subprocess.SubprocessError):
                 shot = ""
         self.items = [("resume", "Voltar ao jogo")]
-        if read(os.path.join(RUN, "game.sys")) in ("ps1", "snes", "n64"):
+        if read(os.path.join(RUN, "game.sys")) in ("ps1", "snes", "n64", "psp"):
             self.items += [("save", "Salvar estado"), ("load", "Carregar estado")]
         if shot:
             self.items.append(("shot", "Salvar captura de tela"))

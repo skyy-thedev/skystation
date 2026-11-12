@@ -27,9 +27,16 @@ SPEED = {
 }
 try:
     with open(os.path.expanduser("~/.config/skystation/ps2-desempenho.json")) as f:
-        speed = json.load(f).get(game_id, "normal")
+        speed = json.load(f).get(game_id, "auto")
 except (OSError, ValueError, AttributeError):
-    speed = "normal"
+    speed = "auto"
+# Fase 6.5 — "Automático": jogos conhecidos por exigir muito do PS2 já abrem em Rápido.
+PESADOS = ("need for speed", "gran turismo", "god of war", "shadow of the colossus", "burnout", "metal gear solid",
+           "ratchet", "jak ", "jak and", "black", "midnight club", "tekken 5", "soulcalibur", "final fantasy xii",
+           "ace combat", "killzone", "driv3r", "true crime", "the getaway", "mercenaries", "juiced", "test drive")
+if speed == "auto":
+    nome = game_id.lower()
+    speed = "rapido" if any(p in nome for p in PESADOS) else "normal"
 
 # Renderer do PCSX2: 12 = OpenGL, 14 = Vulkan.
 # HD 4400 (notebook): OpenGL é o driver maduro; o Vulkan dessa geração é incompleto.

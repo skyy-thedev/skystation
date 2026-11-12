@@ -22,6 +22,7 @@ BASES = [os.path.join(HOME, "skystation/roms"), "/mnt/skyroms", "/mnt/skystation
 SYSTEMS = {
     "ps1": ("Sony_-_PlayStation", {"cue", "chd", "pbp", "m3u", "iso", "img"}),
     "ps2": ("Sony_-_PlayStation_2", {"iso", "chd", "cso", "gz"}),
+    "psp": ("Sony_-_PlayStation_Portable", {"iso", "cso"}),
     "snes": ("Nintendo_-_Super_Nintendo_Entertainment_System", {"sfc", "smc"}),
     "n64": ("Nintendo_-_Nintendo_64", {"z64", "n64", "v64"}),
 }

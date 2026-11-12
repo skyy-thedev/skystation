@@ -28,6 +28,8 @@ const ROM_SYSTEMS := {
 		"exts": ["cue", "chd", "pbp", "m3u", "iso", "img", "bin"]},
 	"ps2": {"badge": "PS2", "name": "PlayStation 2", "color": "#4f8cff",
 		"exts": ["iso", "chd", "cso", "gz"]},
+	"psp": {"badge": "PSP", "name": "PlayStation Portable", "color": "#9aa7c7",
+		"exts": ["iso", "cso"]},
 	"snes": {"badge": "SNES", "name": "Super Nintendo", "color": "#b06cf0",
 		"exts": ["sfc", "smc"]},
 	"n64": {"badge": "N64", "name": "Nintendo 64", "color": "#3fbf6b",
@@ -681,7 +683,7 @@ func _game_item(g: Dictionary) -> Dictionary:
 	var sub: String = TYPE_NAMES.get(g["type"], str(g["type"]))
 	if g["sys"] != "":
 		sub = ROM_SYSTEMS[g["sys"]]["name"]
-	if g["sys"] == "ps2" and _ps2_speed(g["id"]) != "normal":
+	if g["sys"] == "ps2" and _ps2_speed(g["id"]) != "auto":
 		sub += "  ·  Desempenho: " + SPEED_NAMES[_ps2_speed(g["id"])]
 	var pt: Dictionary = playtime.get(g["id"], {})
 	if not pt.is_empty():
@@ -722,9 +724,10 @@ func _build_cats() -> void:
 	var c_games := {"id": "jogos", "title": "Jogos", "icon": "pad", "items": []}
 	var c_ps1 := {"id": "ps1", "title": "PS1", "icon": "disc1", "items": []}
 	var c_ps2 := {"id": "ps2", "title": "PS2", "icon": "disc2", "items": []}
+	var c_psp := {"id": "psp", "title": "PSP", "icon": "discP", "items": []}
 	var c_snes := {"id": "snes", "title": "SNES", "icon": "cartS", "items": []}
 	var c_n64 := {"id": "n64", "title": "N64", "icon": "cart64", "items": []}
-	var by_sys := {"ps1": c_ps1, "ps2": c_ps2, "snes": c_snes, "n64": c_n64}
+	var by_sys := {"ps1": c_ps1, "ps2": c_ps2, "snes": c_snes, "n64": c_n64, "psp": c_psp}
 	var c_pc := {"id": "pc", "title": "PC", "icon": "monitor", "items": []}
 	var c_apps := {"id": "apps", "title": "Apps", "icon": "apps", "items": []}
 	var c_power := {"id": "energia", "title": "Energia", "icon": "power", "items": []}
@@ -781,7 +784,7 @@ func _build_cats() -> void:
 	if prev != "":
 		c_sys["items"].append(_act("Voltar à versão anterior", "Se a atualização deu problema: volta para " + prev, "rollback", "refresh"))
 	# Favoritos (Fase 6.1) primeiro em cada lista, na mesma ordem de antes
-	for c in [c_games, c_ps1, c_ps2, c_snes, c_n64, c_pc]:
+	for c in [c_games, c_ps1, c_ps2, c_psp, c_snes, c_n64, c_pc]:
 		var fav_items: Array = c["items"].filter(func(i): return i.get("fav", false))
 		if not fav_items.is_empty():
 			c["items"] = fav_items + c["items"].filter(func(i): return not i.get("fav", false))
@@ -816,7 +819,7 @@ func _build_cats() -> void:
 	if not c_recent["items"].is_empty():
 		cats.append(c_recent)
 	cats += [c_games, c_ps1, c_ps2]
-	for c in [c_snes, c_n64]:   # cartuchos: só aparecem quando há jogos
+	for c in [c_psp, c_snes, c_n64]:   # só aparecem quando há jogos
 		if not c["items"].is_empty():
 			cats.append(c)
 	if not c_pc["items"].is_empty():
@@ -1166,7 +1169,9 @@ func _toggle_panel() -> void:
 					panel_items.append(["Mover para o console", "move:interno"])
 				elif skyroms_present and not gpath.begins_with("/mnt/skystation/"):
 					panel_items.append(["Mover para o pendrive SKYROMS", "move:skyroms"])
-				if gpath.get_extension().to_lower() in ["cue", "iso", "img"]:
+				if it["game"].get("sys", "") == "ps2" and gpath.get_extension().to_lower() == "iso":
+					panel_items.append(["Conferir cópia", "verify"])
+				if it["game"].get("sys", "") != "psp" and gpath.get_extension().to_lower() in ["cue", "iso", "img"]:
 					panel_items.append(["Compactar (CHD): ocupa menos espaço", "compress"])
 				panel_items.append(["Apagar jogo", "delete_game"])
 		if it.get("kind", "") == "shot":
@@ -1190,6 +1195,9 @@ func _panel_choose() -> void:
 		confirm_delete = false
 	if a.begins_with("copy_disc:"):
 		_run_job(["copiar-disco", a.split(":")[1]], "Copiando o disco…")
+		return
+	if a == "verify":
+		_run_job(["conferir", str(_cur()["game"]["path"])], "Conferindo a cópia…")
 		return
 	if a == "compress":
 		var itc := _cur()
@@ -1639,14 +1647,14 @@ func _apply_tv_scale() -> void:
 	get_window().content_scale_factor = 1.2 if big else 1.0
 
 
-const SPEED_NAMES := {"normal": "Normal", "rapido": "Rápido", "maximo": "Máximo"}
-const SPEED_ORDER := ["normal", "rapido", "maximo"]
+const SPEED_NAMES := {"auto": "Automático", "normal": "Normal", "rapido": "Rápido", "maximo": "Máximo"}
+const SPEED_ORDER := ["auto", "normal", "rapido", "maximo"]
 
 
 func _ps2_speed(game_id: String) -> String:
 	var txt := _read_text(conf_dir + "/ps2-desempenho.json", "{}")
 	var d = JSON.parse_string(txt) if txt.begins_with("{") else {}
-	return str(d.get(game_id, "normal")) if typeof(d) == TYPE_DICTIONARY else "normal"
+	return str(d.get(game_id, "auto")) if typeof(d) == TYPE_DICTIONARY else "auto"
 
 
 func _cycle_ps2_speed(game_id: String) -> void:
@@ -1654,14 +1662,14 @@ func _cycle_ps2_speed(game_id: String) -> void:
 	var d = JSON.parse_string(txt) if txt.begins_with("{") else {}
 	if typeof(d) != TYPE_DICTIONARY:
 		d = {}
-	var cur := str(d.get(game_id, "normal"))
+	var cur := str(d.get(game_id, "auto"))
 	var nxt: String = SPEED_ORDER[(SPEED_ORDER.find(cur) + 1) % SPEED_ORDER.size()]
-	if nxt == "normal":
+	if nxt == "auto":
 		d.erase(game_id)
 	else:
 		d[game_id] = nxt
 	_write_text(conf_dir + "/ps2-desempenho.json", JSON.stringify(d))
-	var why := {"normal": "velocidade real do PS2", "rapido": "mais FPS, quase sem efeito colateral",
+	var why := {"auto": "o console escolhe: Rápido nos jogos conhecidos como pesados", "normal": "velocidade real do PS2", "rapido": "mais FPS, quase sem efeito colateral",
 		"maximo": "o máximo de FPS; alguns jogos engasgam ou falham"}
 	_toast("Desempenho: %s (%s)" % [SPEED_NAMES[nxt], why[nxt]], 3.5, "gauge")
 	_reload_games()
@@ -1800,7 +1808,7 @@ func _run_job(args: Array, title: String) -> void:
 		_toast("Não consegui iniciar", 3.0, "drive")
 		return
 	busy_msg = title
-	job_cancel_hint = args[0] in ["copiar-disco", "compactar"]
+	job_cancel_hint = args[0] in ["copiar-disco", "compactar", "conferir"]
 	job_thread = Thread.new()
 	job_thread.start(_pipe_reader.bind(info["stdio"], "_on_job_line"))
 
@@ -2646,12 +2654,12 @@ func _icon(kind: String, c: Vector2, s: float, col: Color) -> void:
 			draw_rect(Rect2(c.x - s * 0.275, c.y - s * 0.085, s * 0.05, s * 0.16), hole)
 			for o in [Vector2(0.25, -0.05), Vector2(0.33, 0.02), Vector2(0.17, 0.02), Vector2(0.25, 0.09)]:
 				draw_circle(c + o * s, s * 0.035, hole, true, -1.0, true)
-		"disc", "disc1", "disc2":
+		"disc", "disc1", "disc2", "discP":
 			draw_arc(c, s * 0.42, 0, TAU, 64, col, lw, true)
 			draw_arc(c, s * 0.30, -0.6, 0.9, 24, Color(col, col.a * 0.45), lw * 0.6, true)
 			draw_circle(c, s * 0.10, col, false, lw * 0.8, true)
 			if kind != "disc":
-				var n := "1" if kind == "disc1" else "2"
+				var n := kind.substr(4)
 				draw_circle(c + Vector2(s * 0.30, s * 0.30), s * 0.17, col, true, -1.0, true)
 				_text(n, Vector2(c.x + s * 0.30 - s * 0.17, c.y + s * 0.30 + s * 0.09), int(s * 0.24),
 					Color(palette[1], 1.0) if not palette.is_empty() else Color.BLACK, true, s * 0.34,

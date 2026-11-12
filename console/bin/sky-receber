@@ -30,6 +30,7 @@ HOME = os.path.expanduser("~")
 DESTS = {"interno": os.path.join(HOME, "skystation/roms"), "skyroms": "/mnt/skyroms"}
 EXTS = {"ps1": {"cue", "bin", "chd", "pbp", "m3u", "iso", "img", "png", "jpg"},
         "ps2": {"iso", "chd", "cso", "gz", "png", "jpg"},
+        "psp": {"iso", "cso", "png", "jpg"},
         "snes": {"sfc", "smc", "png", "jpg"}, "n64": {"z64", "n64", "v64", "png", "jpg"},
         "bios": {"bin", "rom0", "rom1", "rom2", "erom", "nvm", "mec"}}
 BIOS_DIR = os.path.join(HOME, "skystation/bios/ps2")
@@ -37,7 +38,7 @@ SHOTS = os.path.join(HOME, "skystation/capturas")
 SAVES = os.path.join(HOME, "skystation/saves")
 STATES = os.path.join(HOME, "skystation/states")
 GAME_EXTS = {"ps1": {"cue", "chd", "pbp", "m3u", "iso", "img"}, "ps2": {"iso", "chd", "cso", "gz"},
-             "snes": {"sfc", "smc"}, "n64": {"z64", "n64", "v64"}}
+             "psp": {"iso", "cso"}, "snes": {"sfc", "smc"}, "n64": {"z64", "n64", "v64"}}
 BIN = os.path.dirname(os.path.realpath(__file__))
 LOCK = threading.Lock()
 FAILS = {"n": 0}
@@ -224,7 +225,7 @@ background:rgba(10,18,54,.5);cursor:pointer;transition:.2s}#drop.on{border-color
 <div id="msg"></div>
 <section id="t-enviar">
 <div class="row">
- <div><label>Sistema</label><select id="sys"><option value="ps1">PlayStation (PS1)</option><option value="ps2">PlayStation 2</option><option value="snes">Super Nintendo</option><option value="n64">Nintendo 64</option><option value="bios">BIOS do PS2</option></select></div>
+ <div><label>Sistema</label><select id="sys"><option value="ps1">PlayStation (PS1)</option><option value="ps2">PlayStation 2</option><option value="psp">PSP</option><option value="snes">Super Nintendo</option><option value="n64">Nintendo 64</option><option value="bios">BIOS do PS2</option></select></div>
  <div><label>Guardar em</label><select id="dest"><option value="interno">Console</option><option value="skyroms" id="osk">Pendrive SKYROMS</option></select></div>
 </div>
 <div id="drop"><strong>Arraste os arquivos aqui</strong>ou clique para escolher (.cue + .bin, .chd, .iso, .pbp, capas .png)
