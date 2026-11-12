@@ -28,6 +28,7 @@ const ROM_SYSTEMS := {
 		"exts": ["cue", "chd", "pbp", "m3u", "iso", "img", "bin"]},
 	"ps2": {"badge": "PS2", "name": "PlayStation 2", "color": "#4f8cff",
 		"exts": ["iso", "chd", "cso", "gz"]},
+	"ps3": {"badge": "PS3", "name": "PlayStation 3", "color": "#e8eefc", "exts": []},   # lista vem do sky-ps3
 	"psp": {"badge": "PSP", "name": "PlayStation Portable", "color": "#9aa7c7",
 		"exts": ["iso", "cso"]},
 	"snes": {"badge": "SNES", "name": "Super Nintendo", "color": "#b06cf0",
@@ -211,14 +212,11 @@ var toast_icon: String = ""
 
 # Fase 5.7
 var disk_detail: String = ""
-var recv_pid: int = -1
-var recv_pin: String = ""
-var recv_ip: String = ""
-var recv_log: Array = []         # últimas linhas do que chegou
-var recv_cur: String = ""
-var recv_qr: Array = []          # linhas "0101…" do QR code da Central web
+var recv_open: bool = false      # tela "Central web" aberta (o serviço roda em segundo plano, Fase 7.0)
+var recv_poll: float = 0.0
+var central: Dictionary = {}     # estado do serviço: ip, pin, qr, recebendo, log
+var central_on: bool = false
 var storage_data: Dictionary = {}   # tela Armazenamento (vazio = fechada)
-var recv_thread: Thread = null
 var job_thread: Thread = null
 var job_cancel_hint: bool = false
 var confirm_delete: bool = false
@@ -281,9 +279,7 @@ func _exit_tree() -> void:
 	update_stop = true
 	if busy_thread != null and busy_thread.is_started():
 		busy_thread.wait_to_finish()
-	if recv_pid != -1:
-		OS.kill(recv_pid)
-	for th in bg_threads + [recv_thread, job_thread]:
+	for th in bg_threads + [job_thread]:
 		if th != null and th.is_started():
 			th.wait_to_finish()
 
@@ -407,7 +403,7 @@ func _input(event: InputEvent) -> void:
 func _handle_input(delta: float) -> void:
 	if cooldown > 0.0:
 		return
-	if panel_open == false and recv_pid == -1 and storage_data.is_empty():
+	if panel_open == false and not recv_open and storage_data.is_empty():
 		_tick_secret(delta)
 	if slider_kind != "":
 		_slider_input(delta)
@@ -415,8 +411,14 @@ func _handle_input(delta: float) -> void:
 	if viewer_open:
 		_viewer_input()
 		return
-	if recv_pid != -1:
-		if Input.is_action_just_pressed("sky_back") or Input.is_action_just_pressed("sky_accept"):
+	if recv_open:
+		recv_poll -= delta
+		if recv_poll <= 0.0:
+			recv_poll = 0.5
+			_read_central()
+		if Input.is_action_just_pressed("sky_menu"):
+			_central_off()
+		elif Input.is_action_just_pressed("sky_back") or Input.is_action_just_pressed("sky_accept"):
 			_close_receive()
 		return
 	if not storage_data.is_empty():
@@ -635,7 +637,33 @@ func _scan_roms() -> void:
 						g["cover"] = tex
 						break
 				games.append(g)
+	_scan_ps3()
 	_scan_disc(tag_re)
+
+
+var ps3_info: Dictionary = {}
+
+
+func _scan_ps3() -> void:
+	# Fase 7.0: jogos de PS3 são pastas ou .iso; o sky-ps3 lê nome, código e ícone de dentro do jogo.
+	ps3_info = _sky_json("sky-ps3", ["listar"])
+	var info: Dictionary = ROM_SYSTEMS["ps3"]
+	for j in ps3_info.get("jogos", []):
+		var path := str(j.get("path", ""))
+		var onde := str(j.get("onde", ""))
+		var where: String = {"skyroms": "pendrive SKYROMS", "rpcs3": "instalado no RPCS3"}.get(onde, "armazenamento interno")
+		var key := str(j.get("id", ""))
+		if key == "":
+			key = str(j.get("arquivo", "")).validate_filename().replace(" ", "_")
+		games.append({
+			"id": "ps3-" + key, "dir": path.get_base_dir(), "sys": "ps3",
+			"title": str(j.get("titulo", "")), "type": "retro",
+			"exec": "sky-emu ps3 %s" % _shq(path), "path": "" if onde == "rpcs3" else path,
+			"description": "%s  ·  %s  ·  %s%s" % [info["name"], str(j.get("formato", "")), where,
+				("  ·  " + str(j.get("id", ""))) if str(j.get("id", "")) != "" else ""],
+			"color": Color.from_string(info["color"], Color("4fd1ff")),
+			"order": 50, "cover": _load_tex(str(j.get("capa", ""))),
+		})
 
 
 func _scan_disc(tag_re: RegEx) -> void:
@@ -724,10 +752,11 @@ func _build_cats() -> void:
 	var c_games := {"id": "jogos", "title": "Jogos", "icon": "pad", "items": []}
 	var c_ps1 := {"id": "ps1", "title": "PS1", "icon": "disc1", "items": []}
 	var c_ps2 := {"id": "ps2", "title": "PS2", "icon": "disc2", "items": []}
+	var c_ps3 := {"id": "ps3", "title": "PS3", "icon": "disc3", "items": []}
 	var c_psp := {"id": "psp", "title": "PSP", "icon": "discP", "items": []}
 	var c_snes := {"id": "snes", "title": "SNES", "icon": "cartS", "items": []}
 	var c_n64 := {"id": "n64", "title": "N64", "icon": "cart64", "items": []}
-	var by_sys := {"ps1": c_ps1, "ps2": c_ps2, "snes": c_snes, "n64": c_n64, "psp": c_psp}
+	var by_sys := {"ps1": c_ps1, "ps2": c_ps2, "snes": c_snes, "n64": c_n64, "psp": c_psp, "ps3": c_ps3}
 	var c_pc := {"id": "pc", "title": "PC", "icon": "monitor", "items": []}
 	var c_apps := {"id": "apps", "title": "Apps", "icon": "apps", "items": []}
 	var c_power := {"id": "energia", "title": "Energia", "icon": "power", "items": []}
@@ -769,7 +798,7 @@ func _build_cats() -> void:
 		_act("Sons da interface", "Ligados" if sounds_on else "Desligados", "sounds", "note"),
 		_act("Bateria e temperatura", _power_txt(), "power_info", "battery"),
 		_act("Armazenamento", disk_txt, "storage", "drive"),
-		_act("Central web (celular/PC)", "Enviar jogos, ver a biblioteca, baixar capturas e saves", "receive", "download"),
+		_act("Central web (celular/PC)", _central_txt(), "receive", "download"),
 		_act("Modo TV", _tv_txt(), "tv", "monitor"),
 		_act("Som de ligar", "Ligado" if not FileAccess.file_exists(conf_dir + "/ligar.off") else "Desligado", "boot_sound", "note"),
 		_act("Ligar pelo controle", _wake_txt(), "wake_pad", "pad"),
@@ -784,7 +813,7 @@ func _build_cats() -> void:
 	if prev != "":
 		c_sys["items"].append(_act("Voltar à versão anterior", "Se a atualização deu problema: volta para " + prev, "rollback", "refresh"))
 	# Favoritos (Fase 6.1) primeiro em cada lista, na mesma ordem de antes
-	for c in [c_games, c_ps1, c_ps2, c_psp, c_snes, c_n64, c_pc]:
+	for c in [c_games, c_ps1, c_ps2, c_ps3, c_psp, c_snes, c_n64, c_pc]:
 		var fav_items: Array = c["items"].filter(func(i): return i.get("fav", false))
 		if not fav_items.is_empty():
 			c["items"] = fav_items + c["items"].filter(func(i): return not i.get("fav", false))
@@ -819,7 +848,10 @@ func _build_cats() -> void:
 	if not c_recent["items"].is_empty():
 		cats.append(c_recent)
 	cats += [c_games, c_ps1, c_ps2]
-	for c in [c_psp, c_snes, c_n64]:   # só aparecem quando há jogos
+	if c_ps3["items"].is_empty() and ps3_info.get("emulador", false):
+		var falta := "Envie o PS3UPDAT.PUP pela Central web (Sistema: Firmware do PS3). " if not ps3_info.get("firmware", false) and not ps3_info.get("pup", false) else ""
+		c_ps3["items"].append(_act("Nenhum jogo de PS3", falta + "Jogos: pasta do disco ou .iso em ~/skystation/roms/ps3 ou SKYROMS/ps3", "", "disc"))
+	for c in [c_ps3, c_psp, c_snes, c_n64]:   # só aparecem quando há jogos
 		if not c["items"].is_empty():
 			cats.append(c)
 	if not c_pc["items"].is_empty():
@@ -883,6 +915,8 @@ func _refresh_sys_items() -> void:
 					it["sub"] = _wake_txt()
 				"tv":
 					it["sub"] = _tv_txt()
+				"receive":
+					it["sub"] = _central_txt()
 				"touchpad":
 					it["sub"] = _touch_txt()
 
@@ -1171,7 +1205,7 @@ func _toggle_panel() -> void:
 					panel_items.append(["Mover para o pendrive SKYROMS", "move:skyroms"])
 				if it["game"].get("sys", "") == "ps2" and gpath.get_extension().to_lower() == "iso":
 					panel_items.append(["Conferir cópia", "verify"])
-				if it["game"].get("sys", "") != "psp" and gpath.get_extension().to_lower() in ["cue", "iso", "img"]:
+				if not it["game"].get("sys", "") in ["psp", "ps3"] and gpath.get_extension().to_lower() in ["cue", "iso", "img"]:
 					panel_items.append(["Compactar (CHD): ocupa menos espaço", "compress"])
 				panel_items.append(["Apagar jogo", "delete_game"])
 		if it.get("kind", "") == "shot":
@@ -1285,6 +1319,7 @@ func _apply_theme(instant: bool) -> void:
 
 
 func _refresh_status() -> void:
+	_read_central()
 	status_t = 5.0
 	pads = Input.get_connected_joypads().size()
 	wifi_q = -1
@@ -1540,7 +1575,9 @@ func _poll_events() -> void:
 		if kind == "tv":
 			_apply_tv_scale()
 			_refresh_sys_items()
-		var icons := {"controle": "pad", "usb": "usb", "pendrive": "drive", "jogo": "disc", "disco": "disc", "tv": "monitor", "trofeu": "trophy",
+		if Time.get_unix_time_from_system() - float(ev.get("t", 0)) > 20.0:
+			continue   # aviso antigo (chegou durante um jogo): não mostra fora de hora
+		var icons := {"central": "download", "controle": "pad", "usb": "usb", "pendrive": "drive", "jogo": "disc", "disco": "disc", "tv": "monitor", "trofeu": "trophy",
 			"bateria": "battery", "energia": "battery", "calor": "thermo"}
 		_toast(text, 3.5, str(icons.get(kind, "info")))
 		if kind in ["controle", "energia", "bateria"]:
@@ -1723,26 +1760,45 @@ func _suspend() -> void:
 	status_t = 0.0
 
 
+func _central_txt() -> String:
+	if central_on:
+		return "Ligada em segundo plano: envie jogos e use o teclado do celular a qualquer hora"
+	return "Desligada. Abra para ligar: enviar jogos, biblioteca, capturas, saves, teclado"
+
+
+func _read_central() -> void:
+	# O serviço (sky-receber servir) mantém este arquivo na RAM; some quando ele é desligado.
+	var txt := _read_text(run_dir + "/central.json", "")
+	var d = JSON.parse_string(txt) if txt.begins_with("{") else null
+	var on := typeof(d) == TYPE_DICTIONARY and DirAccess.dir_exists_absolute("/proc/%d" % int(d.get("pid", 0)))
+	if on:
+		central = d
+	if on != central_on:
+		central_on = on
+		_refresh_sys_items()
+
+
 func _open_receive() -> void:
-	if recv_pid != -1 or not FileAccess.file_exists(SKY_BIN + "/sky-receber"):
+	if recv_open or not FileAccess.file_exists(SKY_BIN + "/sky-receber"):
 		return
-	recv_pin = "%04d" % (randi() % 10000)
-	recv_ip = ""
-	var out: Array = []
-	OS.execute("ip", ["-4", "-o", "addr", "show", "scope", "global"], out, false)
-	var m := RegEx.create_from_string("inet (\\d+\\.\\d+\\.\\d+\\.\\d+)").search(str(out[0]) if not out.is_empty() else "")
-	if m != null:
-		recv_ip = m.get_string(1)
-	recv_log = []
-	recv_qr = []
-	recv_cur = ""
-	var info := OS.execute_with_pipe(SKY_BIN + "/sky-receber", [recv_pin])
-	if info.is_empty():
-		_toast("Não consegui abrir o recebimento", 3.0, "download")
+	var r := _sky_json("sky-receber", ["ligar"])
+	if r.is_empty() or not r.get("ativa", false):
+		_toast("Não consegui ligar a Central web", 3.0, "download")
 		return
-	recv_pid = int(info["pid"])
-	recv_thread = Thread.new()
-	recv_thread.start(_pipe_reader.bind(info["stdio"], "_on_recv_line"))
+	central = r
+	central_on = true
+	recv_open = true
+	recv_poll = 0.5
+	_refresh_sys_items()
+
+
+func _central_off() -> void:
+	_sky_json("sky-receber", ["desligar"])
+	central_on = false
+	recv_open = false
+	_play("back")
+	_toast("Central web desligada", 2.5, "download")
+	_refresh_sys_items()
 
 
 func _pipe_reader(pipe: FileAccess, cb: String) -> void:
@@ -1756,48 +1812,10 @@ func _pipe_reader(pipe: FileAccess, cb: String) -> void:
 	call_deferred(cb, "{\"evento\": \"fim\"}")
 
 
-func _on_recv_line(line: String) -> void:
-	var ev = JSON.parse_string(line) if line.begins_with("{") else null
-	if typeof(ev) != TYPE_DICTIONARY:
-		return
-	match str(ev.get("evento", "")):
-		"pronto":
-			recv_qr = ev.get("qr", []) if typeof(ev.get("qr", [])) == TYPE_ARRAY else []
-		"recebendo":
-			recv_cur = "%s  %d%%" % [str(ev.get("nome", "")), int(float(ev.get("p", 0)) * 100)]
-		"recebido":
-			recv_cur = ""
-			var onde := "  → SKYROMS" if ev.get("destino", "") == "skyroms" else ""
-			if ev.get("sistema", "") == "bios":
-				onde = "  → BIOS do PS2 instalada"
-			recv_log.push_front("✓ " + str(ev.get("nome", "")) + onde)
-			recv_log = recv_log.slice(0, 6)
-		"erro":
-			recv_cur = ""
-			recv_log.push_front("✗ " + str(ev.get("nome", "")) + ": " + str(ev.get("erro", "")))
-			recv_log = recv_log.slice(0, 6)
-		"acao":
-			recv_log.push_front("✓ " + str(ev.get("texto", "")))
-			recv_log = recv_log.slice(0, 6)
-		"pin_errado":
-			recv_log.push_front("✗ Alguém digitou o PIN errado")
-			recv_log = recv_log.slice(0, 6)
-		"fim":
-			if recv_thread != null:
-				recv_thread.wait_to_finish()
-				recv_thread = null
-			if recv_pid != -1:
-				recv_pid = -1
-				_toast("Recebimento encerrado", 2.5, "download")
-
-
 func _close_receive() -> void:
-	if recv_pid != -1:
-		OS.kill(recv_pid)
-	recv_pid = -1
+	recv_open = false
 	_play("back")
-	reload_at = t + 0.5
-	covers_at = t + 2.0
+	_toast("Central web continua ligada em segundo plano", 3.0, "download")
 
 
 func _run_job(args: Array, title: String) -> void:
@@ -1849,16 +1867,20 @@ func _draw_receive(w: float, h: float) -> void:
 	_icon("download", Vector2(x + 14, y - 12), 34.0, accent)
 	_text("Central web", Vector2(x + 48, y), 26, WHITE, true)
 	y += 56.0
+	var recv_qr: Array = central.get("qr", []) if typeof(central.get("qr", [])) == TYPE_ARRAY else []
+	var recv_ip := str(central.get("ip", ""))
+	var recv_cur := str(central.get("recebendo", ""))
+	var recv_log: Array = central.get("log", []) if typeof(central.get("log", [])) == TYPE_ARRAY else []
 	var tw := r.size.x - 96.0 - (270.0 if not recv_qr.is_empty() else 0.0)
-	_text("1.  No celular ou PC (mesmo Wi-Fi), abra no navegador:", Vector2(x, y), 18, MUTED, false, tw)
+	_text("1.  No celular ou PC (mesmo Wi-Fi), abra:", Vector2(x, y), 18, MUTED, false, tw)
 	y += 54.0
 	var url := ("http://%s:8080" % recv_ip) if recv_ip != "" else "sem rede: conecte o Wi-Fi em Sistema"
 	_text(url, Vector2(x + 24, y), 40 if recv_qr.is_empty() else 32, accent, true, tw - 24)
 	y += 54.0
 	_text("2.  Digite o PIN:", Vector2(x, y), 18, MUTED)
-	_text(recv_pin, Vector2(x + 190, y + 6), 40, WHITE, true)
+	_text(str(central.get("pin", "")), Vector2(x + 190, y + 6), 40, WHITE, true)
 	y += 48.0
-	_text("3.  Envie jogos, veja a biblioteca, baixe capturas e faça backup dos saves.", Vector2(x, y), 18, MUTED)
+	_text("3.  Pode fechar: ela continua ligada.", Vector2(x, y), 18, MUTED, false, tw)
 	y += 46.0
 	if recv_cur != "":
 		_text("Recebendo:  " + recv_cur, Vector2(x, y), 18, WHITE, false, r.size.x - 96)
@@ -1866,7 +1888,7 @@ func _draw_receive(w: float, h: float) -> void:
 	for line in recv_log:
 		_text(str(line), Vector2(x, y), 16, MUTED, false, r.size.x - 96)
 		y += 26.0
-	_text("B  fechar (a central web desliga)", Vector2(x, r.end.y - 28), 15, DIM)
+	_text("B  fechar (continua ligada)      Y / Menu  desligar a central (o PIN muda ao religar)", Vector2(x, r.end.y - 28), 15, DIM)
 	# QR code: aponte a câmera do celular (o PIN já vai junto)
 	var n := recv_qr.size()
 	if n > 0:
@@ -2282,7 +2304,7 @@ func _draw() -> void:
 	var a := ui_alpha
 	if viewer_open:
 		_draw_viewer(w, h)
-	elif recv_pid != -1:
+	elif recv_open:
 		_draw_receive(w, h)
 	elif not storage_data.is_empty():
 		_draw_storage(w, h)
@@ -2391,6 +2413,9 @@ func _draw_header(w: float, _h: float, a: float) -> void:
 			var bh := 6.0 + i * 5.0
 			var col := Color(WHITE, 0.9 * a) if i < bars else Color(WHITE, 0.25 * a)
 			draw_rect(Rect2(x - 12 + i * 7, 62 - bh, 5, bh), col)
+		x -= 46.0
+	if central_on:   # Central web ligada em segundo plano
+		_icon("download", Vector2(x, 50), 26.0, Color(accent, 0.95 * a))
 
 
 func _cat_x(i: float, w: float) -> float:
@@ -2654,7 +2679,7 @@ func _icon(kind: String, c: Vector2, s: float, col: Color) -> void:
 			draw_rect(Rect2(c.x - s * 0.275, c.y - s * 0.085, s * 0.05, s * 0.16), hole)
 			for o in [Vector2(0.25, -0.05), Vector2(0.33, 0.02), Vector2(0.17, 0.02), Vector2(0.25, 0.09)]:
 				draw_circle(c + o * s, s * 0.035, hole, true, -1.0, true)
-		"disc", "disc1", "disc2", "discP":
+		"disc", "disc1", "disc2", "disc3", "discP":
 			draw_arc(c, s * 0.42, 0, TAU, 64, col, lw, true)
 			draw_arc(c, s * 0.30, -0.6, 0.9, 24, Color(col, col.a * 0.45), lw * 0.6, true)
 			draw_circle(c, s * 0.10, col, false, lw * 0.8, true)

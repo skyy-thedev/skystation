@@ -21,6 +21,7 @@ skystation/
 │   ├── som-ligar.sh  som de ligar no começo do boot (serviço skystation-som-ligar)
 │   ├── fase5-8.sh    jogar direto do disco (acesso ao leitor: udev + módulo sg)
 │   ├── fase6-0.sh    desempenho por jogo (PS2), Modo TV, Central web, copiar disco (cdrdao, chdman)
+│   ├── fase7-0.sh    Central web em segundo plano, som de ligar na TV, PS3 (RPCS3), boot em outro PC
 │   ├── atualizar-menu.sh  "Atualizar o SkyStation" do menu, sem sudo (serviço + .path do systemd)
 │   ├── marca.sh      identidade do sistema (comando skystation-marca, reaplicado pelo pacman)
 │   ├── diag.sh       diagnóstico do boot (comando skystation-diag)
@@ -200,6 +201,25 @@ Coloque o disco no leitor: em poucos segundos toca um som, aparece o aviso e o j
 - **Conferir cópia (6.5):** Y num jogo de PS2 em `.iso` compara tamanho + CRC32 com o registro Redump.
 - **Diagnóstico:** com Medição de FPS ligada, o PCSX2 mostra velocidade e uso de EE/GS/VU/GPU.
 
+## Fase 7.0
+
+- **Central web em segundo plano:** `sky-receber servir` roda como serviço da sessão (aberto pelo
+  `sky-shell`), não mais só com a tela aberta. Liga/desliga em Sistema → Central web
+  (`~/.config/skystation/central.json`); ligada, volta a cada boot com o mesmo PIN de 6 dígitos.
+  Estado em `$XDG_RUNTIME_DIR/skystation/central.json`; avisos (jogo recebido, PIN errado) vão para
+  `events.jsonl`. 5 PINs errados bloqueiam aquele aparelho por 1 min (dobra a cada 5, até 15 min).
+- **Som de ligar na TV:** `skystation-som-ligar` espera a TV se apresentar no HDMI (ELD) e toca lá
+  (`ligar-tv.wav`, com 1 s de silêncio antes). Sem TV, ou com "som na TV" desligado, sai no console.
+- **PS3 (RPCS3):** só em PC com 6+ threads — a ideia é dar boot com o pendrive num PC mais forte.
+  Jogos em `roms/ps3` ou `SKYROMS/ps3`: a pasta do disco (com `PS3_GAME`) ou um `.iso`. Firmware:
+  `PS3UPDAT.PUP` (site oficial da PlayStation) em `bios/ps3`, instalado sozinho na primeira vez.
+  `sky-ps3` lista os jogos (nome/ícone do `PARAM.SFO`), configura o controle ligado na hora
+  (DualShock/DualSense direto pelo hidraw; outros pelo evdev) e usa um usuário do RPCS3 por perfil,
+  com os saves dentro de `saves/ps3`. Central web: envia `.iso`, a pasta inteira do jogo ou o firmware.
+  Forçar em PC fraco: `touch ~/.config/skystation/ps3-forcar`.
+- **Boot em outro PC:** firmware e Vulkan para AMD/Intel, imagem de boot sem `autodetect`, redes
+  Wi-Fi salvas liberadas para qualquer placa. No outro PC: desligar o Secure Boot.
+
 ## Visual
 
 - **Temas:** Sistema → Tema de cores (Automático muda com a hora do dia: Oceano, Aurora,
@@ -268,6 +288,7 @@ curl -fsSL https://raw.githubusercontent.com/skyy-thedev/skystation/main/setup/s
 - [ ] SSD SATA no lugar do pendrive
 - [ ] Case impressa em 3D (protótipo v0.1 em hardware/case)
 - [ ] Fase 6: ISO próprio do SkyStation
+- [x] Fase 7.0: Central web em segundo plano, som de ligar na TV, PS3 pelo RPCS3 em PC forte (não testado em hardware)
 
 ## Saídas de emergência
 

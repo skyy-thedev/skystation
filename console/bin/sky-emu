@@ -3,6 +3,7 @@
 # Uso: sky-emu <sistema> <arquivo>
 #   ps1  -> RetroArch + core PCSX-ReARMed (dynarec, o mais leve)
 #   ps2  -> PCSX2 (perfil leve: OpenGL, resolução nativa | potente: Vulkan, 2x)
+#   ps3  -> RPCS3 (Fase 7.0; só em PC forte: 6+ threads). Jogo = pasta do disco ou .iso
 
 SYS="$1"
 ROM="$2"
@@ -22,7 +23,7 @@ if [ "$ROM" = "disco" ]; then
     [ -r "$DEV" ] || fail "Sem permissão para ler o leitor de disco. Rode a Fase 5.8 e reinicie."
     DISCO="$(printf '%s' "${3:-disco}" | tr -cd 'A-Za-z0-9-')"
 else
-    [ -f "$ROM" ] || fail "Arquivo não encontrado: $(basename "$ROM")"
+    [ -f "$ROM" ] || { [ "$SYS" = ps3 ] && [ -d "$ROM" ]; } || fail "Arquivo não encontrado: $(basename "$ROM")"
 fi
 mkdir -p "$SKY/saves/$SYS" "$SKY/states/$SYS" "$SKY/bios/$SYS"
 
@@ -86,6 +87,17 @@ ps2)
         exec "$PCSX2" -fullscreen -nogui -disc "$DEV"
     fi
     exec "$PCSX2" -fullscreen -nogui -- "$ROM"
+    ;;
+ps3)
+    # O sky-ps3 desliga as telas de aviso do RPCS3, configura o controle ligado agora, instala o
+    # firmware na primeira vez (demora alguns minutos) e devolve o usuário do perfil em uso.
+    PREP="$(python3 /opt/skystation/bin/sky-ps3 preparar 2>/dev/null | tail -1)"
+    ERR="$(printf '%s' "$PREP" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("" if d.get("ok") else d.get("error","erro"))' 2>/dev/null || echo "Não consegui preparar o RPCS3.")"
+    [ -z "$ERR" ] || fail "$ERR"
+    USR="$(printf '%s' "$PREP" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("user","00000001"))')"
+    ulimit -n 65536 2>/dev/null || ulimit -n "$(ulimit -Hn)" 2>/dev/null   # o RPCS3 reclama com menos de 4096 arquivos abertos
+    export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland;xcb}"
+    exec /opt/rpcs3/AppRun --no-gui --fullscreen --input-config SkyStation --user-id "$USR" "$ROM"
     ;;
 *)
     fail "Sistema desconhecido: $SYS"

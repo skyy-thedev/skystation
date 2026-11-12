@@ -117,6 +117,8 @@ def power_on():
 
 
 save("ligar.wav", power_on(), gain=0.85)
+# na TV (HDMI): 1 s de silêncio antes, porque a TV demora a "pegar" o áudio e cortaria o começo
+save("ligar-tv.wav", np.concatenate([np.zeros(RATE), power_on()]), gain=0.85)
 
 
 # disco no leitor: "giro" que acelera + dois toques; ao tirar, o giro desacelera

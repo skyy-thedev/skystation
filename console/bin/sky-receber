@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
 """SkyStation: Central web (antes "receber jogos pelo Wi-Fi").
 
-Abre uma página na rede local (porta 8080), só enquanto a tela "Central web" está aberta no
-console. No PC ou no celular, acesse o endereço que aparece na TV e digite o PIN. Abas:
+Uma página na rede local (porta 8080). Desde a Fase 7.0 ela fica ligada em segundo plano: você
+navega no console e joga enquanto envia jogos ou usa o teclado do celular. Liga/desliga em
+Sistema → Central web; ligada, volta sozinha a cada boot com o mesmo PIN (6 dígitos).
+No PC ou no celular, acesse o endereço que aparece na TV e digite o PIN. Abas:
   Enviar     arraste jogos (.cue + .bin, .chd, .iso…), capas e a BIOS do PS2
   Jogos      biblioteca com capa, tamanho e onde está; mover console ⇄ SKYROMS; apagar
   Capturas   ver e baixar as capturas de tela
   Saves      backup dos saves (cartões de memória) e, se quiser, dos estados salvos (.zip)
 
-Uso: sky-receber <pin>     (aberto pelo launcher; fecha quando você sai da tela)
-Saída: uma linha JSON por evento, para o launcher mostrar o progresso.
+Uso:
+  sky-receber ligar      liga (PIN novo se estava desligada), sobe o serviço e imprime o estado (JSON)
+  sky-receber desligar   desliga e encerra o serviço
+  sky-receber estado     {"ligada", "ativa", "ip", "porta", "pin", "qr", "recebendo", "log"}
+  sky-receber servir     o serviço em si (aberto pelo sky-shell no início da sessão; sai se desligada)
+O serviço mantém $XDG_RUNTIME_DIR/skystation/central.json (a tela do console lê daí) e manda avisos
+para events.jsonl (jogo recebido, PIN errado), que aparecem no menu mesmo com a tela fechada.
 """
 import base64
+import hmac
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -25,23 +34,30 @@ import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = 8080
-PIN = sys.argv[1] if len(sys.argv) > 1 else "0000"
+PIN = "000000"
 HOME = os.path.expanduser("~")
+CFG = os.path.join(HOME, ".config/skystation/central.json")
+RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
+STATUS = os.path.join(RUN, "central.json")
+EVENTS = os.path.join(RUN, "events.jsonl")
+STATE = {"ip": "", "qr": [], "recebendo": "", "log": []}
 DESTS = {"interno": os.path.join(HOME, "skystation/roms"), "skyroms": "/mnt/skyroms"}
 EXTS = {"ps1": {"cue", "bin", "chd", "pbp", "m3u", "iso", "img", "png", "jpg"},
         "ps2": {"iso", "chd", "cso", "gz", "png", "jpg"},
+        "ps3": {"iso", "pkg", "rap", "png", "jpg"}, "ps3fw": {"pup"},
         "psp": {"iso", "cso", "png", "jpg"},
         "snes": {"sfc", "smc", "png", "jpg"}, "n64": {"z64", "n64", "v64", "png", "jpg"},
         "bios": {"bin", "rom0", "rom1", "rom2", "erom", "nvm", "mec"}}
 BIOS_DIR = os.path.join(HOME, "skystation/bios/ps2")
+PS3FW_DIR = os.path.join(HOME, "skystation/bios/ps3")
 SHOTS = os.path.join(HOME, "skystation/capturas")
 SAVES = os.path.join(HOME, "skystation/saves")
 STATES = os.path.join(HOME, "skystation/states")
 GAME_EXTS = {"ps1": {"cue", "chd", "pbp", "m3u", "iso", "img"}, "ps2": {"iso", "chd", "cso", "gz"},
-             "psp": {"iso", "cso"}, "snes": {"sfc", "smc"}, "n64": {"z64", "n64", "v64"}}
+             "ps3": {"iso"}, "psp": {"iso", "cso"}, "snes": {"sfc", "smc"}, "n64": {"z64", "n64", "v64"}}
 BIN = os.path.dirname(os.path.realpath(__file__))
 LOCK = threading.Lock()
-FAILS = {"n": 0}
+FAILS = {}          # ip -> [erros seguidos, bloqueado até (relógio monotônico)]
 
 
 def _jogos_mod():
@@ -60,6 +76,17 @@ def _backup_mod():
 BACKUP = _backup_mod()
 
 
+def _ps3_mod():
+    import importlib.machinery
+    try:
+        return importlib.machinery.SourceFileLoader("sky_ps3", os.path.join(BIN, "sky-ps3")).load_module()
+    except (OSError, ImportError, SyntaxError):
+        return None
+
+
+PS3 = _ps3_mod()
+
+
 def game_id(dest, sys_id, fname):
     return base64.urlsafe_b64encode(f"{dest}|{sys_id}|{fname}".encode()).decode().rstrip("=")
 
@@ -74,6 +101,8 @@ def game_path(gid):
     if dest not in DESTS or sys_id not in GAME_EXTS or os.path.basename(fname) != fname or fname.startswith("."):
         return None
     path = os.path.join(DESTS[dest], sys_id, fname)
+    if sys_id == "ps3" and fname != "covers" and os.path.isdir(path):
+        return path
     return path if os.path.isfile(path) else None
 
 
@@ -90,6 +119,15 @@ def list_games():
                 continue
             lower = {n.lower() for n in names}
             for n in names:
+                if sys_id == "ps3":          # PS3: pasta do disco ou .iso; nome e ícone vêm do próprio jogo
+                    path = os.path.join(folder, n)
+                    info = PS3.game_info(path) if PS3 and not n.startswith(".") and n != "covers" else None
+                    if info:
+                        files = JOGOS.game_files(path)
+                        games.append({"id": game_id(dest, sys_id, n), "sistema": sys_id, "arquivo": n, "nome": info["titulo"],
+                                      "onde": dest, "tamanho": sum(os.path.getsize(f) for f in files if os.path.isfile(f)),
+                                      "formato": info["formato"], "capa": bool(info["capa"])})
+                    continue
                 ext = n.rsplit(".", 1)[-1].lower() if "." in n else ""
                 if ext not in exts or n.endswith(".parcial"):
                     continue
@@ -175,9 +213,74 @@ def acao(texto):
     emit({"evento": "acao", "texto": texto})
 
 
+def load_cfg():
+    try:
+        with open(CFG) as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_cfg(d):
+    os.makedirs(os.path.dirname(CFG), exist_ok=True)
+    fd = os.open(CFG + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(d, f)
+    os.replace(CFG + ".tmp", CFG)
+
+
+def write_status():
+    """Estado para a tela do console (arquivo na RAM, troca atômica)."""
+    try:
+        os.makedirs(RUN, exist_ok=True)
+        fd = os.open(STATUS + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(dict(STATE, pid=os.getpid(), porta=PORT, pin=PIN), f, ensure_ascii=False)
+        os.replace(STATUS + ".tmp", STATUS)
+    except OSError:
+        pass
+
+
+def aviso(kind, text):
+    """Aviso no menu do console (mesmo arquivo que o sky-notify usa)."""
+    try:
+        with open(EVENTS, "a") as f:
+            f.write(json.dumps({"t": time.time(), "kind": kind, "text": text}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
 def emit(obj):
+    """Registra o que aconteceu: linha no histórico da tela, aviso no menu e central.json."""
+    ev = obj.get("evento", "")
+    nome = str(obj.get("nome", ""))
     with LOCK:
-        print(json.dumps(obj, ensure_ascii=False), flush=True)
+        line = ""
+        if ev == "recebendo":
+            STATE["recebendo"] = "%s  %d%%" % (nome, int(float(obj.get("p", 0)) * 100))
+        elif ev == "recebido":
+            STATE["recebendo"] = ""
+            extra = {"bios": "  → BIOS do PS2 instalada", "ps3fw": "  → firmware do PS3 guardado"}.get(obj.get("sistema", ""), "")
+            if obj.get("destino") == "skyroms":
+                extra = "  → SKYROMS"
+            line = "✓ " + nome + extra
+            if not obj.get("silencio"):
+                aviso("central", "Recebido: " + nome)
+                aviso("jogos", "")
+        elif ev == "erro":
+            STATE["recebendo"] = ""
+            line = "✗ " + nome + ": " + str(obj.get("erro", ""))
+        elif ev == "acao":
+            line = "✓ " + str(obj.get("texto", ""))
+            aviso("jogos", "")
+        elif ev == "pin_errado":
+            line = "✗ PIN errado digitado em " + str(obj.get("ip", "?"))
+            if obj.get("bloqueado"):
+                aviso("central", "Central web: PIN errado várias vezes (%s). Acesso pausado." % obj.get("ip", "?"))
+        if line:
+            STATE["log"] = ([time.strftime("%H:%M  ") + line] + STATE["log"])[:6]
+        write_status()
 
 
 def skyroms_ok():
@@ -220,18 +323,20 @@ background:rgba(10,18,54,.5);cursor:pointer;transition:.2s}#drop.on{border-color
 .hide{display:none}#msg{min-height:22px;color:#ffcf7a;margin:8px 0}
 </style></head><body><main>
 <h1>Sky<b>Station</b></h1><p class="sub">Central web do seu console</p>
-<div class="row"><div><label>PIN (aparece na TV)</label><input id="pin" inputmode="numeric" maxlength="4" size="6" placeholder="0000"></div></div>
+<div class="row"><div><label>PIN (aparece na TV)</label><input id="pin" inputmode="numeric" maxlength="6" size="8" placeholder="000000"></div></div>
 <nav><button data-t="enviar" class="on">Enviar</button><button data-t="jogos">Jogos</button><button data-t="capturas">Capturas</button><button data-t="saves">Saves</button><button data-t="teclado">Teclado</button></nav>
 <div id="msg"></div>
 <section id="t-enviar">
 <div class="row">
- <div><label>Sistema</label><select id="sys"><option value="ps1">PlayStation (PS1)</option><option value="ps2">PlayStation 2</option><option value="psp">PSP</option><option value="snes">Super Nintendo</option><option value="n64">Nintendo 64</option><option value="bios">BIOS do PS2</option></select></div>
+ <div><label>Sistema</label><select id="sys"><option value="ps1">PlayStation (PS1)</option><option value="ps2">PlayStation 2</option><option value="psp">PSP</option><option value="snes">Super Nintendo</option><option value="n64">Nintendo 64</option><option value="ps3">PlayStation 3</option><option value="bios">BIOS do PS2</option><option value="ps3fw">Firmware do PS3 (PS3UPDAT.PUP)</option></select></div>
  <div><label>Guardar em</label><select id="dest"><option value="interno">Console</option><option value="skyroms" id="osk">Pendrive SKYROMS</option></select></div>
 </div>
 <div id="drop"><strong>Arraste os arquivos aqui</strong>ou clique para escolher (.cue + .bin, .chd, .iso, .pbp, capas .png)
-<input id="pick" type="file" multiple hidden></div>
+<input id="pick" type="file" multiple hidden><input id="pickdir" type="file" webkitdirectory hidden></div>
+<div class="row" id="rowdir" style="margin-top:12px"><button id="bdir">Enviar uma pasta de jogo de PS3 (só no PC)</button></div>
 <div id="list"></div>
 <p class="tip">Envie o .cue junto com todos os .bin do jogo. Capas: um .png com o mesmo nome do jogo.<br>
+PS3: um .iso, ou a pasta inteira do jogo (a que tem PS3_GAME dentro) pelo botão acima. São arquivos grandes: prefira o cabo USB ou o pendrive SKYROMS.<br>
 O jogo aparece no console assim que terminar. Use só cópias dos seus próprios discos.</p>
 </section>
 <section id="t-jogos" class="hide"><div class="esp" id="esp"></div><div id="jl"></div></section>
@@ -266,7 +371,7 @@ $('#pin').oninput=()=>{localStorage.setItem('pin',pin());links()};
 function fmt(b){return b>1e9?(b/1e9).toFixed(2)+' GB':(b/1e6).toFixed(1)+' MB'}
 function msg(t){$('#msg').textContent=t||''}
 function api(path,opt={}){opt.headers=Object.assign({'X-Pin':pin()},opt.headers||{});return fetch(path,opt).then(async r=>{
- let j={};try{j=await r.json()}catch(e){}if(r.status==403){msg('PIN errado: confira na tela do console');throw 0}return j})}
+ let j={};try{j=await r.json()}catch(e){}if(r.status==403){msg('PIN errado: confira na tela do console');throw 0}if(r.status==429){msg(j.error);throw 0}return j})}
 let tab='enviar';document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{tab=b.dataset.t;
  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x==b));
  document.querySelectorAll('section').forEach(s=>s.classList.toggle('hide',s.id!='t-'+tab));msg();
@@ -307,6 +412,19 @@ const drop=$('#drop');drop.onclick=()=>$('#pick').click();$('#pick').onchange=e=
 ['dragenter','dragover'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add('on')}));
 ['dragleave','drop'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove('on')}));
 drop.addEventListener('drop',e=>add(e.dataTransfer.files));
+$('#bdir').onclick=()=>$('#pickdir').click();
+$('#pickdir').onchange=async e=>{const fs=[...e.target.files];if(!fs.length)return;const raiz=fs[0].webkitRelativePath.split('/')[0],dest=$('#dest').value;
+ const tot=fs.reduce((a,f)=>a+f.size,0);let feito=0,erros=0;const el=document.createElement('div');el.className='f';
+ el.innerHTML='<div class="n"><span></span><span></span></div><div class="bar"><i></i></div>';el.querySelector('.n span').textContent='Pasta '+raiz;$('#list').appendChild(el);
+ const st=el.querySelector('.n span:last-child');
+ for(let i=0;i<fs.length;i++){const f=fs[i],rel=f.webkitRelativePath.split('/');rel.pop();
+  const ok=await new Promise(res=>{const x=new XMLHttpRequest();x.open('PUT','/enviar?nome='+encodeURIComponent(f.name)+'&sistema=ps3&destino='+dest+'&pasta='+encodeURIComponent(rel.join('/')));
+   x.setRequestHeader('X-Pin',pin());x.upload.onprogress=ev=>{const p=(feito+ev.loaded)/Math.max(1,tot);el.querySelector('i').style.width=(p*100)+'%';st.textContent=(i+1)+'/'+fs.length+' arquivos · '+Math.round(p*100)+'% de '+fmt(tot)};
+   x.onload=()=>res(x.status==200);x.onerror=()=>res(false);x.send(f)});
+  feito+=f.size;if(!ok)erros++}
+ if(erros){el.classList.add('err');st.textContent=erros+' arquivo(s) falharam: envie a pasta de novo (o que já chegou é pulado)'}
+ else{el.classList.add('ok');st.textContent='pasta enviada ✓ ('+fs.length+' arquivos)';api('/api/pasta-fim?nome='+encodeURIComponent(raiz)+'&destino='+dest,{method:'POST'})}
+ e.target.value=''};
 function add(files){for(const f of files){const el=document.createElement('div');
 el.className='f';el.innerHTML='<div class="n"><span></span><span>na fila · '+fmt(f.size)+'</span></div><div class="bar"><i></i></div>';
 el.querySelector('.n span').textContent=f.name;$('#list').appendChild(el);fila.push({f,el,sys:$('#sys').value,dest:$('#dest').value})}next()}
@@ -335,13 +453,28 @@ class Handler(BaseHTTPRequestHandler):
 
     def authed(self, q):
         """PIN no cabeçalho X-Pin (páginas) ou em ?pin= (imagens e downloads)."""
-        if self.headers.get("X-Pin", "") == PIN or q.get("pin", "") == PIN:
-            FAILS["n"] = 0
+        ip = self.client_address[0]
+        now = time.monotonic()
+        with LOCK:
+            f = FAILS.setdefault(ip, [0, 0.0])
+            wait = f[1] - now
+        if wait > 0:      # freia quem tenta adivinhar o PIN: nem confere enquanto estiver bloqueado
+            self.reply(429, json.dumps({"ok": False, "error": "Muitas tentativas. Aguarde %d s." % (int(wait) + 1)}, ensure_ascii=False))
+            return False
+        got = self.headers.get("X-Pin", "") or q.get("pin", "")
+        if not got:
+            self.reply(403, json.dumps({"ok": False, "error": "Digite o PIN"}))
+            return False
+        if hmac.compare_digest(got.encode(), PIN.encode()):
+            f[0] = 0
             return True
-        FAILS["n"] += 1
-        emit({"evento": "pin_errado"})
-        if FAILS["n"] > 5:
-            time.sleep(min(10, FAILS["n"]))   # freia quem tenta adivinhar o PIN
+        with LOCK:
+            f[0] += 1
+            blocked = f[0] % 5 == 0
+            if blocked:   # 5 erros: 1 min; 10: 2 min; 15: 4 min… até 15 min
+                f[1] = now + min(900, 60 * 2 ** (f[0] // 5 - 1))
+        if f[0] == 1 or blocked:
+            emit({"evento": "pin_errado", "ip": ip, "bloqueado": blocked})
         self.reply(403, json.dumps({"ok": False, "error": "PIN errado"}))
         return False
 
@@ -446,6 +579,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, json.dumps({"ok": True, "nome": atual[0]["nome"] if atual else ""}, ensure_ascii=False))
             except (OSError, ValueError, KeyError, subprocess.SubprocessError) as e:
                 return self.reply(200, json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+        if u.path == "/api/pasta-fim":
+            nome = os.path.basename(q.get("nome", ""))[:80]
+            emit({"evento": "recebido", "nome": "pasta " + nome, "destino": q.get("destino", ""), "sistema": "ps3"})
+            return self.reply(200, json.dumps({"ok": True}))
         if u.path == "/api/teclar":
             return self.reply(200, json.dumps(teclar(q), ensure_ascii=False))
         if u.path == "/api/restaurar":
@@ -479,22 +616,32 @@ class Handler(BaseHTTPRequestHandler):
             return
         name = os.path.basename(q.get("nome", "")).strip()
         sys_id, dest = q.get("sistema", ""), q.get("destino", "interno")
+        # PS3 em pasta (cópia do disco): "pasta" é o caminho relativo dentro de roms/ps3, conferido pedaço a pedaço.
+        pasta = [x for x in q.get("pasta", "").replace("\\", "/").split("/") if x]
+        if pasta and (sys_id != "ps3" or len(pasta) > 12 or any(x in (".", "..") or x.startswith(".") or len(x) > 200 for x in pasta)):
+            return fail(400, "pasta inválida")
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-        if not name or name.startswith(".") or sys_id not in EXTS or ext not in EXTS[sys_id]:
+        if not name or name.startswith(".") or sys_id not in EXTS or (ext not in EXTS[sys_id] and not pasta):
             return fail(400, "tipo de arquivo não aceito")
-        if sys_id == "bios":
-            dest = "interno"  # a BIOS mora sempre no console
+        if sys_id in ("bios", "ps3fw"):
+            dest = "interno"  # BIOS e firmware moram sempre no console
         if dest not in DESTS or (dest == "skyroms" and not skyroms_ok()):
             return fail(400, "destino indisponível")
         size = int(self.headers.get("Content-Length", "0") or 0)
         if sys_id == "bios":
             folder = BIOS_DIR
+        elif sys_id == "ps3fw":
+            folder, name = PS3FW_DIR, "PS3UPDAT.PUP"
+        elif pasta:
+            folder = os.path.join(DESTS[dest], "ps3", *pasta)
         else:
             folder = os.path.join(DESTS[dest], sys_id, "covers" if ext in ("png", "jpg") else "")
         os.makedirs(folder, exist_ok=True)
         if size + 50 * 1024 * 1024 > shutil.disk_usage(folder).free:
             return fail(507, "sem espaço no destino")
         target = os.path.join(folder, name)
+        if pasta and os.path.isfile(target) and os.path.getsize(target) == size:
+            return self.reply(200, json.dumps({"ok": True, "pulado": True}))   # reenvio de pasta: não repete o que já chegou
         tmp = target + ".parcial"
         emit({"evento": "recebendo", "nome": name, "p": 0.0})
         got, last = 0, 0.0
@@ -521,18 +668,133 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             emit({"evento": "erro", "nome": name, "erro": str(e)})
             return fail(500, str(e))
-        emit({"evento": "recebido", "nome": name, "destino": dest, "sistema": sys_id})
+        emit({"evento": "recebido", "nome": name, "destino": dest, "sistema": sys_id, "silencio": bool(pasta)})
         self.reply(200, json.dumps({"ok": True}))
 
 
-def main():
+def running_pid():
+    """PID do serviço em pé (pelo central.json), ou 0."""
     try:
-        srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    except OSError as e:
-        emit({"evento": "erro", "erro": f"porta {PORT} ocupada: {e}"})
-        sys.exit(1)
-    emit({"evento": "pronto", "porta": PORT, "qr": qr_rows()})
-    srv.serve_forever()
+        with open(STATUS) as f:
+            pid = int(json.load(f).get("pid", 0))
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            return pid if b"sky-receber" in f.read() else 0
+    except (OSError, ValueError):
+        return 0
+
+
+def stop_running():
+    pid = running_pid()
+    if pid and pid != os.getpid():
+        try:
+            os.kill(pid, 15)
+        except OSError:
+            pass
+        for _ in range(30):
+            if not os.path.exists(f"/proc/{pid}"):
+                break
+            time.sleep(0.1)
+    try:
+        os.remove(STATUS)
+    except OSError:
+        pass
+
+
+def vigia(srv):
+    """A cada 2 s: sai se a central foi desligada; refaz o QR code se o endereço mudou (Wi-Fi, cabo USB)."""
+    while True:
+        if not load_cfg().get("ligada"):
+            srv.shutdown()
+            return
+        ip = lan_ip()
+        if ip != STATE["ip"]:
+            with LOCK:
+                STATE["ip"], STATE["qr"] = ip, qr_rows()
+            write_status()
+        time.sleep(2)
+
+
+def servir():
+    global PIN
+    cfg = load_cfg()
+    if not cfg.get("ligada"):
+        return 0
+    PIN = str(cfg.get("pin") or "")
+    if not re.fullmatch(r"\d{6}", PIN):
+        PIN = "%06d" % secrets.randbelow(10 ** 6)
+        save_cfg(dict(cfg, pin=PIN))
+    stop_running()
+    srv = None
+    for _ in range(10):                       # a porta pode demorar a liberar depois de reiniciar a interface
+        try:
+            srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+            break
+        except OSError:
+            time.sleep(0.5)
+    if srv is None:
+        print(f"sky-receber: porta {PORT} ocupada", file=sys.stderr)
+        return 1
+    srv.daemon_threads = True
+    import signal
+    signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=srv.shutdown, daemon=True).start())
+    STATE["ip"] = lan_ip()
+    STATE["qr"] = qr_rows()
+    write_status()
+    threading.Thread(target=vigia, args=(srv,), daemon=True).start()
+    try:
+        srv.serve_forever()
+    finally:
+        try:
+            if running_pid() == os.getpid():
+                os.remove(STATUS)
+        except OSError:
+            pass
+    return 0
+
+
+def estado():
+    cfg = load_cfg()
+    st = {}
+    if running_pid():
+        try:
+            with open(STATUS) as f:
+                st = json.load(f)
+        except (OSError, ValueError):
+            st = {}
+    return dict({"ip": "", "qr": [], "recebendo": "", "log": [], "pin": str(cfg.get("pin", "")), "porta": PORT}, **st,
+                ok=True, ligada=bool(cfg.get("ligada")), ativa=bool(st))
+
+
+def ligar():
+    cfg = load_cfg()
+    if not cfg.get("ligada") or not re.fullmatch(r"\d{6}", str(cfg.get("pin", ""))):
+        save_cfg({"ligada": True, "pin": "%06d" % secrets.randbelow(10 ** 6)})
+    if not running_pid():
+        log = os.path.join(HOME, ".local/state/skystation/central.log")
+        os.makedirs(os.path.dirname(log), exist_ok=True)
+        with open(log, "a") as lf:
+            subprocess.Popen([sys.executable, os.path.realpath(__file__), "servir"], stdin=subprocess.DEVNULL,
+                             stdout=lf, stderr=lf, start_new_session=True)
+        for _ in range(40):
+            if running_pid():
+                break
+            time.sleep(0.1)
+    return estado()
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "estado"
+    if cmd == "servir":
+        sys.exit(servir())
+    if cmd == "ligar":
+        res = ligar()
+    elif cmd == "desligar":
+        save_cfg(dict(load_cfg(), ligada=False, pin=""))
+        stop_running()
+        res = estado()
+    else:
+        res = estado()
+    print(json.dumps(res, ensure_ascii=False))
 
 
 if __name__ == "__main__":

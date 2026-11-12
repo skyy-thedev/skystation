@@ -1,0 +1,334 @@
+#!/usr/bin/env python3
+"""SkyStation: PlayStation 3 pelo RPCS3 (Fase 7.0). Só para PCs fortes (6+ threads).
+
+    sky-ps3 listar            jogos de PS3 (JSON): pastas (PS3_GAME/…), .iso e jogos instalados no RPCS3
+    sky-ps3 preparar          deixa o RPCS3 pronto para abrir um jogo: telas de aviso desligadas, controle
+                              configurado, firmware instalado, saves do perfil. Imprime {"ok", "user", "error"}
+    sky-ps3 controles         só mostra como o controle seria configurado (diagnóstico)
+
+Onde ficam os jogos: ~/skystation/roms/ps3 e SKYROMS/ps3. Cada jogo é uma PASTA (cópia do disco, com
+PS3_GAME dentro) ou um arquivo .iso. Firmware: PS3UPDAT.PUP (site oficial da PlayStation) em
+~/skystation/bios/ps3 — a Central web envia para lá.
+"""
+import glob
+import json
+import os
+import re
+import struct
+import subprocess
+import sys
+
+HOME = os.path.expanduser("~")
+SKY = os.path.join(HOME, "skystation")
+RP = os.environ.get("SKY_RPCS3_DIR") or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"), "rpcs3")
+RPCS3 = os.environ.get("SKY_RPCS3_BIN", "/opt/rpcs3/AppRun")
+BASES = [(os.path.join(SKY, "roms/ps3"), "interno"), ("/mnt/skyroms/ps3", "skyroms")]
+FW_DIRS = [os.path.join(SKY, "bios/ps3"), "/mnt/skyroms/bios/ps3", "/mnt/skyroms/bios", "/mnt/skyroms"]
+CACHE = os.path.join(HOME, ".cache/skystation/ps3")
+PROC = os.environ.get("SKY_PROC", "/proc")
+SYSFS = os.environ.get("SKY_SYS", "/sys")
+DEV = os.environ.get("SKY_DEV", "/dev")
+MIN_THREADS = 6
+
+
+def out(o):
+    print(json.dumps(o, ensure_ascii=False), flush=True)
+
+
+# ------------------------------------------------------------------ PARAM.SFO e ISO
+def sfo(data):
+    """PARAM.SFO -> dict (TITLE, TITLE_ID, CATEGORY…). {} se não for um SFO."""
+    if len(data) < 20 or data[:4] != b"\x00PSF":
+        return {}
+    key0, dat0, n = struct.unpack_from("<III", data, 8)
+    res = {}
+    for i in range(min(n, 64)):
+        try:
+            koff, fmt, ln, _mx, doff = struct.unpack_from("<HHIII", data, 20 + i * 16)
+            key = data[key0 + koff:data.index(b"\x00", key0 + koff)].decode("ascii", "replace")
+            raw = data[dat0 + doff:dat0 + doff + ln]
+            res[key] = struct.unpack_from("<I", raw)[0] if fmt == 0x0404 and len(raw) >= 4 else \
+                raw.split(b"\x00")[0].decode("utf-8", "replace")
+        except (struct.error, ValueError):
+            break
+    return res
+
+
+def _iso_find(f, extent, length, wanted):
+    f.seek(extent * 2048)
+    data = f.read(min(length, 256 * 2048))
+    i = 0
+    while i < len(data):
+        n = data[i]
+        if n == 0:
+            i = (i // 2048 + 1) * 2048
+            continue
+        rec = data[i:i + n]
+        if len(rec) < 34:
+            break
+        name = rec[33:33 + rec[32]].decode("latin-1").split(";")[0].upper().rstrip(".")
+        if name == wanted:
+            return struct.unpack_from("<I", rec, 2)[0], struct.unpack_from("<I", rec, 10)[0]
+        i += n
+    return None
+
+
+def iso_file(path, parts, limit=4 * 1024 * 1024):
+    """Lê um arquivo pequeno de dentro de um .iso (ISO 9660). b"" se não achar."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(16 * 2048)
+            pvd = f.read(2048)
+            if pvd[1:6] != b"CD001":
+                return b""
+            cur = struct.unpack_from("<I", pvd, 158)[0], struct.unpack_from("<I", pvd, 166)[0]
+            for p in parts:
+                cur = _iso_find(f, cur[0], cur[1], p.upper())
+                if cur is None:
+                    return b""
+            f.seek(cur[0] * 2048)
+            return f.read(min(cur[1], limit))
+    except (OSError, struct.error, IndexError):
+        return b""
+
+
+def _read(path, limit=1 << 20):
+    try:
+        with open(path, "rb") as f:
+            return f.read(limit)
+    except OSError:
+        return b""
+
+
+def game_info(path):
+    """Pasta ou .iso -> {"titulo", "id", "capa", "formato"} ou None se não for jogo de PS3."""
+    stem = os.path.basename(path.rstrip("/"))
+    if os.path.isdir(path):
+        for sub in ("PS3_GAME", ""):
+            meta = sfo(_read(os.path.join(path, sub, "PARAM.SFO")))
+            if meta:
+                icon = os.path.join(path, sub, "ICON0.PNG")
+                return {"titulo": clean(meta.get("TITLE", "")) or stem, "id": meta.get("TITLE_ID", ""),
+                        "capa": icon if os.path.isfile(icon) else "", "formato": "PASTA",
+                        "categoria": meta.get("CATEGORY", "")}
+        return None
+    if not path.lower().endswith(".iso"):
+        return None
+    meta = sfo(iso_file(path, ["PS3_GAME", "PARAM.SFO"]))
+    titulo = clean(meta.get("TITLE", "")) or re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", "", stem.rsplit(".", 1)[0]).strip()
+    capa = ""
+    if meta:
+        capa = os.path.join(CACHE, (meta.get("TITLE_ID") or stem) + ".png")
+        if not os.path.isfile(capa):
+            png = iso_file(path, ["PS3_GAME", "ICON0.PNG"])
+            if png[:4] == b"\x89PNG":
+                os.makedirs(CACHE, exist_ok=True)
+                with open(capa, "wb") as f:
+                    f.write(png)
+            else:
+                capa = ""
+    return {"titulo": titulo, "id": meta.get("TITLE_ID", ""), "capa": capa, "formato": "ISO", "categoria": "DG"}
+
+
+def clean(t):
+    return re.sub(r"\s+", " ", t.replace("\n", " ")).strip()
+
+
+def listar():
+    jogos, vistos = [], set()
+    for base, onde in BASES + [(os.path.join(RP, "dev_hdd0/game"), "rpcs3")]:
+        try:
+            names = sorted(os.listdir(base), key=str.lower)
+        except OSError:
+            continue
+        for n in names:
+            if n.startswith(".") or n == "covers" or n.endswith(".parcial"):
+                continue
+            path = os.path.join(base, n)
+            info = game_info(path)
+            if not info or (onde == "rpcs3" and info.get("categoria") != "HG"):
+                continue
+            key = info["id"] or n.lower()
+            if key in vistos:
+                continue
+            vistos.add(key)
+            stem = n.rsplit(".", 1)[0] if info["formato"] == "ISO" else n
+            for c in (os.path.join(base, "covers", stem + ".png"), os.path.join(base, "covers", stem + ".jpg")):
+                if os.path.isfile(c):
+                    info["capa"] = c
+            info.update(path=path, onde=onde, arquivo=n)
+            jogos.append(info)
+    out({"ok": True, "jogos": jogos, "emulador": os.access(RPCS3, os.X_OK), "firmware": fw_ok(),
+         "pup": bool(find_pup()), "threads": os.cpu_count() or 1, "minimo": MIN_THREADS})
+
+
+# ------------------------------------------------------------------ firmware
+def fw_ok():
+    return os.path.isfile(os.path.join(RP, "dev_flash/sys/external/liblv2.sprx"))
+
+
+def find_pup():
+    for d in FW_DIRS:
+        try:
+            for n in sorted(os.listdir(d)):
+                p = os.path.join(d, n)
+                if n.lower().endswith(".pup") and os.path.isfile(p) and os.path.getsize(p) > 100 * 1024 * 1024:
+                    return p
+        except OSError:
+            pass
+    return ""
+
+
+def install_fw():
+    pup = find_pup()
+    if not pup:
+        return "Falta o firmware do PS3. Baixe o PS3UPDAT.PUP no site oficial da PlayStation e envie pela Central web (Sistema: Firmware do PS3)."
+    log = os.path.join(HOME, ".local/state/skystation/ps3-firmware.log")
+    os.makedirs(os.path.dirname(log), exist_ok=True)
+    try:
+        with open(log, "w") as lf:
+            subprocess.run([RPCS3, "--headless", "--installfw", pup], stdout=lf, stderr=lf, timeout=1800)
+    except (OSError, subprocess.SubprocessError) as e:
+        return f"Não consegui instalar o firmware do PS3: {e}"
+    return "" if fw_ok() else "A instalação do firmware do PS3 falhou (veja ~/.local/state/skystation/ps3-firmware.log)."
+
+
+# ------------------------------------------------------------------ controles
+SONY = {"05c4": "ds4", "09cc": "ds4", "0ba0": "ds4", "0ce6": "dualsense", "0df2": "dualsense", "0268": "ds3"}
+HID = {"ds4": ("DualShock 4", "DS4 Pad #%d"), "dualsense": ("DualSense", "DualSense Pad #%d"), "ds3": ("DualShock 3", "DS3 Pad #%d")}
+
+
+def joysticks():
+    """Controles ligados agora: [{"nome", "vendor", "product"}], na ordem do sistema (js0, js1…)."""
+    pads = []
+    try:
+        with open(os.path.join(PROC, "bus/input/devices"), errors="replace") as f:
+            blocks = f.read().split("\n\n")
+    except OSError:
+        return pads
+    for b in blocks:
+        name = re.search(r'^N: Name="(.*)"', b, re.M)
+        ids = re.search(r"^I: .*Vendor=(\w+) Product=(\w+)", b, re.M)
+        js = re.search(r"^H: Handlers=.*\bjs(\d+)", b, re.M)
+        if not (name and ids and js) or re.search(r"Motion Sensors|Touchpad", name.group(1)):
+            continue
+        pads.append({"nome": name.group(1), "vendor": ids.group(1).lower(), "product": ids.group(2).lower(), "js": int(js.group(1))})
+    return sorted(pads, key=lambda p: p["js"])
+
+
+def hidraw_ok(kind):
+    """Quantos controles desse tipo o RPCS3 consegue abrir direto (hidraw com permissão)."""
+    n = 0
+    for u in glob.glob(os.path.join(SYSFS, "class/hidraw/hidraw*/device/uevent")):
+        m = re.search(r"^HID_ID=\w+:0000054C:0000(\w{4})", _read(u).decode("ascii", "replace"), re.M | re.I)
+        if m and SONY.get(m.group(1).lower()) == kind:
+            node = os.path.join(DEV, u.split("/")[-3])
+            if os.access(node, os.R_OK | os.W_OK):
+                n += 1
+    return n
+
+
+def input_yaml():
+    """Configuração de controles do RPCS3 para os controles ligados agora (até 4 jogadores)."""
+    players, usados, nomes = [], {}, {}
+    for p in joysticks()[:4]:
+        kind = SONY.get(p["product"]) if p["vendor"] == "054c" else None
+        if kind and usados.get(kind, 0) < hidraw_ok(kind):
+            usados[kind] = usados.get(kind, 0) + 1
+            players.append((HID[kind][0], HID[kind][1] % usados[kind], {}))
+            continue
+        nomes[p["nome"]] = nomes.get(p["nome"], 0) + 1
+        dev = p["nome"] if nomes[p["nome"]] == 1 else "%d. %s" % (nomes[p["nome"]], p["nome"])
+        # Controles Sony pelo evdev: quadrado e triângulo vêm trocados em relação ao padrão (Xbox) do RPCS3.
+        players.append(("Evdev", dev, {"Square": "Y", "Triangle": "X"} if p["vendor"] == "054c" else {}))
+    lines = []
+    for i, (h, d, cfg) in enumerate(players):
+        lines += [f"Player {i + 1} Input:", f"  Handler: {h}", f"  Device: {json.dumps(d)}"]
+        if cfg:
+            lines.append("  Config:")
+            lines += [f"    {k}: {json.dumps(v)}" for k, v in cfg.items()]
+    return "\n".join(lines) + "\n", players
+
+
+# ------------------------------------------------------------------ preparar
+GUI_INI = """[main_window]
+infoBoxEnabledWelcome=false
+infoBoxEnabledInstallPUP=false
+confirmationBoxExitGame=false
+confirmationBoxBootGame=false
+
+[Meta]
+checkUpdateStart=false
+"""
+CONFIG_YML = """Miscellaneous:
+  Exit RPCS3 when process finishes: true
+  Start games in fullscreen mode: true
+"""
+
+
+def write_if_missing(path, text):
+    if not os.path.exists(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
+
+
+def user_id():
+    """Cada perfil do SkyStation vira um usuário do RPCS3 (saves e troféus separados)."""
+    try:
+        with open(os.path.join(SKY, "perfis/perfis.json")) as f:
+            d = json.load(f)
+        ids = [p["id"] for p in d["perfis"]]
+        return "%08d" % (ids.index(d["atual"]) + 1)
+    except (OSError, ValueError, KeyError):
+        return "00000001"
+
+
+def preparar():
+    if not os.access(RPCS3, os.X_OK):
+        return out({"ok": False, "error": "Emulador de PS3 não instalado. Rode a Fase 7.0 (fase7-0.sh)."})
+    n = os.cpu_count() or 1
+    if n < MIN_THREADS and not os.path.exists(os.path.join(HOME, ".config/skystation/ps3-forcar")):
+        return out({"ok": False, "error": f"PS3 precisa de um processador com {MIN_THREADS}+ threads (este tem {n}). Dê boot com o pendrive num PC mais forte."})
+    write_if_missing(os.path.join(RP, "GuiConfigs/CurrentSettings.ini"), GUI_INI)
+    write_if_missing(os.path.join(RP, "config.yml"), CONFIG_YML)
+    yml, players = input_yaml()
+    if not players:
+        return out({"ok": False, "error": "Nenhum controle ligado: conecte o controle antes de abrir o jogo de PS3."})
+    d = os.path.join(RP, "input_configs/global")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "SkyStation.yml"), "w") as f:
+        f.write(yml)
+    if not fw_ok():
+        err = install_fw()
+        if err:
+            return out({"ok": False, "error": err})
+    user = user_id()
+    # Saves do PS3 dentro da pasta de saves do perfil: entram nas cópias de segurança e no .zip da Central web.
+    sd = os.path.join(RP, "dev_hdd0/home", user, "savedata")
+    alvo = os.path.join(os.path.realpath(os.path.join(SKY, "saves")), "ps3")
+    try:
+        if not os.path.lexists(sd):
+            os.makedirs(os.path.dirname(sd), exist_ok=True)
+            os.makedirs(alvo, exist_ok=True)
+            os.symlink(alvo, sd)
+    except OSError:
+        pass
+    out({"ok": True, "user": user, "controles": [f"{h}: {dv}" for h, dv, _ in players]})
+
+
+def main():
+    a = sys.argv[1:]
+    if a[:1] == ["listar"]:
+        listar()
+    elif a[:1] == ["preparar"]:
+        preparar()
+    elif a[:1] == ["controles"]:
+        yml, players = input_yaml()
+        print(yml)
+    else:
+        out({"ok": False, "error": "uso: sky-ps3 listar | preparar | controles"})
+
+
+if __name__ == "__main__":
+    main()

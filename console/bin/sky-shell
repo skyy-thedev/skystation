@@ -25,6 +25,17 @@ if [ -f /opt/skystation/bin/sky-notify ]; then
     python3 /opt/skystation/bin/sky-notify >"$LOG_DIR/notify.log" 2>&1 &
     NOTIFY_PID=$!
 fi
-trap 'kill "$HOME_PID" $NOTIFY_PID 2>/dev/null' EXIT
+# Fase 7.0: Central web em segundo plano (só sobe se estiver ligada em Sistema → Central web)
+RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}/skystation"
+if [ -f /opt/skystation/bin/sky-receber ]; then
+    python3 /opt/skystation/bin/sky-receber servir >>"$LOG_DIR/central.log" 2>&1 &
+fi
+encerrar() {
+    kill "$HOME_PID" $NOTIFY_PID 2>/dev/null
+    # a central pode ter sido ligada depois, pelo menu: encerra pelo PID que ela mesma anota
+    CPID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("pid",""))' "$RUN_DIR/central.json" 2>/dev/null)"
+    [ -n "$CPID" ] && kill "$CPID" 2>/dev/null
+}
+trap encerrar EXIT
 
 "$@"

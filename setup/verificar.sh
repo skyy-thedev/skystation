@@ -75,6 +75,17 @@ v "emulador de PSP" "$F65" test -f /opt/skystation/emu/cores/ppsspp_libretro.so
 v "arquivos de apoio do PSP" "$F65" test -d "$H/skystation/bios/psp/PPSSPP"
 v "desempenho automático no PS2" "Sistema → Atualizar o SkyStation" grep -q PESADOS /opt/skystation/bin/sky-pcsx2-ini
 
+echo "== 7.0 Central web em segundo plano / som de ligar na TV / PS3"
+F70="sudo bash /opt/skystation-src/setup/fase7-0.sh"
+v "Central web em segundo plano" "Sistema → Atualizar o SkyStation" grep -q servir /opt/skystation/bin/sky-receber
+v "som de ligar sai na TV" "sudo skystation-atualizar" grep -q placa_da_tv /usr/local/bin/skystation-som-ligar
+v "emulador de PS3 (RPCS3)" "$F70" test -x /opt/rpcs3/AppRun
+v "controles Sony direto no RPCS3" "$F70" test -f /etc/udev/rules.d/72-skystation-controles.rules
+v "driver de vídeo AMD (Vulkan)" "$F70" pacman -Q vulkan-radeon
+v "boot em qualquer PC (sem autodetect)" "$F70" sh -c "! grep -qE '^HOOKS=.*autodetect' /etc/mkinitcpio.conf"
+v "firmware do PS3 (PS3UPDAT.PUP)" "envie pela Central web → Sistema: Firmware do PS3" sh -c "ls $H/skystation/bios/ps3/*.[Pp][Uu][Pp] $H/.config/rpcs3/dev_flash/sys/external/liblv2.sprx 2>/dev/null | grep -q ."
+t="$(nproc)"; if [ "$t" -ge 6 ]; then echo "  ✓ este PC tem $t threads: PS3 liberado"; else echo "  · este PC tem $t threads: PS3 só abre em PC com 6+ (normal no notebook antigo)"; fi
+
 echo
 if [ "$falhas" -eq 0 ]; then echo "Tudo certo: $ok de $ok verificações ✓"
 else echo "$ok ok, $falhas com problema (veja as dicas →)"; fi

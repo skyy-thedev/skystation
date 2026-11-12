@@ -49,6 +49,14 @@ def space(path):
 
 def game_files(path):
     """Todos os arquivos de um jogo: o principal + faixas do .cue/.m3u + capas."""
+    if os.path.isdir(path):                      # PS3: o jogo é uma pasta inteira
+        path = path.rstrip("/")
+        files = [os.path.join(d, f) for d, _, fs in os.walk(path) for f in fs]
+        base = os.path.dirname(path)
+        for c in (os.path.join(base, "covers", os.path.basename(path) + e) for e in (".png", ".jpg")):
+            if os.path.exists(c):
+                files.append(c)
+        return files
     files = [path]
     folder = os.path.dirname(path)
     ext = path.rsplit(".", 1)[-1].lower()
@@ -76,14 +84,20 @@ def game_files(path):
 
 def system_of(path):
     parts = os.path.normpath(path).split(os.sep)
-    for s in ("ps1", "ps2", "psp", "snes", "n64"):
+    for s in ("ps1", "ps2", "ps3", "psp", "snes", "n64"):
         if s in parts:
             return s
     return None
 
 
+def _is_game(path):
+    return os.path.isfile(path) or (system_of(path) == "ps3" and os.path.isdir(path) and
+                                    os.path.basename(path.rstrip("/")) not in ("ps3", "covers"))
+
+
 def mover(path, dest_kind):
-    if not os.path.isfile(path):
+    path = path.rstrip("/")
+    if not _is_game(path):
         out({"ok": False, "error": "Jogo não encontrado"})
         return
     sys_id = system_of(path)
@@ -144,11 +158,14 @@ def mover(path, dest_kind):
             os.remove(f)
         except OSError:
             pass
+    if os.path.isdir(path):
+        shutil.rmtree(path, ignore_errors=True)
     out({"ok": True, "message": "Jogo movido para o " + ("pendrive SKYROMS" if dest_kind == "skyroms" else "console")})
 
 
 def apagar(path):
-    if not os.path.isfile(path) or not system_of(path):
+    path = path.rstrip("/")
+    if not _is_game(path) or not system_of(path):
         out({"ok": False, "error": "Jogo não encontrado"})
         return
     n = 0
@@ -158,6 +175,8 @@ def apagar(path):
             n += 1
         except OSError:
             pass
+    if os.path.isdir(path):
+        shutil.rmtree(path, ignore_errors=True)
     out({"ok": True, "message": "Jogo apagado"})
 
 
@@ -553,7 +572,7 @@ def uso():
     sky = os.path.join(HOME, "skystation")
     u = shutil.disk_usage("/")
     itens = []
-    for nome, sub in (("PS1", "roms/ps1"), ("PS2", "roms/ps2"), ("PSP", "roms/psp"), ("SNES", "roms/snes"), ("N64", "roms/n64"),
+    for nome, sub in (("PS1", "roms/ps1"), ("PS2", "roms/ps2"), ("PS3", "roms/ps3"), ("PSP", "roms/psp"), ("SNES", "roms/snes"), ("N64", "roms/n64"),
                       ("Jogos próprios", "games"), ("Saves e estados", "saves"), ("Saves e estados", "states"),
                       ("Capturas e cópias", "capturas"), ("Capturas e cópias", "backups")):
         b = _du(os.path.join(sky, sub))
