@@ -6,6 +6,8 @@
 LOG_DIR="$HOME/.local/state/skystation"
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/session.log"
+[ -f "$LOG" ] && cp -f "$LOG" "$LOG_DIR/session.anterior.log"   # guarda o log da sessão passada
+T_INICIO=$(date +%s)
 
 export PATH="/opt/skystation/bin:$PATH"
 
@@ -72,5 +74,20 @@ esac
 
 # Se a pasta compartilhada da VM existir, deixa uma cópia do log lá (ponte de diagnóstico).
 [ -w /mnt/skystation ] && cp "$LOG" /mnt/skystation/session.log 2>/dev/null
+
+# Fase 6.4: o cage às vezes cai (código 139) justamente ao fechar, por exemplo quando o menu se
+# reinicia depois de uma atualização. Se a sessão já tinha funcionado por um tempo, isso conta como
+# saída normal e o console reabre sozinho, em vez de largar o jogador num terminal. Para não ficar
+# reabrindo sem parar, no máximo 3 quedas em 5 minutos.
+if [ $code -ne 0 ] && [ $(( $(date +%s) - T_INICIO )) -ge 30 ]; then
+    QUEDAS="$LOG_DIR/quedas"
+    agora=$(date +%s)
+    { cat "$QUEDAS" 2>/dev/null; echo "$agora"; } | awk -v a="$agora" 'a - $1 < 300' >"$QUEDAS.novo"
+    mv -f "$QUEDAS.novo" "$QUEDAS"
+    if [ "$(wc -l <"$QUEDAS")" -le 3 ]; then
+        echo "--- compositor saiu com código $code depois de funcionar: reabrindo ---" >>"$LOG"
+        code=0
+    fi
+fi
 
 exit $code

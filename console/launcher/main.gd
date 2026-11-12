@@ -218,6 +218,7 @@ var recv_qr: Array = []          # linhas "0101…" do QR code da Central web
 var storage_data: Dictionary = {}   # tela Armazenamento (vazio = fechada)
 var recv_thread: Thread = null
 var job_thread: Thread = null
+var job_cancel_hint: bool = false
 var confirm_delete: bool = false
 
 
@@ -331,6 +332,10 @@ func _process(delta: float) -> void:
 			intro_t = INTRO_LEN
 			cooldown = 0.25
 		return
+	if job_thread != null and Input.is_action_just_pressed("sky_back") and busy_msg != "Cancelando…":
+		_write_text(run_dir + "/cancelar-job", "1")   # B cancela copiar disco / compactar
+		busy_msg = "Cancelando…"
+		queue_redraw()
 	if busy_msg == "" and not dimmed:
 		_handle_input(delta)
 	var k := 1.0 - exp(-delta * 11.0)
@@ -1795,6 +1800,7 @@ func _run_job(args: Array, title: String) -> void:
 		_toast("Não consegui iniciar", 3.0, "drive")
 		return
 	busy_msg = title
+	job_cancel_hint = args[0] in ["copiar-disco", "compactar"]
 	job_thread = Thread.new()
 	job_thread.start(_pipe_reader.bind(info["stdio"], "_on_job_line"))
 
@@ -2612,6 +2618,8 @@ func _draw_busy(w: float, h: float) -> void:
 		var ang := t * 4.0 + i * TAU / 10.0
 		draw_circle(c + Vector2(cos(ang), sin(ang)) * 26.0, 4.0, Color(accent, float(i + 1) / 10.0))
 	_text(busy_msg, Vector2(0, c.y + 72), 22, WHITE, false, w, HORIZONTAL_ALIGNMENT_CENTER)
+	if job_thread != null and job_cancel_hint and busy_msg != "Cancelando…":
+		_text("B  cancelar", Vector2(0, c.y + 108), 15, DIM, false, w, HORIZONTAL_ALIGNMENT_CENTER)
 
 
 # ---------------------------------------------------------------- ícones vetoriais (originais)

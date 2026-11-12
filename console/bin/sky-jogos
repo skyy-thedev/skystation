@@ -206,6 +206,9 @@ def compactar(path, quiet_ok=False):
     etapa("Compactando", 0.0)
     proc = subprocess.Popen([chdman, chd_cmd(path, sys_id), "-i", path, "-o", tmp, "-f"],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    VIGIA["procs"].append(proc)
+    VIGIA["lixo"].append(tmp)
+    vigiar(0)            # só para o botão B (cancelar); compactar não trava por disco ruim
     buf, last = b"", 0.0
     while True:
         c = proc.stdout.read(64)
@@ -229,6 +232,8 @@ def compactar(path, quiet_ok=False):
         out({"ok": False, "error": "A versão compactada não passou na conferência; o original foi mantido"})
         return None
     os.replace(tmp, target)
+    VIGIA["lixo"] = [f for f in VIGIA["lixo"] if f != tmp]
+    VIGIA["procs"] = [x for x in VIGIA["procs"] if x is not proc]
     for f in files:
         try:
             os.remove(f)
@@ -238,6 +243,61 @@ def compactar(path, quiet_ok=False):
     if not quiet_ok:
         out({"ok": True, "message": f"Compactado: {total / 1e9:.2f} GB → {novo / 1e9:.2f} GB"})
     return target
+
+
+# ---------------------------------------------------------------- vigia (Fase 6.4)
+# Trabalhos longos (copiar disco, compactar) têm um vigia: se o progresso parar por tempo demais
+# (disco riscado: o leitor fica tentando para sempre) ou se o menu pedir para cancelar (botão B,
+# que cria o arquivo "cancelar-job"), o trabalho é encerrado, os pedaços são apagados e o menu avisa.
+import threading
+
+CANCEL = os.path.join(RUN, "cancelar-job")
+VIGIA = {"t": time.monotonic(), "limite": 0, "procs": [], "lixo": [], "onde": ""}
+
+
+def pulso(onde=""):
+    VIGIA["t"] = time.monotonic()
+    if onde:
+        VIGIA["onde"] = onde
+
+
+def _encerrar(msg):
+    for pr in VIGIA["procs"]:
+        try:
+            pr.kill()
+        except OSError:
+            pass
+    for f in VIGIA["lixo"] + [os.path.join(RUN, "disco.ocupado"), CANCEL]:
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+    out({"ok": False, "error": msg})
+    os._exit(1)
+
+
+def vigiar(limite):
+    """Liga o vigia. limite = segundos sem progresso antes de desistir."""
+    try:
+        os.remove(CANCEL)
+    except OSError:
+        pass
+    VIGIA["limite"] = limite
+    pulso()
+    if VIGIA.get("ligado"):
+        return
+    VIGIA["ligado"] = True
+
+    def loop():
+        while True:
+            time.sleep(1)
+            if os.path.exists(CANCEL):
+                _encerrar("Cancelado")
+            if VIGIA["limite"] and time.monotonic() - VIGIA["t"] > VIGIA["limite"]:
+                _encerrar("O leitor parou de ler o disco" + (f" em {VIGIA['onde']}" if VIGIA["onde"] else "") +
+                          ". Limpe o disco (pode estar riscado ou sujo) e tente de novo")
+
+    threading.Thread(target=loop, daemon=True).start()
 
 
 def _disco():
@@ -299,33 +359,68 @@ def copiar_disco(dest_kind):
 
 
 def _copiar_ps2(dev, dest_dir, nome, size):
+    """Copia o DVD setor por setor. Trecho ilegível: tenta de novo em pedaços pequenos e, se não der,
+    preenche com zeros (até MAX_RUINS setores). Muitos jogos têm áreas de enchimento no fim do disco
+    que nunca são lidas; alguns setores ruins ali não atrapalham."""
+    MAX_RUINS = 256
     target = os.path.join(dest_dir, nome + ".iso")
     tmp = target + ".parcial"
-    done, last = 0, 0.0
+    VIGIA["lixo"].append(tmp)
+    vigiar(180)
+    done, last, ruins = 0, 0.0, 0
+    BLOCO = 1024 * 1024
     etapa("Copiando o disco", 0.0)
     try:
-        with open(dev, "rb", buffering=0) as a, open(tmp, "wb") as b:
-            while True:
-                chunk = a.read(2 * 1024 * 1024)
-                if not chunk:
-                    break
+        fd = os.open(dev, os.O_RDONLY)
+        with open(tmp, "wb") as b:
+            while not size or done < size:
+                want = min(BLOCO, size - done) if size else BLOCO
+                try:
+                    os.lseek(fd, done, os.SEEK_SET)
+                    chunk = os.read(fd, want)
+                    if not chunk:
+                        break
+                except OSError:
+                    chunk = b""
+                    for off in range(0, want, 2048):       # o bloco tem defeito: setor por setor
+                        n = min(2048, want - off)
+                        try:
+                            os.lseek(fd, done + off, os.SEEK_SET)
+                            sec = os.read(fd, n)
+                            if len(sec) != n:
+                                raise OSError("leitura curta")
+                        except OSError:
+                            sec = b"\0" * n
+                            ruins += 1
+                            if ruins > MAX_RUINS:
+                                raise OSError(f"mais de {MAX_RUINS} setores ilegíveis perto de {int(done * 100 / max(1, size))}%")
+                        chunk += sec
+                        pulso(f"{int((done + off) * 100 / max(1, size))}%")
                 b.write(chunk)
                 done += len(chunk)
+                pulso(f"{int(done * 100 / max(1, size))}%")
                 if time.monotonic() - last > 0.5:
                     last = time.monotonic()
-                    etapa("Copiando o disco", done / max(1, size))
+                    etapa("Copiando o disco" + (f" ({ruins} trechos ruins)" if ruins else ""), done / max(1, size))
             b.flush()
             os.fsync(b.fileno())
+        os.close(fd)
         if size and done != size:
             raise OSError(f"leitura incompleta ({done} de {size} bytes)")
         os.replace(tmp, target)
+        VIGIA["lixo"].remove(tmp)
+        VIGIA["limite"] = 0
+        if ruins:
+            etapa(f"Copiado com {ruins} trecho(s) ilegível(is): o jogo pode travar nesses pontos", 1.0)
+            time.sleep(3)
         return target
     except OSError as e:
+        VIGIA["limite"] = 0
         try:
             os.remove(tmp)
         except OSError:
             pass
-        out({"ok": False, "error": f"Erro lendo o disco (risco ou sujeira?): {e}"})
+        out({"ok": False, "error": f"Não deu para ler o disco (riscado ou sujo?): {e}"})
         return None
 
 
@@ -339,12 +434,22 @@ def _copiar_ps1(dev, dest_dir, nome, size):
     etapa("Copiando o CD", 0.0)
     proc = subprocess.Popen(["cdrdao", "read-cd", "--read-raw", "--datafile", binf, "--driver", "generic-mmc-raw",
                              "--device", dev, toc], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    VIGIA["procs"].append(proc)
+    VIGIA["lixo"] += [binf, toc, cue]
+    vigiar(240)
+    visto = -1
     while proc.poll() is None:
         time.sleep(0.7)
         try:
-            etapa("Copiando o CD", min(0.99, os.path.getsize(binf) / expect))
+            tam = os.path.getsize(binf)
+            if tam != visto:
+                visto = tam
+                pulso(f"{int(min(99, tam * 100 / expect))}%")
+            etapa("Copiando o CD", min(0.99, tam / expect))
         except OSError:
             pass
+    VIGIA["limite"] = 0
+    VIGIA["procs"].remove(proc)
     err = proc.stderr.read()[-300:] if proc.stderr else ""
     ok = proc.returncode == 0 and os.path.exists(toc)
     if ok:
@@ -356,6 +461,7 @@ def _copiar_ps1(dev, dest_dir, nome, size):
         txt = re.sub(r'FILE\s+"[^"]*"', f'FILE "{os.path.basename(binf)}"', txt)
         with open(cue, "w") as f:
             f.write(txt)
+    VIGIA["lixo"] = [f for f in VIGIA["lixo"] if f not in (binf, toc, cue)]
     for f in ([toc] if ok else [toc, binf, cue]):
         try:
             os.remove(f)
