@@ -432,8 +432,12 @@ def _copiar_ps1(dev, dest_dir, nome, size):
     binf, toc, cue = base + ".bin", base + ".toc", base + ".cue"
     expect = max(1, size // 2048 * 2352)
     etapa("Copiando o CD", 0.0)
+    # O cdrdao escreve o andamento sem parar na saída de erro. Num "pipe" que ninguém lê, a saída
+    # enche (64 KB) e o cdrdao fica parado para sempre no meio da cópia: por isso vai para um arquivo.
+    errpath = os.path.join(RUN, "cdrdao.log")
+    errlog = open(errpath, "w")
     proc = subprocess.Popen(["cdrdao", "read-cd", "--read-raw", "--datafile", binf, "--driver", "generic-mmc-raw",
-                             "--device", dev, toc], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+                             "--device", dev, toc], stdout=subprocess.DEVNULL, stderr=errlog)
     VIGIA["procs"].append(proc)
     VIGIA["lixo"] += [binf, toc, cue]
     vigiar(240)
@@ -450,7 +454,12 @@ def _copiar_ps1(dev, dest_dir, nome, size):
             pass
     VIGIA["limite"] = 0
     VIGIA["procs"].remove(proc)
-    err = proc.stderr.read()[-300:] if proc.stderr else ""
+    errlog.close()
+    try:
+        with open(errpath, errors="replace") as f:
+            err = f.read()[-400:]
+    except OSError:
+        err = ""
     ok = proc.returncode == 0 and os.path.exists(toc)
     if ok:
         ok = subprocess.run(["toc2cue", toc, cue], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0

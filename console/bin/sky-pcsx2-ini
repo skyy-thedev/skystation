@@ -70,6 +70,11 @@ for k, v in SPEED.get(speed, SPEED["normal"]).items():
     put("EmuCore/Speedhacks", k, v)
 # MTVU (VU1 numa thread própria): padrão do PCSX2 é desligado; nos modos rápido/máximo liga se
 # houver 4 threads (o i5-4200U tem 2 núcleos + hyperthreading).
+# Medição de FPS ligada no menu: o PCSX2 mostra velocidade e uso de EE/GS/VU e da placa de vídeo
+# no canto da tela. É o que diz onde está o gargalo de cada jogo.
+medir = os.path.exists(os.path.expanduser("~/.config/skystation/mangohud.on"))
+for k in ("OsdShowSpeed", "OsdShowFPS", "OsdShowCPU", "OsdShowGPU", "OsdShowResolution"):
+    put("EmuCore/GS", k, "true" if medir else "false")
 put("EmuCore/Speedhacks", "vuThread", "true" if speed != "normal" and (os.cpu_count() or 1) >= 4 else "false")
 
 # Controle: o PCSX2 lê controles pelo SDL. Se o Jogador 1 ainda não tem controle mapeado,
