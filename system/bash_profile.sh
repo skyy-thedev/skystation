@@ -12,7 +12,14 @@ if [ -z "${WAYLAND_DISPLAY:-}" ] && [ "$(tty)" = "/dev/tty1" ] && [ ! -f "$HOME/
         logout
     else
         echo ""
-        echo "  SkyStation saiu com erro ($code)."
+        case "$code" in
+            139) motivo="falha de memória (SIGSEGV) na interface ou no driver de vídeo" ;;
+            134) motivo="a interface abortou (SIGABRT)" ;;
+            137) motivo="encerrado à força: provável falta de memória" ;;
+            127) motivo="programa não encontrado: rode sudo skystation-atualizar" ;;
+            *)   motivo="veja o log abaixo" ;;
+        esac
+        echo "  SkyStation saiu com erro E$code: $motivo."
         echo "  Log: ~/.local/state/skystation/session.log"
         echo "  Você está num terminal normal. Para tentar de novo: logout"
         echo ""

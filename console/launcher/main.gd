@@ -236,6 +236,7 @@ var confirm_delete: bool = false
 # ---------------------------------------------------------------- ciclo de vida
 
 func _ready() -> void:
+	Input.mouse_mode = Input.MOUSE_MODE_HIDDEN   # console: o ponteiro só aparece nos apps que usam mouse
 	_setup_actions()
 	font = ThemeDB.fallback_font
 	var fv := FontVariation.new()
@@ -653,6 +654,7 @@ func _scan_roms() -> void:
 
 
 var ps3_info: Dictionary = {}
+var running_id: String = ""
 
 
 func _scan_ps3() -> void:
@@ -1043,6 +1045,7 @@ func _launch(g: Dictionary) -> void:
 		return
 	running_pid = pid
 	running_title = g["title"]
+	running_id = str(g["id"])
 	busy_msg = "Abrindo %s…" % running_title
 	queue_redraw()
 	# Enquanto o jogo roda: sem redesenho, no máximo 4 checagens por segundo.
@@ -1070,12 +1073,45 @@ func _on_game_closed() -> void:
 func _report_exit() -> void:
 	var msg := _read_text(run_dir + "/last_msg", "")
 	var code := _read_text(run_dir + "/last_exit", "-1").to_int()
+	var by_home := FileAccess.file_exists(run_dir + "/home_closed")
+	if by_home:
+		DirAccess.remove_absolute(run_dir + "/home_closed")
 	if msg != "":
-		_toast(msg, 6.0)
-	elif code == 143 or code == 137:
+		_toast(msg, 7.0)
+	elif by_home or code == 143:
 		_toast("Jogo fechado pelo botão Home")
 	elif code > 0:
-		_toast("O jogo fechou com erro (código %d)" % code, 5.0)
+		var why: String = EXIT_CODES.get(code, "o programa terminou com erro")
+		var last := _last_log_line(running_id)
+		_toast("Erro E%d: %s%s" % [code, why, ("  ·  " + last) if last != "" else ""], 9.0, "info")
+
+
+# Códigos de saída (Fase 7.2). Acima de 128 = 128 + número do sinal que matou o processo.
+const EXIT_CODES := {
+	1: "o emulador/jogo relatou um erro", 2: "opção ou arquivo inválido", 3: "o SkyStation não conseguiu preparar o jogo",
+	97: "a pasta do jogo não existe mais", 124: "demorou demais e foi encerrado",
+	126: "sem permissão para executar o programa", 127: "programa/emulador não encontrado (não instalado?)",
+	132: "instrução ilegal (SIGILL): este processador não suporta o emulador",
+	134: "o emulador abortou (SIGABRT): erro interno dele",
+	135: "erro de leitura (SIGBUS): arquivo ou mídia com defeito",
+	136: "erro de cálculo (SIGFPE) no emulador",
+	137: "encerrado à força (SIGKILL): provável falta de memória",
+	139: "falha de memória (SIGSEGV) no emulador ou no driver de vídeo",
+	141: "canal fechado (SIGPIPE)", 255: "erro geral ao iniciar",
+}
+
+
+func _last_log_line(game_id: String) -> String:
+	# última linha útil do log do jogo, para o aviso de erro dizer o motivo (log completo em ~/.local/state/skystation/games)
+	if game_id == "":
+		return ""
+	var txt := _read_text(home_dir + "/.local/state/skystation/games/" + game_id + ".log", "")
+	var lines := txt.split("\n", false)
+	for i in range(lines.size() - 1, -1, -1):
+		var l := lines[i].strip_edges()
+		if l != "" and not l.begins_with("===") and not l.begins_with("gamemode"):
+			return l.left(110)
+	return ""
 
 
 func _open_settings(section: int = -1) -> void:
@@ -1856,6 +1892,10 @@ func _on_job_line(line: String) -> void:
 	if ev.has("p"):
 		var base := busy_msg.split("  ")[0]
 		busy_msg = "%s  %d%%" % [base, int(float(ev["p"]) * 100)]
+		if ev.has("v"):   # velocidade e tempo restante (Fase 7.2)
+			var falta := int(ev.get("falta", 0))
+			busy_msg += "  ·  %.1f MB/s  ·  faltam %s" % [float(ev["v"]) / 1e6,
+				("%d min" % int(round(falta / 60.0))) if falta > 90 else ("%d s" % falta)]
 	elif ev.has("ok"):
 		busy_msg = ""
 		if ev["ok"]:
@@ -2335,12 +2375,16 @@ func _draw() -> void:
 	if toast_t > 0.0:
 		var ta: float = clamp(toast_t, 0.0, 1.0) * a
 		var icon_w := 34.0 if toast_icon != "" else 0.0
-		var tw := font.get_string_size(toast_msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x + 48.0 + icon_w
-		var r := Rect2(w - tw - 48.0, 100, tw, 44)   # canto superior direito, como as notificações de console
+		# avisos longos (erros com código) quebram em linhas em vez de sair da tela
+		var maxw := w - 96.0 - 48.0 - icon_w
+		var tsz := font.get_multiline_string_size(toast_msg, HORIZONTAL_ALIGNMENT_LEFT, maxw, 18)
+		var tw := minf(tsz.x, maxw) + 48.0 + icon_w
+		var r := Rect2(w - tw - 48.0, 100, tw, maxf(44.0, tsz.y + 18.0))   # canto superior direito, como as notificações de console
 		_rrect(r, Color(0, 0, 0, 0.62 * ta), 22, Color(accent, 0.55 * ta), 1)
 		if toast_icon != "":
 			_icon(toast_icon, Vector2(r.position.x + 32, r.position.y + 22), 24.0, Color(accent, ta))
-		_text(toast_msg, Vector2(r.position.x + 24 + icon_w, r.position.y + 29), 18, Color(WHITE, ta))
+		draw_multiline_string(font, Vector2(r.position.x + 24 + icon_w, r.position.y + 29), toast_msg,
+			HORIZONTAL_ALIGNMENT_LEFT, maxw, 18, -1, Color(WHITE, ta))
 	if dim_t > 0.0:
 		_draw_dim(w, h)
 	if busy_msg != "":
@@ -2524,7 +2568,8 @@ func _draw_item(it: Dictionary, c: Vector2, sel: float, a: float, is_cur: bool) 
 	if sel > 0.5 and str(it["sub"]) != "":
 		_text(str(it["sub"]), Vector2(tx, c.y + 24), 16, Color(accent.lightened(0.25), a * sel))
 	if is_cur and sel > 0.8 and str(it.get("desc", "")) != "" and it["kind"] == "game":
-		_text(str(it["desc"]), Vector2(tx, c.y + 50), 15, Color(MUTED, a * sel), false, size.x - tx - 80)
+		draw_multiline_string(font, Vector2(tx, c.y + 50), str(it["desc"]), HORIZONTAL_ALIGNMENT_LEFT, size.x - tx - 80, 15, 2,
+			Color(MUTED, a * sel))
 
 
 func _draw_shot_item(it: Dictionary, c: Vector2, sel: float, a: float) -> void:

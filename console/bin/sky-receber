@@ -264,6 +264,8 @@ def emit(obj):
         line = ""
         if ev == "recebendo":
             STATE["recebendo"] = "%s  %d%%" % (nome, int(float(obj.get("p", 0)) * 100))
+            if obj.get("v"):
+                STATE["recebendo"] += "  ·  %.1f MB/s" % (obj["v"] / 1e6)
         elif ev == "recebido":
             STATE["recebendo"] = ""
             extra = {"bios": "  → BIOS do PS2 instalada", "ps3fw": "  → firmware do PS3 guardado"}.get(obj.get("sistema", ""), "")
@@ -373,6 +375,8 @@ $('#ks').onclick=()=>texto(true);$('#kn').onclick=()=>texto(false);$('#kt').onke
 for(const[k,n]of[['enter','Enter'],['apagar','⌫'],['tab','Tab'],['esc','Esc'],['cima','↑'],['baixo','↓'],['esquerda','←'],['direita','→'],['ctrl-c','Ctrl+C'],['ctrl-d','Ctrl+D']]){
  const b=document.createElement('button');b.textContent=n;b.onclick=()=>tecla(k);$('#kk').appendChild(b)}
 $('#pin').oninput=()=>{localStorage.setItem('pin',pin());links()};
+function vel(){let t0=performance.now(),b0=0,v=0;return(b,tot)=>{const t=performance.now();if(t-t0>1000){const i=(b-b0)/((t-t0)/1000);v=v?v*.6+i*.4:i;t0=t;b0=b}
+ if(!v)return'';const s=(tot-b)/v;return' · '+(v/1e6).toFixed(1)+' MB/s · faltam '+(s>90?Math.round(s/60)+' min':Math.round(s)+' s')}}
 function fmt(b){return b>1e9?(b/1e9).toFixed(2)+' GB':(b/1e6).toFixed(1)+' MB'}
 function msg(t){$('#msg').textContent=t||''}
 function api(path,opt={}){opt.headers=Object.assign({'X-Pin':pin()},opt.headers||{});return fetch(path,opt).then(async r=>{
@@ -419,12 +423,12 @@ const drop=$('#drop');drop.onclick=()=>$('#pick').click();$('#pick').onchange=e=
 drop.addEventListener('drop',e=>add(e.dataTransfer.files));
 $('#bdir').onclick=()=>$('#pickdir').click();
 $('#pickdir').onchange=async e=>{const fs=[...e.target.files];if(!fs.length)return;const raiz=fs[0].webkitRelativePath.split('/')[0],dest=$('#dest').value;
- const tot=fs.reduce((a,f)=>a+f.size,0);let feito=0,erros=0;const el=document.createElement('div');el.className='f';
+ const tot=fs.reduce((a,f)=>a+f.size,0);let feito=0,erros=0;const vp=vel();const el=document.createElement('div');el.className='f';
  el.innerHTML='<div class="n"><span></span><span></span></div><div class="bar"><i></i></div>';el.querySelector('.n span').textContent='Pasta '+raiz;$('#list').appendChild(el);
  const st=el.querySelector('.n span:last-child');
  for(let i=0;i<fs.length;i++){const f=fs[i],rel=f.webkitRelativePath.split('/');rel.pop();
   const ok=await new Promise(res=>{const x=new XMLHttpRequest();x.open('PUT','/enviar?nome='+encodeURIComponent(f.name)+'&sistema=ps3&destino='+dest+'&pasta='+encodeURIComponent(rel.join('/')));
-   x.setRequestHeader('X-Pin',pin());x.upload.onprogress=ev=>{const p=(feito+ev.loaded)/Math.max(1,tot);el.querySelector('i').style.width=(p*100)+'%';st.textContent=(i+1)+'/'+fs.length+' arquivos · '+Math.round(p*100)+'% de '+fmt(tot)};
+   x.setRequestHeader('X-Pin',pin());x.upload.onprogress=ev=>{const p=(feito+ev.loaded)/Math.max(1,tot);el.querySelector('i').style.width=(p*100)+'%';st.textContent=(i+1)+'/'+fs.length+' arquivos · '+Math.round(p*100)+'% de '+fmt(tot)+vp(feito+ev.loaded,tot)};
    x.onload=()=>res(x.status==200);x.onerror=()=>res(false);x.send(f)});
   feito+=f.size;if(!ok)erros++}
  if(erros){el.classList.add('err');st.textContent=erros+' arquivo(s) falharam: envie a pasta de novo (o que já chegou é pulado)'}
@@ -435,7 +439,7 @@ el.className='f';el.innerHTML='<div class="n"><span></span><span>na fila · '+fm
 el.querySelector('.n span').textContent=f.name;$('#list').appendChild(el);fila.push({f,el,sys:$('#sys').value,dest:$('#dest').value})}next()}
 function next(){if(ocupado||!fila.length)return;ocupado=true;const it=fila.shift(),x=new XMLHttpRequest(),st=it.el.querySelector('.n span:last-child');
 x.open('PUT','/enviar?nome='+encodeURIComponent(it.f.name)+'&sistema='+it.sys+'&destino='+it.dest);x.setRequestHeader('X-Pin',pin());
-x.upload.onprogress=e=>{if(e.lengthComputable){const p=e.loaded/e.total;it.el.querySelector('i').style.width=(p*100)+'%';st.textContent=Math.round(p*100)+'% · '+fmt(e.total)}};
+const vt=vel();x.upload.onprogress=e=>{if(e.lengthComputable){const p=e.loaded/e.total;it.el.querySelector('i').style.width=(p*100)+'%';st.textContent=Math.round(p*100)+'% de '+fmt(e.total)+vt(e.loaded,e.total)}};
 x.onload=()=>{let r={};try{r=JSON.parse(x.responseText)}catch(e){}if(x.status==200&&r.ok){it.el.classList.add('ok');st.textContent='enviado ✓'}
 else{it.el.classList.add('err');st.textContent=r.error||('erro '+x.status)}ocupado=false;next()};
 x.onerror=()=>{it.el.classList.add('err');st.textContent='conexão perdida';ocupado=false;next()};x.send(it.f)}
@@ -650,6 +654,7 @@ class Handler(BaseHTTPRequestHandler):
         tmp = target + ".parcial"
         emit({"evento": "recebendo", "nome": name, "p": 0.0})
         got, last = 0, 0.0
+        t0 = time.monotonic()
         try:
             with open(tmp, "wb") as f:
                 while got < size:
@@ -660,7 +665,8 @@ class Handler(BaseHTTPRequestHandler):
                     got += len(chunk)
                     if time.monotonic() - last > 0.5:
                         last = time.monotonic()
-                        emit({"evento": "recebendo", "nome": name, "p": round(got / max(1, size), 3)})
+                        emit({"evento": "recebendo", "nome": name, "p": round(got / max(1, size), 3),
+                              "v": got / max(0.2, time.monotonic() - t0)})
                 f.flush()
                 os.fsync(f.fileno())
             if got != size:

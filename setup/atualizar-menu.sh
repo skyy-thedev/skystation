@@ -17,6 +17,8 @@ if [ -e "$P/reverter" ]; then
             rm -rf /opt/skystation.troca
             mv /opt/skystation /opt/skystation.troca && mv /opt/skystation.anterior /opt/skystation \
                 && mv /opt/skystation.troca /opt/skystation.anterior && echo "Versão anterior restaurada"
+            # emuladores instalados depois daquela versão continuam valendo (não fazem parte da "versão")
+            cp -n /opt/skystation.anterior/emu/cores/*.so /opt/skystation/emu/cores/ 2>/dev/null || true
         } > "$D/log" 2>&1 && estado ok || estado erro
     else
         echo "não há versão anterior guardada" > "$D/log"; estado erro

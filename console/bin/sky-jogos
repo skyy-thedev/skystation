@@ -31,6 +31,24 @@ def out(obj):
     print(json.dumps(obj, ensure_ascii=False), flush=True)
 
 
+VEL = {"t0": 0.0, "b0": 0, "v": 0.0, "last": 0.0}
+
+
+def ritmo(done, total):
+    """Velocidade (bytes/s, média dos últimos segundos) e tempo restante para as barras de progresso."""
+    now = time.monotonic()
+    if VEL["t0"] == 0.0 or done < VEL["b0"]:
+        VEL.update(t0=now, b0=done, v=0.0)
+    elif now - VEL["t0"] >= 1.0:
+        inst = (done - VEL["b0"]) / (now - VEL["t0"])
+        VEL.update(t0=now, b0=done, v=inst if VEL["v"] == 0.0 else VEL["v"] * 0.6 + inst * 0.4)
+    o = {"p": round(done / max(1, total), 3)}
+    if VEL["v"] > 0:
+        o["v"] = int(VEL["v"])
+        o["falta"] = int(max(0, total - done) / VEL["v"])
+    return o
+
+
 def mounted(path):
     try:
         with open("/proc/mounts") as f:
@@ -138,7 +156,9 @@ def mover(path, dest_kind):
                         break
                     b.write(chunk)
                     done += len(chunk)
-                    out({"p": round(done / max(1, total), 3)})
+                    if time.monotonic() - VEL["last"] > 0.25:
+                        VEL["last"] = time.monotonic()
+                        out(ritmo(done, total))
                 b.flush()
                 os.fsync(b.fileno())      # pendrive: garante que foi gravado de verdade
             if os.path.getsize(tmp) != os.path.getsize(f):
@@ -183,10 +203,12 @@ def apagar(path):
 RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
 
 
-def etapa(texto, p=None):
+def etapa(texto, p=None, feito=None, total=None):
     o = {"etapa": texto}
     if p is not None:
         o["p"] = round(max(0.0, min(1.0, p)), 3)
+    if feito is not None and total:
+        o.update({k: v for k, v in ritmo(feito, total).items() if k != "p"})
     out(o)
 
 
@@ -420,7 +442,7 @@ def _copiar_ps2(dev, dest_dir, nome, size):
                 pulso(f"{int(done * 100 / max(1, size))}%")
                 if time.monotonic() - last > 0.5:
                     last = time.monotonic()
-                    etapa("Copiando o disco" + (f" ({ruins} trechos ruins)" if ruins else ""), done / max(1, size))
+                    etapa("Copiando o disco" + (f" ({ruins} trechos ruins)" if ruins else ""), done / max(1, size), done, size)
             b.flush()
             os.fsync(b.fileno())
         os.close(fd)
@@ -468,7 +490,7 @@ def _copiar_ps1(dev, dest_dir, nome, size):
             if tam != visto:
                 visto = tam
                 pulso(f"{int(min(99, tam * 100 / expect))}%")
-            etapa("Copiando o CD", min(0.99, tam / expect))
+            etapa("Copiando o CD", min(0.99, tam / expect), tam, expect)
         except OSError:
             pass
     VIGIA["limite"] = 0
@@ -539,7 +561,7 @@ def conferir(path):
             done += len(chunk)
             if time.monotonic() - last > 0.5:
                 last = time.monotonic()
-                etapa("Conferindo a cópia", done / max(1, total))
+                etapa("Conferindo a cópia", done / max(1, total), done, total)
     key = f"{crc & 0xFFFFFFFF:08X}"
     achou, mesmo_tam = "", False
     with open(cache) as f:

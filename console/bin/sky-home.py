@@ -8,7 +8,9 @@ Com um jogo aberto:
   - TOQUE no Home (ou Select+Start, ou F12): o jogo PAUSA e abre o menu por cima:
     Voltar ao jogo, Salvar/Carregar estado (PS1), Salvar captura de tela, Volume e Fechar jogo,
     com bateria, temperatura e hora no rodapé (Fase 5.6).
-  - SEGURAR 1,5 s: fecha o jogo direto (saída de emergência, funciona mesmo se o menu falhar).
+  - SEGURAR 1,5 s (com ou sem jogo): menu de energia — Fechar jogo, Modo de espera, Reiniciar,
+    Desligar o console (Fase 7.2).
+  - CONTINUAR SEGURANDO até 5 s: fecha o jogo direto (saída de emergência, mesmo se o menu falhar).
 
 Como o menu funciona por baixo:
   1. SIGSTOP no grupo de processos do jogo: ele congela (imagem, som e lógica).
@@ -38,6 +40,7 @@ except ImportError:
     sys.exit(0)
 
 HOLD = 1.5
+HOLD_KILL = 5.0
 RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
 PID_FILE = os.path.join(RUN, "game.pid")
 TITLE_FILE = os.path.join(RUN, "game.title")
@@ -166,6 +169,9 @@ class Home:
         self.since = None
         self.fired = False
         self.menu_pid = None
+        self.menu = False       # algum menu aberto (com ou sem jogo)
+        self.power = False      # é o menu de energia (segurar Home)
+        self.hold0 = None       # desde quando o Home está sendo segurado sem soltar
         self.overlay = None
         self.sel = 0
         self.grabbed = False
@@ -224,10 +230,12 @@ class Home:
             except (BrokenPipeError, OSError):
                 pass
 
-    def open_menu(self, pid):
-        log("menu Home aberto")
+    def open_menu(self, pid, power=False):
+        log("menu de energia aberto" if power else "menu Home aberto")
         self.menu_pid = pid
-        signal_group(pid, signal.SIGSTOP)
+        self.menu, self.power = True, power
+        if pid:
+            signal_group(pid, signal.SIGSTOP)
         self.grab_all(True)
         self.ungrab_at = None
         title = read(TITLE_FILE)
@@ -241,15 +249,20 @@ class Home:
                 shot = SHOT if os.path.exists(SHOT) else ""
             except (OSError, subprocess.SubprocessError):
                 shot = ""
-        self.items = [("resume", "Voltar ao jogo")]
-        if read(os.path.join(RUN, "game.sys")) in ("ps1", "snes", "n64", "psp", "gc", "wii", "nds", "3ds", "gba", "gb", "nes", "md"):
+        self.items = [("resume", "Voltar ao jogo" if pid else "Voltar")]
+        if power:
+            if pid:
+                self.items.append(("close", "Fechar jogo"))
+            self.items += [("suspend", "Modo de espera"), ("reboot", "Reiniciar o console"), ("poweroff", "Desligar o console")]
+        elif read(os.path.join(RUN, "game.sys")) in ("ps1", "snes", "n64", "psp", "gc", "wii", "nds", "3ds", "gba", "gb", "nes", "md"):
             self.items += [("save", "Salvar estado"), ("load", "Carregar estado")]
-        if shot:
+        if shot and not power:
             self.items.append(("shot", "Salvar captura de tela"))
-        self.items += [("volume", "Volume"), ("close", "Fechar jogo")]
+        if not power:
+            self.items += [("volume", "Volume"), ("close", "Fechar jogo")]
         self.sel = 0
         try:
-            self.overlay = subprocess.Popen([sys.executable, OVERLAY, title or "Jogo", shot],
+            self.overlay = subprocess.Popen([sys.executable, OVERLAY, ("Energia" if power else title) or "Jogo", shot],
                                             stdin=subprocess.PIPE, text=True)
         except OSError as e:
             log(f"não consegui abrir o overlay: {e}; voltando ao jogo")
@@ -264,11 +277,26 @@ class Home:
         self.info_at = time.monotonic()
 
     def menu_open(self):
-        return self.menu_pid is not None
+        return self.menu
+
+    def energia(self, action, pid):
+        """Modo de espera / reiniciar / desligar. Com jogo aberto, fecha o jogo do jeito certo antes."""
+        def run():
+            if pid and action != "suspend":
+                close_game(pid)
+                for _ in range(50):
+                    if not signal_group(pid, 0):
+                        break
+                    time.sleep(0.1)
+                time.sleep(1.5)          # o sky-run ainda grava o tempo de jogo e a cópia dos saves
+            log(f"energia: {action}")
+            subprocess.run(["systemctl", action], capture_output=True)
+        threading.Thread(target=run, daemon=True).start()
 
     def choose(self, action):
         pid = self.menu_pid
         self.menu_pid = None
+        self.menu = self.power = False
         if self.overlay:
             self.send("quit")
             try:
@@ -276,8 +304,16 @@ class Home:
             except subprocess.TimeoutExpired:
                 self.overlay.kill()
             self.overlay = None
-        if pid:
+        if action in ("suspend", "reboot", "poweroff"):
+            if pid and action == "suspend":
+                signal_group(pid, signal.SIGCONT)
+            self.energia(action, pid)
+        elif pid:
             if action == "close":
+                try:                      # o launcher mostra "fechado pelo Home" em vez de código de erro
+                    open(os.path.join(RUN, "home_closed"), "w").close()
+                except OSError:
+                    pass
                 close_game(pid)
             else:
                 log("voltando ao jogo")
@@ -309,7 +345,7 @@ class Home:
 
     def activate(self):
         action = self.items[self.sel][0]
-        if action in ("resume", "close"):
+        if action in ("resume", "close", "suspend", "reboot", "poweroff"):
             self.choose(action)
         elif action == "save":
             ok = self.retroarch("SAVE_STATE")
@@ -427,19 +463,24 @@ class Home:
                     self.grab_all(False)
                     self.ungrab_at = None
 
+            active = any(combo(s) for s in self.pressed.values())
+            if not active:
+                self.hold0 = None
             if self.menu_open() or self.grabbed:
+                # saída de emergência: Home segurado sem soltar por 5 s fecha o jogo, com menu ou sem
+                if self.menu_open() and self.hold0 and self.menu_pid and time.monotonic() - self.hold0 >= HOLD_KILL:
+                    self.hold0 = None
+                    self.choose("close")
                 self.since, self.fired = None, False
                 continue
 
-            # toque curto -> menu | segurar 1,5 s -> fecha direto
-            active = any(combo(s) for s in self.pressed.values())
+            # toque curto -> menu do jogo | segurar 1,5 s -> menu de energia
             if active:
                 self.since = self.since or time.monotonic()
                 if not self.fired and time.monotonic() - self.since >= HOLD:
-                    pid = game_pid()
-                    if pid:
-                        close_game(pid)
                     self.fired = True
+                    self.hold0 = self.since
+                    self.open_menu(game_pid(), power=True)
             else:
                 if self.since is not None and not self.fired:
                     pid = game_pid()

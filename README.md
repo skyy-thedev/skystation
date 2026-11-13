@@ -231,6 +231,19 @@ Coloque o disco no leitor: em poucos segundos toca um som, aparece o aviso e o j
   Só em PC com 6+ threads (`touch ~/.config/skystation/x360-forcar` para forçar).
 - As categorias novas só aparecem quando há jogos. Nada disso foi testado em hardware ainda.
 
+## Fase 7.2
+
+- **Velocidade nas transferências:** MB/s e tempo restante ao mover jogos, copiar/conferir disco
+  (`sky-jogos` manda `v` e `falta` junto do progresso) e nos envios da Central web (página e tela do console).
+- **Erros com código:** quando um jogo fecha com erro, o aviso mostra `E<código>`, o que ele significa
+  (ex.: E139 = falha de memória/SIGSEGV, E127 = emulador não instalado) e a última linha do log do jogo.
+  Códigos acima de 128 são 128 + o sinal que encerrou o processo. O terminal de erro da sessão também explica.
+- **Menu de energia:** segurar o Home 1,5 s (com ou sem jogo) abre Voltar / Fechar jogo / Modo de espera /
+  Reiniciar / Desligar. Continuar segurando até 5 s fecha o jogo direto (saída de emergência).
+- **Ponteiro do mouse** escondido no menu do console; continua nos apps que usam mouse (Navegador, terminal).
+- **Revisão:** avisos longos e descrições quebram em linhas; "Voltar à versão anterior" não perde
+  emuladores instalados depois; avisos antigos não aparecem fora de hora.
+
 ## Visual
 
 - **Temas:** Sistema → Tema de cores (Automático muda com a hora do dia: Oceano, Aurora,
@@ -301,6 +314,7 @@ curl -fsSL https://raw.githubusercontent.com/skyy-thedev/skystation/main/setup/s
 - [ ] Fase 6: ISO próprio do SkyStation
 - [x] Fase 7.0: Central web em segundo plano, som de ligar na TV, PS3 pelo RPCS3 em PC forte (não testado em hardware)
 - [x] Fase 7.1: GameCube, Wii, DS, 3DS, GB/GBC/GBA, NES, Mega Drive e Xbox 360 experimental (não testado em hardware)
+- [x] Fase 7.2: velocidade nas transferências, erros com código, menu de energia no Home, ponteiro escondido, revisão
 
 ## Saídas de emergência
 

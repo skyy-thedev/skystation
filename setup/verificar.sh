@@ -86,6 +86,10 @@ v "boot em qualquer PC (sem autodetect)" "$F70" sh -c "! grep -qE '^HOOKS=.*auto
 v "firmware do PS3 (PS3UPDAT.PUP)" "envie pela Central web → Sistema: Firmware do PS3" sh -c "ls $H/skystation/bios/ps3/*.[Pp][Uu][Pp] $H/.config/rpcs3/dev_flash/sys/external/liblv2.sprx 2>/dev/null | grep -q ."
 t="$(nproc)"; if [ "$t" -ge 6 ]; then echo "  ✓ este PC tem $t threads: PS3 liberado"; else echo "  · este PC tem $t threads: PS3 só abre em PC com 6+ (normal no notebook antigo)"; fi
 
+echo "== 7.2 Velocidade / erros com código / menu de energia"
+v "menu de energia no Home" "Sistema → Atualizar o SkyStation" grep -q HOLD_KILL /opt/skystation/bin/sky-home.py
+v "velocidade nas transferências" "Sistema → Atualizar o SkyStation" grep -q "def ritmo" /opt/skystation/bin/sky-jogos
+
 echo "== 7.1 Mais consoles"
 F71="sudo bash /opt/skystation-src/setup/fase7-1.sh"
 C=/opt/skystation/emu/cores
