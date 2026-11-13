@@ -95,6 +95,9 @@ ps2)
     fi
     [ -n "$BIOS" ] || fail "Falta a BIOS do PS2. Envie pelo Wi-Fi (Sistema: BIOS do PS2) ou coloque em SKYROMS/bios."
     GAME_ID="$(cat "${XDG_RUNTIME_DIR:-/tmp}/skystation/game.id" 2>/dev/null)"
+    # Fase 7.3: no perfil leve (OpenGL), o driver de vídeo trabalha em outra thread do processador,
+    # tirando peso da thread que desenha o jogo (a "GS" do contador do PCSX2).
+    [ "$PROFILE" = leve ] && export mesa_glthread=true
     python3 /opt/skystation/bin/sky-pcsx2-ini "$PROFILE" "$SKY" "$(basename "$BIOS")" "$GAME_ID" \
         || fail "Não consegui preparar a configuração do PCSX2."
     if [ -n "$DISCO" ]; then

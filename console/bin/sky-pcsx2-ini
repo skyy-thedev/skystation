@@ -33,7 +33,7 @@ except (OSError, ValueError, AttributeError):
 # Fase 6.5 — "Automático": jogos conhecidos por exigir muito do PS2 já abrem em Rápido.
 PESADOS = ("need for speed", "gran turismo", "god of war", "shadow of the colossus", "burnout", "metal gear solid",
            "ratchet", "jak ", "jak and", "black", "midnight club", "tekken 5", "soulcalibur", "final fantasy xii",
-           "ace combat", "killzone", "driv3r", "true crime", "the getaway", "mercenaries", "juiced", "test drive")
+           "ace combat", "killzone", "driv3r", "true crime", "the getaway", "mercenaries", "juiced", "test drive", "guitar hero", "rock band")
 if speed == "auto":
     nome = game_id.lower()
     speed = "rapido" if any(p in nome for p in PESADOS) else "normal"
@@ -43,8 +43,11 @@ if speed == "auto":
 # Ryzen (potente): Vulkan via RADV é o melhor caminho.
 PROFILES = {
     # Fase 6.1: mistura de cores no mínimo e sem pontilhado: menos trabalho para a HD 4400
-    "leve": {"Renderer": "12", "upscale_multiplier": "1", "accurate_blending_unit": "0", "dithering_ps2": "0"},
-    "potente": {"Renderer": "14", "upscale_multiplier": "2"},
+    # Fase 7.3: alivia a "GS" (a parte do emulador que desenha, e que trava jogos de 60 fps como Guitar Hero):
+    # texturas carregadas aos poucos (1 = parcial) e sem mipmap por hardware.
+    "leve": {"Renderer": "12", "upscale_multiplier": "1", "accurate_blending_unit": "0", "dithering_ps2": "0",
+             "texture_preloading": "1", "hw_mipmap": "false", "MaxAnisotropy": "0"},
+    "potente": {"Renderer": "14", "upscale_multiplier": "2", "texture_preloading": "2", "hw_mipmap": "true"},
 }
 
 ini_dir = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "PCSX2", "inis")
@@ -82,6 +85,9 @@ for k, v in SPEED.get(speed, SPEED["normal"]).items():
 medir = os.path.exists(os.path.expanduser("~/.config/skystation/mangohud.on"))
 for k in ("OsdShowSpeed", "OsdShowFPS", "OsdShowCPU", "OsdShowGPU", "OsdShowResolution"):
     put("EmuCore/GS", k, "true" if medir else "false")
+# Leitura de volta da placa de vídeo (3 = sem esperar): só no "Máximo" do perfil leve, porque pode
+# causar piscadas em alguns jogos; nos outros modos volta ao padrão (0).
+put("EmuCore/GS", "HWDownloadMode", "3" if speed == "maximo" and profile != "potente" else "0")
 put("EmuCore/Speedhacks", "vuThread", "true" if speed != "normal" and (os.cpu_count() or 1) >= 4 else "false")
 
 # Controle: o PCSX2 lê controles pelo SDL. Se o Jogador 1 ainda não tem controle mapeado,
