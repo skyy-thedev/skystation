@@ -60,6 +60,26 @@ ps1|snes|n64|psp|gc|wii|nds|3ds|gba|gb|nes|md)
         case "$SYS" in gc|wii) sed -i -e "s|/bios/ps1\"|/bios/dolphin\"|" "$CFG"; mkdir -p "$SKY/bios/dolphin" ;; esac
         case "$SYS" in nds|3ds) sed -i -e "s|/bios/ps1\"|/bios/$SYS\"|" "$CFG" ;; esac
     fi
+    # Fase 7.4: qualidade por aparelho. No perfil "potente" (Ryzen/Vega 7) os emuladores 3D desenham
+    # em resolução maior; no "leve" ficam no original. O arquivo é refeito a cada jogo porque o mesmo
+    # pendrive liga nos dois aparelhos.
+    OPTS="$HOME/.config/skystation/core-options.cfg"
+    if [ "$PROFILE" = potente ]; then
+        cat >"$OPTS" <<'EOF'
+ppsspp_internal_resolution = "1440x816"
+ppsspp_texture_anisotropic_filtering = "8x"
+dolphin_efb_scale = "x2 (1280 x 1056)"
+dolphin_max_anisotropy = "4x"
+mupen64plus-43screensize = "1280x960"
+mupen64plus-169screensize = "1920x1080"
+citra_resolution_factor = "2x"
+azahar_resolution_factor = "2x"
+pcsx_rearmed_neon_enhancement_enable = "enabled"
+EOF
+    else
+        : >"$OPTS"
+    fi
+    printf 'global_core_options = "true"\ncore_options_path = "%s"\n' "$OPTS" >>"$CFG"
     if [ -n "$DISCO" ]; then
         # O core de PS1 lê o CD pelo /dev/sgN (comandos SCSI: dados + faixas de áudio).
         [ -n "$SG" ] || fail "O leitor não expõe /dev/sg (módulo sg). Rode a Fase 5.8 e reinicie."

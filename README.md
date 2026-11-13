@@ -244,6 +244,15 @@ Coloque o disco no leitor: em poucos segundos toca um som, aparece o aviso e o j
 - **Revisão:** avisos longos e descrições quebram em linhas; "Voltar à versão anterior" não perde
   emuladores instalados depois; avisos antigos não aparecem fora de hora.
 
+## Fase 7.4
+
+- **Qualidade por aparelho:** o mesmo pendrive liga no notebook antigo (perfil leve) e no Ryzen (potente).
+  No potente, o `sky-emu` gera `~/.config/skystation/core-options.cfg` a cada jogo com resolução interna
+  maior para PSP (3x), GameCube/Wii (2x), N64 (1280x960), 3DS (2x) e PS1 melhorado; o PS2 já usava
+  Vulkan em 2x. No leve fica tudo no original.
+- **Sistema → Este aparelho:** mostra processador, threads, memória e o perfil; A alterna
+  Automático / Leve / Potente (`~/.config/skystation/perfil`).
+
 ## Visual
 
 - **Temas:** Sistema → Tema de cores (Automático muda com a hora do dia: Oceano, Aurora,
@@ -315,6 +324,7 @@ curl -fsSL https://raw.githubusercontent.com/skyy-thedev/skystation/main/setup/s
 - [x] Fase 7.0: Central web em segundo plano, som de ligar na TV, PS3 pelo RPCS3 em PC forte (não testado em hardware)
 - [x] Fase 7.1: GameCube, Wii, DS, 3DS, GB/GBC/GBA, NES, Mega Drive e Xbox 360 experimental (não testado em hardware)
 - [x] Fase 7.2: velocidade nas transferências, erros com código, menu de energia no Home, ponteiro escondido, revisão
+- [x] Fase 7.4: qualidade por aparelho (perfil potente para o Ryzen) e item "Este aparelho"
 
 ## Saídas de emergência
 

@@ -821,6 +821,7 @@ func _build_cats() -> void:
 		_act("Som de ligar", "Ligado" if not FileAccess.file_exists(conf_dir + "/ligar.off") else "Desligado", "boot_sound", "note"),
 		_act("Ligar pelo controle", _wake_txt(), "wake_pad", "pad"),
 		_act("Gestos no touchpad", _touch_txt(), "touchpad", "pad"),
+		_act("Este aparelho", _hw_txt(), "hwprofile", "info"),
 		_act("Medição de FPS", "Ligada: contador e log nos jogos" if _fps_on() else "Desligada", "fps", "gauge"),
 		_act("Informações do sistema", "Hardware e versão", "settings:3", "info"),
 		_act("Atualizar o SkyStation", _update_txt(), "update", "refresh"),
@@ -937,6 +938,8 @@ func _refresh_sys_items() -> void:
 					it["sub"] = _central_txt()
 				"touchpad":
 					it["sub"] = _touch_txt()
+				"hwprofile":
+					it["sub"] = _hw_txt()
 
 
 # ---------------------------------------------------------------- ações
@@ -991,6 +994,17 @@ func _activate() -> void:
 			_next_profile()
 		"touchpad":
 			_toggle_file(conf_dir + "/touchpad.off")
+			_refresh_sys_items()
+		"hwprofile":
+			# Automático -> Leve -> Potente -> Automático (vale para o próximo jogo aberto)
+			var cur := _read_text(conf_dir + "/perfil", "")
+			if cur == "":
+				_write_text(conf_dir + "/perfil", "leve")
+			elif cur == "leve":
+				_write_text(conf_dir + "/perfil", "potente")
+			else:
+				DirAccess.remove_absolute(conf_dir + "/perfil")
+			_play("accept")
 			_refresh_sys_items()
 		"wake_pad":
 			_toggle_file(conf_dir + "/acordar.off")
@@ -1762,6 +1776,17 @@ func _cycle_ps2_speed(game_id: String) -> void:
 		"maximo": "o máximo de FPS; alguns jogos engasgam ou falham"}
 	_toast("Desempenho: %s (%s)" % [SPEED_NAMES[nxt], why[nxt]], 3.5, "gauge")
 	_reload_games()
+
+
+func _hw_txt() -> String:
+	# Fase 7.4: o mesmo pendrive liga em aparelhos diferentes; mostra o que foi detectado neste.
+	var forced := _read_text(conf_dir + "/perfil", "")
+	var threads := OS.get_processor_count()
+	var auto_p := "Potente" if threads >= 8 else "Leve"
+	var mem: int = int(OS.get_memory_info().get("physical", 0))
+	var perfil: String = ("Automático (%s)" % auto_p) if forced == "" else forced.capitalize() + " (fixado)"
+	return "%s  ·  %d threads  ·  %d GB  ·  Qualidade: %s. A = trocar" % [OS.get_processor_name().left(34), threads,
+		int(round(float(mem) / 1073741824.0)), perfil]
 
 
 func _touch_txt() -> String:

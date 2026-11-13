@@ -8,4 +8,5 @@ if [ -f "$F" ]; then
     p="$(tr -d '[:space:]' <"$F")"
     case "$p" in leve|potente) echo "$p"; exit 0 ;; esac
 fi
+# Fase 7.4: potente = 8+ threads E placa de vídeo que não seja Intel antiga (Vulkan de verdade: AMD/NVIDIA/Intel novo).
 if [ "$(nproc)" -ge 8 ]; then echo potente; else echo leve; fi
