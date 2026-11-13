@@ -87,7 +87,10 @@ for k in ("OsdShowSpeed", "OsdShowFPS", "OsdShowCPU", "OsdShowGPU", "OsdShowReso
     put("EmuCore/GS", k, "true" if medir else "false")
 # Leitura de volta da placa de vídeo no padrão (o teste com "sem esperar" não ajudou; ver acima).
 put("EmuCore/GS", "HWDownloadMode", "0")
-put("EmuCore/Speedhacks", "vuThread", "true" if speed != "normal" and (os.cpu_count() or 1) >= 4 else "false")
+# Thread separada para a VU (cálculo 3D): no notebook antigo só nos modos Rápido/Máximo;
+# com 8+ threads (Ryzen) fica sempre ligada — medido no Lenovo: Normal sem ela 84%, Rápido com ela 99%.
+ncpu = os.cpu_count() or 1
+put("EmuCore/Speedhacks", "vuThread", "true" if ncpu >= 8 or (speed != "normal" and ncpu >= 4) else "false")
 
 # Controle: o PCSX2 lê controles pelo SDL. Se o Jogador 1 ainda não tem controle mapeado,
 # aplica o mapeamento padrão de "controle de videogame" do SDL (DS4, DualSense, Xbox, 8BitDo...).
