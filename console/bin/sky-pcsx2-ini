@@ -43,10 +43,10 @@ if speed == "auto":
 # Ryzen (potente): Vulkan via RADV é o melhor caminho.
 PROFILES = {
     # Fase 6.1: mistura de cores no mínimo e sem pontilhado: menos trabalho para a HD 4400
-    # Fase 7.3: alivia a "GS" (a parte do emulador que desenha, e que trava jogos de 60 fps como Guitar Hero):
-    # texturas carregadas aos poucos (1 = parcial) e sem mipmap por hardware.
+    # Fase 7.3 testou texturas parciais, sem mipmap, leitura sem espera e mesa_glthread no Guitar Hero 3:
+    # a velocidade não mudou (54-58%) e a thread GS ficou mais ocupada (75% -> 96%). Desfeito: padrões do PCSX2.
     "leve": {"Renderer": "12", "upscale_multiplier": "1", "accurate_blending_unit": "0", "dithering_ps2": "0",
-             "texture_preloading": "1", "hw_mipmap": "false", "MaxAnisotropy": "0"},
+             "texture_preloading": "2", "hw_mipmap": "true"},
     "potente": {"Renderer": "14", "upscale_multiplier": "2", "texture_preloading": "2", "hw_mipmap": "true"},
 }
 
@@ -85,9 +85,8 @@ for k, v in SPEED.get(speed, SPEED["normal"]).items():
 medir = os.path.exists(os.path.expanduser("~/.config/skystation/mangohud.on"))
 for k in ("OsdShowSpeed", "OsdShowFPS", "OsdShowCPU", "OsdShowGPU", "OsdShowResolution"):
     put("EmuCore/GS", k, "true" if medir else "false")
-# Leitura de volta da placa de vídeo (3 = sem esperar): só no "Máximo" do perfil leve, porque pode
-# causar piscadas em alguns jogos; nos outros modos volta ao padrão (0).
-put("EmuCore/GS", "HWDownloadMode", "3" if speed == "maximo" and profile != "potente" else "0")
+# Leitura de volta da placa de vídeo no padrão (o teste com "sem esperar" não ajudou; ver acima).
+put("EmuCore/GS", "HWDownloadMode", "0")
 put("EmuCore/Speedhacks", "vuThread", "true" if speed != "normal" and (os.cpu_count() or 1) >= 4 else "false")
 
 # Controle: o PCSX2 lê controles pelo SDL. Se o Jogador 1 ainda não tem controle mapeado,
