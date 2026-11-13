@@ -35,7 +35,18 @@ const ROM_SYSTEMS := {
 		"exts": ["sfc", "smc"]},
 	"n64": {"badge": "N64", "name": "Nintendo 64", "color": "#3fbf6b",
 		"exts": ["z64", "n64", "v64"]},
+	# Fase 7.1
+	"gc": {"badge": "GC", "name": "GameCube", "color": "#7b68ee", "icon": "discG", "exts": ["iso", "gcm", "rvz", "gcz", "ciso"]},
+	"wii": {"badge": "Wii", "name": "Nintendo Wii", "color": "#7fd4ff", "icon": "discW", "exts": ["iso", "wbfs", "rvz", "gcz", "ciso", "wad"]},
+	"x360": {"badge": "360", "name": "Xbox 360 (experimental)", "color": "#8fd14f", "icon": "discX", "exts": ["iso", "zar", "xex"]},
+	"nds": {"badge": "DS", "name": "Nintendo DS", "color": "#c9d2e6", "icon": "cartD", "exts": ["nds", "dsi"]},
+	"3ds": {"badge": "3DS", "name": "Nintendo 3DS", "color": "#ff6b6b", "icon": "cart3", "exts": ["3ds", "cci", "cxi", "3dsx"]},
+	"gba": {"badge": "GBA", "name": "Game Boy Advance", "color": "#9d7bff", "icon": "cartA", "exts": ["gba"]},
+	"gb": {"badge": "GB", "name": "Game Boy / Color", "color": "#9bbc0f", "icon": "cartB", "exts": ["gb", "gbc"]},
+	"nes": {"badge": "NES", "name": "Nintendinho (NES)", "color": "#e0483e", "icon": "cartN", "exts": ["nes"]},
+	"md": {"badge": "MD", "name": "Mega Drive", "color": "#4a90d9", "icon": "cartM", "exts": ["md", "gen", "smd", "bin"]},
 }
+const EXTRA_SYS := ["gc", "wii", "x360", "nds", "3ds", "gba", "gb", "nes", "md"]
 const ROM_BASES := ["/mnt/skyroms", "/mnt/skystation/roms"]  # + ~/skystation/roms
 
 # Paletas do fundo: [topo, base, cor da onda, destaque]
@@ -757,6 +768,11 @@ func _build_cats() -> void:
 	var c_snes := {"id": "snes", "title": "SNES", "icon": "cartS", "items": []}
 	var c_n64 := {"id": "n64", "title": "N64", "icon": "cart64", "items": []}
 	var by_sys := {"ps1": c_ps1, "ps2": c_ps2, "snes": c_snes, "n64": c_n64, "psp": c_psp, "ps3": c_ps3}
+	var c_extra: Array = []
+	for sid in EXTRA_SYS:
+		var ce := {"id": sid, "title": ROM_SYSTEMS[sid]["badge"], "icon": ROM_SYSTEMS[sid]["icon"], "items": []}
+		by_sys[sid] = ce
+		c_extra.append(ce)
 	var c_pc := {"id": "pc", "title": "PC", "icon": "monitor", "items": []}
 	var c_apps := {"id": "apps", "title": "Apps", "icon": "apps", "items": []}
 	var c_power := {"id": "energia", "title": "Energia", "icon": "power", "items": []}
@@ -813,7 +829,7 @@ func _build_cats() -> void:
 	if prev != "":
 		c_sys["items"].append(_act("Voltar à versão anterior", "Se a atualização deu problema: volta para " + prev, "rollback", "refresh"))
 	# Favoritos (Fase 6.1) primeiro em cada lista, na mesma ordem de antes
-	for c in [c_games, c_ps1, c_ps2, c_ps3, c_psp, c_snes, c_n64, c_pc]:
+	for c in [c_games, c_ps1, c_ps2, c_ps3, c_psp, c_snes, c_n64, c_pc] + c_extra:
 		var fav_items: Array = c["items"].filter(func(i): return i.get("fav", false))
 		if not fav_items.is_empty():
 			c["items"] = fav_items + c["items"].filter(func(i): return not i.get("fav", false))
@@ -851,7 +867,7 @@ func _build_cats() -> void:
 	if c_ps3["items"].is_empty() and ps3_info.get("emulador", false):
 		var falta := "Envie o PS3UPDAT.PUP pela Central web (Sistema: Firmware do PS3). " if not ps3_info.get("firmware", false) and not ps3_info.get("pup", false) else ""
 		c_ps3["items"].append(_act("Nenhum jogo de PS3", falta + "Jogos: pasta do disco ou .iso em ~/skystation/roms/ps3 ou SKYROMS/ps3", "", "disc"))
-	for c in [c_ps3, c_psp, c_snes, c_n64]:   # só aparecem quando há jogos
+	for c in [c_ps3, c_psp, c_snes, c_n64] + c_extra:   # só aparecem quando há jogos
 		if not c["items"].is_empty():
 			cats.append(c)
 	if not c_pc["items"].is_empty():
@@ -1205,7 +1221,7 @@ func _toggle_panel() -> void:
 					panel_items.append(["Mover para o pendrive SKYROMS", "move:skyroms"])
 				if it["game"].get("sys", "") == "ps2" and gpath.get_extension().to_lower() == "iso":
 					panel_items.append(["Conferir cópia", "verify"])
-				if not it["game"].get("sys", "") in ["psp", "ps3"] and gpath.get_extension().to_lower() in ["cue", "iso", "img"]:
+				if it["game"].get("sys", "") in ["ps1", "ps2"] and gpath.get_extension().to_lower() in ["cue", "iso", "img"]:
 					panel_items.append(["Compactar (CHD): ocupa menos espaço", "compress"])
 				panel_items.append(["Apagar jogo", "delete_game"])
 		if it.get("kind", "") == "shot":
@@ -2679,7 +2695,7 @@ func _icon(kind: String, c: Vector2, s: float, col: Color) -> void:
 			draw_rect(Rect2(c.x - s * 0.275, c.y - s * 0.085, s * 0.05, s * 0.16), hole)
 			for o in [Vector2(0.25, -0.05), Vector2(0.33, 0.02), Vector2(0.17, 0.02), Vector2(0.25, 0.09)]:
 				draw_circle(c + o * s, s * 0.035, hole, true, -1.0, true)
-		"disc", "disc1", "disc2", "disc3", "discP":
+		"disc", "disc1", "disc2", "disc3", "discP", "discG", "discW", "discX":
 			draw_arc(c, s * 0.42, 0, TAU, 64, col, lw, true)
 			draw_arc(c, s * 0.30, -0.6, 0.9, 24, Color(col, col.a * 0.45), lw * 0.6, true)
 			draw_circle(c, s * 0.10, col, false, lw * 0.8, true)
@@ -2697,10 +2713,11 @@ func _icon(kind: String, c: Vector2, s: float, col: Color) -> void:
 			draw_arc(c + Vector2(s * 0.26, -s * 0.2), s * 0.12, -PI * 0.5, PI * 0.5, 12, col, lw, true)
 			draw_rect(Rect2(c.x - s * 0.04, c.y + s * 0.04, s * 0.08, s * 0.2), col)
 			draw_rect(Rect2(c.x - s * 0.2, c.y + s * 0.24, s * 0.4, s * 0.1), col)
-		"cartS", "cart64":
+		"cartS", "cart64", "cartD", "cart3", "cartA", "cartB", "cartN", "cartM":
 			_rrect(Rect2(c.x - s * 0.36, c.y - s * 0.40, s * 0.72, s * 0.80), Color(0, 0, 0, 0), 5, col, int(lw))
 			draw_line(c + Vector2(-s * 0.22, -s * 0.22), c + Vector2(s * 0.22, -s * 0.22), Color(col, col.a * 0.5), lw)
-			_text("S" if kind == "cartS" else "64", Vector2(c.x - s * 0.36, c.y + s * 0.24), int(s * 0.34), col, true,
+			var ctxt: String = {"cartS": "S", "cart64": "64", "cartD": "DS", "cart3": "3D", "cartA": "A", "cartB": "GB", "cartN": "N", "cartM": "M"}.get(kind, "")
+			_text(ctxt, Vector2(c.x - s * 0.36, c.y + s * 0.24), int(s * 0.34), col, true,
 				s * 0.72, HORIZONTAL_ALIGNMENT_CENTER)
 		"monitor":
 			_rrect(Rect2(c.x - s * 0.42, c.y - s * 0.32, s * 0.84, s * 0.52), Color(0, 0, 0, 0), 4, col, int(lw))

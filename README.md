@@ -22,6 +22,7 @@ skystation/
 │   ├── fase5-8.sh    jogar direto do disco (acesso ao leitor: udev + módulo sg)
 │   ├── fase6-0.sh    desempenho por jogo (PS2), Modo TV, Central web, copiar disco (cdrdao, chdman)
 │   ├── fase7-0.sh    Central web em segundo plano, som de ligar na TV, PS3 (RPCS3), boot em outro PC
+│   ├── fase7-1.sh    GameCube, Wii, DS, 3DS, GB/GBA, NES, Mega Drive (RetroArch) e Xbox 360 (Xenia)
 │   ├── atualizar-menu.sh  "Atualizar o SkyStation" do menu, sem sudo (serviço + .path do systemd)
 │   ├── marca.sh      identidade do sistema (comando skystation-marca, reaplicado pelo pacman)
 │   ├── diag.sh       diagnóstico do boot (comando skystation-diag)
@@ -220,6 +221,16 @@ Coloque o disco no leitor: em poucos segundos toca um som, aparece o aviso e o j
 - **Boot em outro PC:** firmware e Vulkan para AMD/Intel, imagem de boot sem `autodetect`, redes
   Wi-Fi salvas liberadas para qualquer placa. No outro PC: desligar o Secure Boot.
 
+## Fase 7.1
+
+- **Mais consoles (cores do RetroArch):** GameCube e Wii (`dolphin`, apoio em `bios/dolphin`),
+  Nintendo DS (`melondsds`/`melonds`/`desmume`), 3DS (`azahar`/`citra`), Game Boy/Color (`gambatte`),
+  GBA (`mgba`), NES (`nestopia`/`fceumm`), Mega Drive (`genesis_plus_gx`). Pastas `roms/<gc|wii|nds|3ds|gba|gb|nes|md>`.
+  O `sky-emu` usa o primeiro core instalado da lista; salvar/carregar estado pelo menu Home vale para todos.
+- **Xbox 360 (experimental):** Xenia Canary para Linux em `/opt/xenia`, `roms/x360` (.iso, .zar).
+  Só em PC com 6+ threads (`touch ~/.config/skystation/x360-forcar` para forçar).
+- As categorias novas só aparecem quando há jogos. Nada disso foi testado em hardware ainda.
+
 ## Visual
 
 - **Temas:** Sistema → Tema de cores (Automático muda com a hora do dia: Oceano, Aurora,
@@ -289,6 +300,7 @@ curl -fsSL https://raw.githubusercontent.com/skyy-thedev/skystation/main/setup/s
 - [ ] Case impressa em 3D (protótipo v0.1 em hardware/case)
 - [ ] Fase 6: ISO próprio do SkyStation
 - [x] Fase 7.0: Central web em segundo plano, som de ligar na TV, PS3 pelo RPCS3 em PC forte (não testado em hardware)
+- [x] Fase 7.1: GameCube, Wii, DS, 3DS, GB/GBC/GBA, NES, Mega Drive e Xbox 360 experimental (não testado em hardware)
 
 ## Saídas de emergência
 

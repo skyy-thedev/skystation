@@ -84,7 +84,7 @@ def game_files(path):
 
 def system_of(path):
     parts = os.path.normpath(path).split(os.sep)
-    for s in ("ps1", "ps2", "ps3", "psp", "snes", "n64"):
+    for s in ("ps1", "ps2", "ps3", "psp", "snes", "n64", "gc", "wii", "x360", "nds", "3ds", "gba", "gb", "nes", "md"):
         if s in parts:
             return s
     return None
@@ -572,7 +572,9 @@ def uso():
     sky = os.path.join(HOME, "skystation")
     u = shutil.disk_usage("/")
     itens = []
-    for nome, sub in (("PS1", "roms/ps1"), ("PS2", "roms/ps2"), ("PS3", "roms/ps3"), ("PSP", "roms/psp"), ("SNES", "roms/snes"), ("N64", "roms/n64"),
+    for nome, sub in (("PS1", "roms/ps1"), ("PS2", "roms/ps2"), ("PS3", "roms/ps3"), ("PSP", "roms/psp"), ("SNES", "roms/snes"), ("N64", "roms/n64"), ("GameCube e Wii", "roms/gc"), ("GameCube e Wii", "roms/wii"), ("Xbox 360", "roms/x360"),
+                      ("Portáteis e clássicos", "roms/nds"), ("Portáteis e clássicos", "roms/3ds"), ("Portáteis e clássicos", "roms/gba"),
+                      ("Portáteis e clássicos", "roms/gb"), ("Portáteis e clássicos", "roms/nes"), ("Portáteis e clássicos", "roms/md"),
                       ("Jogos próprios", "games"), ("Saves e estados", "saves"), ("Saves e estados", "states"),
                       ("Capturas e cópias", "capturas"), ("Capturas e cópias", "backups")):
         b = _du(os.path.join(sky, sub))

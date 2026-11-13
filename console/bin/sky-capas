@@ -25,6 +25,15 @@ SYSTEMS = {
     "psp": ("Sony_-_PlayStation_Portable", {"iso", "cso"}),
     "snes": ("Nintendo_-_Super_Nintendo_Entertainment_System", {"sfc", "smc"}),
     "n64": ("Nintendo_-_Nintendo_64", {"z64", "n64", "v64"}),
+    "gc": ("Nintendo_-_GameCube", {"iso", "gcm", "rvz", "gcz", "ciso"}),
+    "wii": ("Nintendo_-_Wii", {"iso", "wbfs", "rvz", "gcz", "ciso"}),
+    "x360": ("Microsoft_-_Xbox_360", {"iso", "zar"}),
+    "nds": ("Nintendo_-_Nintendo_DS", {"nds"}),
+    "3ds": ("Nintendo_-_Nintendo_3DS", {"3ds", "cci"}),
+    "gba": ("Nintendo_-_Game_Boy_Advance", {"gba"}),
+    "gb": ("Nintendo_-_Game_Boy_Color", {"gb", "gbc"}),
+    "nes": ("Nintendo_-_Nintendo_Entertainment_System", {"nes"}),
+    "md": ("Sega_-_Mega_Drive_-_Genesis", {"md", "gen", "smd"}),
 }
 URL = "https://raw.githubusercontent.com/libretro-thumbnails/{repo}/master/Named_Boxarts/{name}.png"
 FAILS = os.path.join(HOME, ".cache/skystation/capas-falhas.json")

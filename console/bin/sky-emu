@@ -28,15 +28,26 @@ fi
 mkdir -p "$SKY/saves/$SYS" "$SKY/states/$SYS" "$SKY/bios/$SYS"
 
 case "$SYS" in
-ps1|snes|n64|psp)
+ps1|snes|n64|psp|gc|wii|nds|3ds|gba|gb|nes|md)
+    # Fase 7.1: para cada sistema, o primeiro core instalado da lista (o instalador tenta nessa ordem).
     case "$SYS" in
-        ps1)  CORE=pcsx_rearmed ;;
-        snes) CORE=snes9x ;;
-        n64)  CORE=mupen64plus_next ;;
-        psp)  CORE=ppsspp ;;
+        ps1)  CORES="pcsx_rearmed" ;;
+        snes) CORES="snes9x" ;;
+        n64)  CORES="mupen64plus_next" ;;
+        psp)  CORES="ppsspp" ;;
+        gc|wii) CORES="dolphin" ;;
+        nds)  CORES="melondsds melonds desmume" ;;
+        3ds)  CORES="azahar citra" ;;
+        gba)  CORES="mgba" ;;
+        gb)   CORES="gambatte" ;;
+        nes)  CORES="nestopia fceumm" ;;
+        md)   CORES="genesis_plus_gx" ;;
     esac
-    CORE="/opt/skystation/emu/cores/${CORE}_libretro.so"
-    [ -f "$CORE" ] || fail "Emulador de ${SYS^^} não instalado. Rode a Fase 6.2 (fase6-2.sh)."
+    CORE=""
+    for c in $CORES; do
+        [ -f "/opt/skystation/emu/cores/${c}_libretro.so" ] && { CORE="/opt/skystation/emu/cores/${c}_libretro.so"; break; }
+    done
+    [ -n "$CORE" ] || fail "Emulador de ${SYS^^} não instalado. Rode a Fase 7.1 (fase7-1.sh)."
     CFG="$HOME/.config/skystation/retroarch.cfg"
     mkdir -p "$(dirname "$CFG")"
     # Configuração base do SkyStation, sempre regenerada (o RetroArch não salva por cima).
@@ -45,6 +56,9 @@ ps1|snes|n64|psp)
         sed -i -e "s|/saves/ps1\"|/saves/$SYS\"|" -e "s|/states/ps1\"|/states/$SYS\"|" "$CFG"
         # PSP: o core procura fontes e arquivos de apoio em <system>/PPSSPP
         [ "$SYS" = psp ] && sed -i -e "s|/bios/ps1\"|/bios/psp\"|" "$CFG"
+        # GameCube/Wii: o core procura os arquivos de apoio em <system>/dolphin-emu/Sys
+        case "$SYS" in gc|wii) sed -i -e "s|/bios/ps1\"|/bios/dolphin\"|" "$CFG"; mkdir -p "$SKY/bios/dolphin" ;; esac
+        case "$SYS" in nds|3ds) sed -i -e "s|/bios/ps1\"|/bios/$SYS\"|" "$CFG" ;; esac
     fi
     if [ -n "$DISCO" ]; then
         # O core de PS1 lê o CD pelo /dev/sgN (comandos SCSI: dados + faixas de áudio).
@@ -87,6 +101,16 @@ ps2)
         exec "$PCSX2" -fullscreen -nogui -disc "$DEV"
     fi
     exec "$PCSX2" -fullscreen -nogui -- "$ROM"
+    ;;
+x360)
+    # Xbox 360 (Fase 7.1, experimental): Xenia Canary para Linux. Só em PC forte, como o PS3.
+    XENIA="$(ls /opt/xenia/xenia_canary /opt/xenia/xenia-canary /opt/xenia/AppRun 2>/dev/null | head -1)"
+    [ -n "$XENIA" ] || fail "Emulador de Xbox 360 não instalado. Rode a Fase 7.1 (fase7-1.sh)."
+    if [ "$(nproc)" -lt 6 ] && [ ! -f "$HOME/.config/skystation/x360-forcar" ]; then
+        fail "Xbox 360 precisa de um processador com 6+ threads (este tem $(nproc)). Dê boot com o pendrive num PC mais forte."
+    fi
+    cd "$(dirname "$XENIA")" || fail "Pasta do Xenia inacessível."
+    exec "$XENIA" --fullscreen=true --gpu=vulkan "$ROM"
     ;;
 ps3)
     # O sky-ps3 desliga as telas de aviso do RPCS3, configura o controle ligado agora, instala o

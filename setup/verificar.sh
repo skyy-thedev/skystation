@@ -86,6 +86,17 @@ v "boot em qualquer PC (sem autodetect)" "$F70" sh -c "! grep -qE '^HOOKS=.*auto
 v "firmware do PS3 (PS3UPDAT.PUP)" "envie pela Central web → Sistema: Firmware do PS3" sh -c "ls $H/skystation/bios/ps3/*.[Pp][Uu][Pp] $H/.config/rpcs3/dev_flash/sys/external/liblv2.sprx 2>/dev/null | grep -q ."
 t="$(nproc)"; if [ "$t" -ge 6 ]; then echo "  ✓ este PC tem $t threads: PS3 liberado"; else echo "  · este PC tem $t threads: PS3 só abre em PC com 6+ (normal no notebook antigo)"; fi
 
+echo "== 7.1 Mais consoles"
+F71="sudo bash /opt/skystation-src/setup/fase7-1.sh"
+C=/opt/skystation/emu/cores
+v "GameCube e Wii" "$F71" test -f $C/dolphin_libretro.so
+v "apoio do GameCube/Wii" "$F71" test -d "$H/skystation/bios/dolphin/dolphin-emu/Sys"
+v "Nintendo DS" "$F71" sh -c "ls $C/melondsds_libretro.so $C/melonds_libretro.so $C/desmume_libretro.so 2>/dev/null | grep -q ."
+v "Nintendo 3DS" "$F71" sh -c "ls $C/azahar_libretro.so $C/citra_libretro.so 2>/dev/null | grep -q ."
+v "Game Boy / Color / Advance" "$F71" test -f $C/mgba_libretro.so -a -f $C/gambatte_libretro.so
+v "NES e Mega Drive" "$F71" sh -c "ls $C/nestopia_libretro.so $C/fceumm_libretro.so 2>/dev/null | grep -q . && test -f $C/genesis_plus_gx_libretro.so"
+v "Xbox 360 (Xenia, experimental)" "$F71" sh -c "ls /opt/xenia/xenia_canary /opt/xenia/xenia-canary /opt/xenia/AppRun 2>/dev/null | grep -q ."
+
 echo
 if [ "$falhas" -eq 0 ]; then echo "Tudo certo: $ok de $ok verificações ✓"
 else echo "$ok ok, $falhas com problema (veja as dicas →)"; fi

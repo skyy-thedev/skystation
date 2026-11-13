@@ -48,6 +48,9 @@ EXTS = {"ps1": {"cue", "bin", "chd", "pbp", "m3u", "iso", "img", "png", "jpg"},
         "psp": {"iso", "cso", "png", "jpg"},
         "snes": {"sfc", "smc", "png", "jpg"}, "n64": {"z64", "n64", "v64", "png", "jpg"},
         "bios": {"bin", "rom0", "rom1", "rom2", "erom", "nvm", "mec"}}
+NOVOS = {'gc': ['iso', 'gcm', 'rvz', 'gcz', 'ciso'], 'wii': ['iso', 'wbfs', 'rvz', 'gcz', 'ciso', 'wad'], 'x360': ['iso', 'zar', 'xex'], 'nds': ['nds', 'dsi'], '3ds': ['3ds', 'cci', 'cxi', '3dsx'], 'gba': ['gba'], 'gb': ['gb', 'gbc'], 'nes': ['nes'], 'md': ['md', 'gen', 'smd', 'bin']}   # Fase 7.1
+for _s, _e in NOVOS.items():
+    EXTS[_s] = set(_e) | {"png", "jpg"}
 BIOS_DIR = os.path.join(HOME, "skystation/bios/ps2")
 PS3FW_DIR = os.path.join(HOME, "skystation/bios/ps3")
 SHOTS = os.path.join(HOME, "skystation/capturas")
@@ -55,6 +58,8 @@ SAVES = os.path.join(HOME, "skystation/saves")
 STATES = os.path.join(HOME, "skystation/states")
 GAME_EXTS = {"ps1": {"cue", "chd", "pbp", "m3u", "iso", "img"}, "ps2": {"iso", "chd", "cso", "gz"},
              "ps3": {"iso"}, "psp": {"iso", "cso"}, "snes": {"sfc", "smc"}, "n64": {"z64", "n64", "v64"}}
+for _s, _e in NOVOS.items():
+    GAME_EXTS[_s] = set(_e)
 BIN = os.path.dirname(os.path.realpath(__file__))
 LOCK = threading.Lock()
 FAILS = {}          # ip -> [erros seguidos, bloqueado até (relógio monotônico)]
@@ -328,7 +333,7 @@ background:rgba(10,18,54,.5);cursor:pointer;transition:.2s}#drop.on{border-color
 <div id="msg"></div>
 <section id="t-enviar">
 <div class="row">
- <div><label>Sistema</label><select id="sys"><option value="ps1">PlayStation (PS1)</option><option value="ps2">PlayStation 2</option><option value="psp">PSP</option><option value="snes">Super Nintendo</option><option value="n64">Nintendo 64</option><option value="ps3">PlayStation 3</option><option value="bios">BIOS do PS2</option><option value="ps3fw">Firmware do PS3 (PS3UPDAT.PUP)</option></select></div>
+ <div><label>Sistema</label><select id="sys"><option value="ps1">PlayStation (PS1)</option><option value="ps2">PlayStation 2</option><option value="psp">PSP</option><option value="snes">Super Nintendo</option><option value="n64">Nintendo 64</option><option value="ps3">PlayStation 3</option><option value="gc">GameCube</option><option value="wii">Nintendo Wii</option><option value="x360">Xbox 360 (experimental)</option><option value="nds">Nintendo DS</option><option value="3ds">Nintendo 3DS</option><option value="gba">Game Boy Advance</option><option value="gb">Game Boy / Color</option><option value="nes">NES</option><option value="md">Mega Drive</option><option value="bios">BIOS do PS2</option><option value="ps3fw">Firmware do PS3 (PS3UPDAT.PUP)</option></select></div>
  <div><label>Guardar em</label><select id="dest"><option value="interno">Console</option><option value="skyroms" id="osk">Pendrive SKYROMS</option></select></div>
 </div>
 <div id="drop"><strong>Arraste os arquivos aqui</strong>ou clique para escolher (.cue + .bin, .chd, .iso, .pbp, capas .png)
