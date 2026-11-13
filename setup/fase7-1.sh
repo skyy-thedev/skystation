@@ -55,27 +55,44 @@ else
 fi
 
 echo "==> [3/4] Xbox 360 (Xenia Canary para Linux — experimental, só em PC com 6+ threads)"
-if ! ls /opt/xenia/xenia_canary /opt/xenia/xenia-canary /opt/xenia/AppRun >/dev/null 2>&1; then
-    REL="$(curl -fsSL https://api.github.com/repos/xenia-canary/xenia-canary-releases/releases/latest 2>/dev/null || true)"
-    URL="$(printf '%s' "$REL" | grep -o '"browser_download_url": *"[^"]*"' | sed 's/.*"\(https[^"]*\)"/\1/' | grep -i linux | grep -iE '\.tar\.(gz|xz)$|\.AppImage$' | head -1 || true)"
+if [ ! -x /opt/xenia/xenia_canary ]; then
+    URL=""
+    for repo in xenia-canary/xenia-canary xenia-canary/xenia-canary-releases; do   # o mais novo que tiver pacote Linux
+        URL="$(curl -fsSL "https://api.github.com/repos/$repo/releases?per_page=15" 2>/dev/null \
+            | grep -o '"browser_download_url": *"[^"]*"' | sed 's/.*"\(https[^"]*\)"/\1/' \
+            | grep -i linux | grep -iE '\.tar\.(gz|xz|zst)$|\.zip$|\.7z$|\.AppImage$' | head -1 || true)"
+        [ -n "$URL" ] && break
+    done
     if [ -n "$URL" ] && curl -fL --progress-bar -o "$TMP/xenia.pkg" "$URL"; then
         rm -rf /opt/xenia "$TMP/x"; mkdir -p "$TMP/x"
         case "$URL" in
-            *.AppImage) chmod +x "$TMP/xenia.pkg"; (cd "$TMP/x" && "$TMP/xenia.pkg" --appimage-extract >/dev/null 2>&1) && mv "$TMP/x/squashfs-root" /opt/xenia ;;
-            *) tar -xf "$TMP/xenia.pkg" -C "$TMP/x"
-               BIN="$(find "$TMP/x" -type f \( -name xenia_canary -o -name xenia-canary \) | head -1)"
-               [ -n "$BIN" ] && mv "$(dirname "$BIN")" /opt/xenia ;;
+            *.AppImage) cp "$TMP/xenia.pkg" "$TMP/x/xenia.AppImage" ;;
+            *) bsdtar -xf "$TMP/xenia.pkg" -C "$TMP/x" 2>/dev/null || tar -xf "$TMP/xenia.pkg" -C "$TMP/x" ;;
         esac
-        if ls /opt/xenia/xenia_canary /opt/xenia/xenia-canary /opt/xenia/AppRun >/dev/null 2>&1; then
-            chmod -R a+rX /opt/xenia; chmod +x /opt/xenia/xenia_canary /opt/xenia/xenia-canary 2>/dev/null || true
+        # AppImage (solto ou dentro do pacote): extrai, porque o console não usa FUSE
+        APPI="$(find "$TMP/x" -type f -iname '*.AppImage' | head -1)"
+        if [ -n "$APPI" ]; then
+            chmod +x "$APPI"; (cd "$TMP" && "$APPI" --appimage-extract >/dev/null 2>&1) && rm -rf "$TMP/x" && mv "$TMP/squashfs-root" "$TMP/x"
+        fi
+        # o programa: o maior arquivo executável (ELF) com "xenia" no nome, ou o AppRun
+        BIN=""
+        while IFS= read -r f; do
+            [ "$(head -c 4 "$f" | tr -d '\0' | cut -c2-4)" = "ELF" ] && { BIN="$f"; break; }
+        done < <(find "$TMP/x" -type f -iname '*xenia*' -printf '%s\t%p\n' | sort -rn | cut -f2-)
+        [ -z "$BIN" ] && [ -f "$TMP/x/AppRun" ] && BIN="$TMP/x/AppRun"
+        if [ -n "$BIN" ]; then
+            mv "$(dirname "$BIN")" /opt/xenia
+            chmod +x "/opt/xenia/$(basename "$BIN")"
+            [ "$(basename "$BIN")" = xenia_canary ] || ln -sf "$(basename "$BIN")" /opt/xenia/xenia_canary
             # o Xenia guarda configuração e cache ao lado do programa: a pasta precisa ser do jogador
             touch /opt/xenia/portable.txt; chown -R "$USER_NAME:$USER_NAME" /opt/xenia
             echo "    Xenia instalado em /opt/xenia ($(basename "$URL"))"
         else
-            echo "    AVISO: baixei o Xenia mas não achei o programa dentro do pacote"
+            echo "    AVISO: baixei $(basename "$URL") mas não achei o programa. Conteúdo do pacote:"
+            find "$TMP/x" -maxdepth 2 | sed "s|$TMP/x|      |" | head -15
         fi
     else
-        echo "    AVISO: não achei a versão Linux do Xenia Canary agora (rode de novo mais tarde)"
+        echo "    AVISO: não achei a versão Linux do Xenia Canary agora (${URL:-sem link}); rode de novo mais tarde"
     fi
 else
     echo "    Xenia já instalado (para atualizar: sudo rm -rf /opt/xenia e rode esta fase de novo)"

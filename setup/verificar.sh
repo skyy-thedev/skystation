@@ -99,7 +99,7 @@ v "Nintendo DS" "$F71" sh -c "ls $C/melondsds_libretro.so $C/melonds_libretro.so
 v "Nintendo 3DS" "$F71" sh -c "ls $C/azahar_libretro.so $C/citra_libretro.so 2>/dev/null | grep -q ."
 v "Game Boy / Color / Advance" "$F71" test -f $C/mgba_libretro.so -a -f $C/gambatte_libretro.so
 v "NES e Mega Drive" "$F71" sh -c "ls $C/nestopia_libretro.so $C/fceumm_libretro.so 2>/dev/null | grep -q . && test -f $C/genesis_plus_gx_libretro.so"
-v "Xbox 360 (Xenia, experimental)" "$F71" sh -c "ls /opt/xenia/xenia_canary /opt/xenia/xenia-canary /opt/xenia/AppRun 2>/dev/null | grep -q ."
+v "Xbox 360 (Xenia, experimental)" "$F71" test -x /opt/xenia/xenia_canary
 
 echo
 if [ "$falhas" -eq 0 ]; then echo "Tudo certo: $ok de $ok verificações ✓"

@@ -104,8 +104,8 @@ ps2)
     ;;
 x360)
     # Xbox 360 (Fase 7.1, experimental): Xenia Canary para Linux. Só em PC forte, como o PS3.
-    XENIA="$(ls /opt/xenia/xenia_canary /opt/xenia/xenia-canary /opt/xenia/AppRun 2>/dev/null | head -1)"
-    [ -n "$XENIA" ] || fail "Emulador de Xbox 360 não instalado. Rode a Fase 7.1 (fase7-1.sh)."
+    XENIA=/opt/xenia/xenia_canary
+    [ -x "$XENIA" ] || fail "Emulador de Xbox 360 não instalado. Rode a Fase 7.1 (fase7-1.sh)."
     if [ "$(nproc)" -lt 6 ] && [ ! -f "$HOME/.config/skystation/x360-forcar" ]; then
         fail "Xbox 360 precisa de um processador com 6+ threads (este tem $(nproc)). Dê boot com o pendrive num PC mais forte."
     fi
