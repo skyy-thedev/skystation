@@ -90,6 +90,10 @@ echo "== 7.2 Velocidade / erros com código / menu de energia"
 v "menu de energia no Home" "Sistema → Atualizar o SkyStation" grep -q HOLD_KILL /opt/skystation/bin/sky-home.py
 v "velocidade nas transferências" "Sistema → Atualizar o SkyStation" grep -q "def ritmo" /opt/skystation/bin/sky-jogos
 
+echo "== 7.5 Potência nos jogos"
+v "serviço de potência ativo" "sudo skystation-atualizar" systemctl is-enabled --quiet skystation-potencia.path
+echo "  · agora: governador $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null), energia $(cat /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference 2>/dev/null || echo -), $(awk '/MHz/ {s+=$4; n++} END {if (n) printf "%d MHz em média", s/n}' /proc/cpuinfo)"
+
 echo "== 7.1 Mais consoles"
 F71="sudo bash /opt/skystation-src/setup/fase7-1.sh"
 C=/opt/skystation/emu/cores

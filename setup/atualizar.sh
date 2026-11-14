@@ -42,7 +42,8 @@ fi
 for pair in skystation-atualizar.sh:skystation-atualizar expandir.sh:skystation-expandir \
             diag.sh:skystation-diag marca.sh:skystation-marca diag-controle.sh:skystation-diag-controle \
             energia.sh:skystation-energia som-ligar.sh:skystation-som-ligar \
-            atualizar-menu.sh:skystation-atualizar-menu diag-ps2.sh:skystation-diag-ps2 verificar.sh:skystation-verificar; do  # (o sky-backup vai junto com console/bin)
+            atualizar-menu.sh:skystation-atualizar-menu diag-ps2.sh:skystation-diag-ps2 verificar.sh:skystation-verificar \
+            potencia.sh:skystation-potencia; do  # (o sky-backup vai junto com console/bin)
     f="$SRC/setup/${pair%%:*}"; [ -f "$f" ] || continue
     sed 's/\r$//' "$f" > "/usr/local/bin/${pair##*:}.new"
     chmod 755 "/usr/local/bin/${pair##*:}.new"
@@ -76,8 +77,30 @@ Unit=skystation-atualizar.service
 [Install]
 WantedBy=paths.target
 UNIT
+# Potência nos jogos (Fase 7.5): o sky-run escreve "jogo"/"normal" em pedidos/potencia.
+cat >/etc/systemd/system/skystation-potencia.service <<'UNIT'
+[Unit]
+Description=SkyStation: potência do processador nos jogos
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/skystation-potencia
+UNIT
+cat >/etc/systemd/system/skystation-potencia.path <<'UNIT'
+[Unit]
+Description=SkyStation: pedido de potência (jogo/normal)
+
+[Path]
+PathExists=/var/lib/skystation/pedidos/potencia
+Unit=skystation-potencia.service
+
+[Install]
+WantedBy=paths.target
+UNIT
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
+    systemctl enable skystation-potencia.path >/dev/null 2>&1 || true
+    systemctl restart skystation-potencia.path >/dev/null 2>&1 || true
     systemctl enable skystation-atualizar.path >/dev/null 2>&1 || true
     systemctl restart skystation-atualizar.path >/dev/null 2>&1 || true
 fi

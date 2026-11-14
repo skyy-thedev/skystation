@@ -27,6 +27,10 @@ START=$(date +%s)
 export SKY_MSG_FILE="$RUN/last_msg"     # sky-emu escreve aqui mensagens para o jogador
 export SKY_PROFILE="$(/opt/skystation/bin/sky-perfil)"
 
+# Fase 7.5: processador em potência máxima enquanto o jogo roda (volta ao normal ao fechar).
+potencia() { [ -d /var/lib/skystation/pedidos ] && echo "$1" >/var/lib/skystation/pedidos/potencia 2>/dev/null; }
+potencia jogo
+
 PREFIX=""
 command -v gamemoderun >/dev/null 2>&1 && PREFIX="gamemoderun"
 
@@ -34,7 +38,7 @@ if [ -f "$CONF/mangohud.on" ] && command -v mangohud >/dev/null 2>&1; then
     BENCH="$HOME/skystation/benchmarks"
     [ -w /mnt/skystation ] && BENCH="/mnt/skystation/benchmarks"   # na VM, vai direto para a pasta compartilhada
     mkdir -p "$BENCH"
-    export MANGOHUD_CONFIG="fps,frametime,frame_timing,cpu_stats,cpu_temp,gpu_stats,ram,position=top-left,font_size=20,autostart_log=1,log_duration=0,output_folder=$BENCH"
+    export MANGOHUD_CONFIG="fps,frametime,frame_timing,cpu_stats,cpu_temp,cpu_mhz,gpu_stats,ram,position=top-left,font_size=20,autostart_log=1,log_duration=0,output_folder=$BENCH"
     PREFIX="$PREFIX mangohud"
 fi
 
@@ -77,6 +81,7 @@ if secs >= 10:
     os.replace(path + ".tmp", path)
 PY
 echo "$code" >"$RUN/last_exit"
+potencia normal
 
 # Fase 6.3: troféus do perfil (avisa na tela se conquistou algum nesta partida).
 [ -x /opt/skystation/bin/sky-trofeus ] && /opt/skystation/bin/sky-trofeus conferir >/dev/null 2>&1
