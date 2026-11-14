@@ -86,11 +86,14 @@ medir = os.path.exists(os.path.expanduser("~/.config/skystation/mangohud.on"))
 for k in ("OsdShowSpeed", "OsdShowFPS", "OsdShowCPU", "OsdShowGPU", "OsdShowResolution"):
     put("EmuCore/GS", k, "true" if medir else "false")
 # Leitura de volta da placa de vídeo no padrão (o teste com "sem esperar" não ajudou; ver acima).
-put("EmuCore/GS", "HWDownloadMode", "0")
-# Thread separada para a VU (cálculo 3D): no notebook antigo só nos modos Rápido/Máximo;
-# com 8+ threads (Ryzen) fica sempre ligada — medido no Lenovo: Normal sem ela 84%, Rápido com ela 99%.
-ncpu = os.cpu_count() or 1
-put("EmuCore/Speedhacks", "vuThread", "true" if ncpu >= 8 or (speed != "normal" and ncpu >= 4) else "false")
+# Medido no Ryzen com Guitar Hero 3: nas quedas, EE (12 ms) + GS (13 ms) = tempo do quadro (27 ms), ou seja,
+# as duas threads trabalhando em fila, uma esperando a outra. Isso acontece quando o jogo pede a imagem de
+# volta da placa de vídeo. 3 = não esperar essa leitura. Só nestes jogos e no modo Máximo, porque algum
+# efeito que dependa da leitura pode piscar ou sumir.
+SEM_ESPERA = ("guitar hero", "rock band")
+sem_espera = speed == "maximo" or any(p in game_id.lower() for p in SEM_ESPERA)
+put("EmuCore/GS", "HWDownloadMode", "3" if sem_espera else "0")
+put("EmuCore/Speedhacks", "vuThread", "true" if speed != "normal" and (os.cpu_count() or 1) >= 4 else "false")
 
 # Controle: o PCSX2 lê controles pelo SDL. Se o Jogador 1 ainda não tem controle mapeado,
 # aplica o mapeamento padrão de "controle de videogame" do SDL (DS4, DualSense, Xbox, 8BitDo...).
