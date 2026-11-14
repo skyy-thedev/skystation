@@ -74,6 +74,23 @@ if mountpoint -q "$ALVO"; then
     grava "estado=pendrive"; log "pendrive SKYROMS conectado: ele tem prioridade"; exit 0
 fi
 
+# O Windows hibernado (Inicialização rápida) "segura" TODOS os discos NTFS, não só o C:. Então confere
+# o hiberfil.sys de toda partição NTFS do PC; se algum estiver hibernado, nenhum NTFS recebe escrita.
+WIN_HIB=""
+while read -r dev fs tipo _; do
+    [ "$fs" = "ntfs" ] || continue
+    [ "$(lsblk -rnpo PKNAME "$dev" 2>/dev/null | head -1)" = "$DISCO_SIS" ] && continue
+    findmnt -rn -S "$dev" >/dev/null 2>&1 && continue
+    mp="$BASE/teste-$(basename "$dev")"; install -d "$mp"
+    if monta_disco "$dev" ntfs "$mp" ro; then
+        hib="$(find "$mp" -maxdepth 1 -iname hiberfil.sys -print -quit 2>/dev/null)"
+        if [ -n "$hib" ] && [ "$(head -c 4 "$hib" 2>/dev/null | tr 'A-Z' 'a-z')" = "hibr" ]; then WIN_HIB="$dev"; fi
+        umount "$mp"
+    fi
+    rmdir "$mp" 2>/dev/null
+    [ -n "$WIN_HIB" ] && break
+done < <(lsblk -rnpo NAME,FSTYPE,TYPE,LABEL)
+
 achou_bitlocker=""
 while read -r dev fs tipo label; do
     [ "$tipo" = "part" ] || [ "$tipo" = "disk" ] || continue
@@ -94,11 +111,8 @@ while read -r dev fs tipo label; do
 
     # Pode gravar? No NTFS, não se o Windows estiver hibernado ou o disco estiver "sujo".
     modo="rw"; motivo=""
-    if [ "$fs" = "ntfs" ]; then
-        hib="$(find "$mp" -maxdepth 1 -iname hiberfil.sys -print -quit 2>/dev/null)"
-        if [ -n "$hib" ] && [ "$(head -c 4 "$hib" 2>/dev/null | tr 'A-Z' 'a-z')" = "hibr" ]; then
-            modo="ro"; motivo="windows-hibernado"
-        fi
+    if [ "$fs" = "ntfs" ] && [ -n "$WIN_HIB" ]; then
+        modo="ro"; motivo="windows-hibernado"
     fi
     if [ "$modo" = "rw" ]; then
         umount "$mp"
