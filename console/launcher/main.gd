@@ -7,7 +7,8 @@ extends Control
 ##
 ## Jogos: /opt/skystation/games e ~/skystation/games (uma pasta por jogo, com game.json).
 ## ROMs:  ~/skystation/roms/<sistema>, /mnt/skystation/roms/<sistema> (VM) e
-##        /mnt/skyroms/<sistema> (pendrive de jogos com o rótulo SKYROMS).
+##        /mnt/skyroms/<sistema> (pendrive de jogos com o rótulo SKYROMS, ou a pasta SKYROMS
+##        do HD/SSD do PC — Fase 7.6, montada pelo skystation-skyroms-hd).
 ##
 ## Fase 5.6: bateria (console e controles), avisos do sky-notify, brilho e volume, saída de som,
 ## descanso de tela, capas automáticas, tempo de jogo + Recentes, Capturas, aviso de nova versão,
@@ -184,6 +185,9 @@ var pads: int = 0
 var disk_txt: String = ""
 var version_txt: String = ""
 var skyroms_present: bool = false
+var skyroms_nome: String = "pendrive SKYROMS"   # Fase 7.6: ou "HD (pasta SKYROMS)"
+var skyroms_rw: bool = true                     # HD do Windows hibernado: só leitura
+var skyroms_hd: bool = false
 
 # Fase 5.6
 const SKY_BIN := "/opt/skystation/bin"
@@ -605,7 +609,26 @@ func _read_game(gdir: String, fallback_name: String):
 	return g
 
 
+# Fase 7.6: o que está em /mnt/skyroms é o pendrive ou a pasta SKYROMS do HD do PC?
+func _skyroms_check() -> void:
+	var src := ""
+	for line in _read_text("/proc/mounts", "").split("\n"):
+		var p := line.split(" ", false)
+		if p.size() > 1 and p[1] == "/mnt/skyroms":
+			src = p[0]  # montagens repetidas: a última é a que aparece
+	skyroms_present = src != ""
+	var hd := {}
+	for line in _read_text("/run/skystation/skyroms-hd", "").split("\n"):
+		var i := line.find("=")
+		if i > 0:
+			hd[line.substr(0, i)] = line.substr(i + 1)
+	skyroms_hd = skyroms_present and hd.get("estado", "") == "ok" and hd.get("dev", "") == src
+	skyroms_nome = "HD (pasta SKYROMS)" if skyroms_hd else "pendrive SKYROMS"
+	skyroms_rw = not (skyroms_hd and hd.get("modo", "") == "ro")
+
+
 func _scan_roms() -> void:
+	_skyroms_check()
 	var tag_re := RegEx.new()
 	tag_re.compile("\\s*[\\(\\[][^\\)\\]]*[\\)\\]]")  # tira "(USA)", "[SLUS-00594]" etc.
 	var seen := {}
@@ -632,7 +655,7 @@ func _scan_roms() -> void:
 				var title: String = tag_re.sub(stem, "", true).strip_edges()
 				if title == "":
 					title = stem
-				var where := "pendrive SKYROMS" if base == "/mnt/skyroms" else "armazenamento interno"
+				var where := skyroms_nome if base == "/mnt/skyroms" else "armazenamento interno"
 				var g := {
 					"id": sys_id + "-" + stem.validate_filename().replace(" ", "_"),
 					"dir": rdir, "sys": sys_id,
@@ -664,7 +687,7 @@ func _scan_ps3() -> void:
 	for j in ps3_info.get("jogos", []):
 		var path := str(j.get("path", ""))
 		var onde := str(j.get("onde", ""))
-		var where: String = {"skyroms": "pendrive SKYROMS", "rpcs3": "instalado no RPCS3"}.get(onde, "armazenamento interno")
+		var where: String = {"skyroms": skyroms_nome, "rpcs3": "instalado no RPCS3"}.get(onde, "armazenamento interno")
 		var key := str(j.get("id", ""))
 		if key == "":
 			key = str(j.get("arquivo", "")).validate_filename().replace(" ", "_")
@@ -796,7 +819,10 @@ func _build_cats() -> void:
 			_:
 				c_games["items"].append(it)
 
-	var hint_roms := "Copie para ~/skystation/roms/%s ou para o pendrive SKYROMS"
+	var hint_roms := "Copie para ~/skystation/roms/%s, para o pendrive SKYROMS ou para a pasta SKYROMS do HD do PC"
+	var hd_estado := _read_text("/run/skystation/skyroms-hd", "")
+	if hd_estado.contains("estado=bitlocker"):
+		hint_roms += "  (o HD do PC está criptografado com BitLocker: desative-o no Windows para o SkyStation ler)"
 	if c_ps1["items"].is_empty():
 		c_ps1["items"].append(_act("Nenhum jogo de PS1", hint_roms % "ps1", "", "disc"))
 	if c_ps2["items"].is_empty():
@@ -1258,17 +1284,18 @@ func _toggle_panel() -> void:
 				panel_items.append(["Tirar dos favoritos" if it.get("fav", false) else "Favoritar ★", "fav"])
 			if it["game"].get("disco", false):
 				panel_items.append(["Copiar disco para o console", "copy_disc:interno"])
-				if skyroms_present:
-					panel_items.append(["Copiar disco para o pendrive SKYROMS", "copy_disc:skyroms"])
+				if skyroms_present and skyroms_rw:
+					panel_items.append(["Copiar disco para o " + skyroms_nome, "copy_disc:skyroms"])
 				panel_items.append(["Ejetar disco", "eject"])
 			if it["game"].get("sys", "") == "ps2":
 				panel_items.append(["Desempenho: " + SPEED_NAMES[_ps2_speed(it["game"]["id"])], "ps2_speed"])
 			var gpath := str(it["game"].get("path", ""))
 			if gpath != "":
 				if gpath.begins_with("/mnt/skyroms/"):
-					panel_items.append(["Mover para o console", "move:interno"])
-				elif skyroms_present and not gpath.begins_with("/mnt/skystation/"):
-					panel_items.append(["Mover para o pendrive SKYROMS", "move:skyroms"])
+					if skyroms_rw:
+						panel_items.append(["Mover para o console", "move:interno"])
+				elif skyroms_present and skyroms_rw and not gpath.begins_with("/mnt/skystation/"):
+					panel_items.append(["Mover para o " + skyroms_nome, "move:skyroms"])
 				if it["game"].get("sys", "") == "ps2" and gpath.get_extension().to_lower() == "iso":
 					panel_items.append(["Conferir cópia", "verify"])
 				if it["game"].get("sys", "") in ["ps1", "ps2"] and gpath.get_extension().to_lower() in ["cue", "iso", "img"]:
@@ -1395,7 +1422,7 @@ func _refresh_status() -> void:
 			var parts := line.split(" ", false)
 			if parts.size() > 2:
 				wifi_q = int(parts[2].replace(".", ""))
-	skyroms_present = _read_text("/proc/mounts", "").contains(" /mnt/skyroms ")
+	_skyroms_check()
 	var mounts := ["/"]
 	if skyroms_present:
 		mounts.append("/mnt/skyroms")
@@ -2043,7 +2070,8 @@ func _draw_storage(w: float, h: float) -> void:
 		y += 22.0
 		var st := float(sk.get("total", 1))
 		var sf := float(sk.get("livre", 0))
-		_text("Pendrive SKYROMS:  %s livres de %s" % [_gb(sf), _gb(st)], Vector2(x, y), 20, WHITE)
+		_text("%s:  %s livres de %s%s" % ["HD (pasta SKYROMS)" if skyroms_hd else "Pendrive SKYROMS", _gb(sf), _gb(st),
+			"" if skyroms_rw else "  ·  só leitura"], Vector2(x, y), 20, WHITE)
 		y += 18.0
 		_rrect(Rect2(x, y, bw, 18), Color(1, 1, 1, 0.08), 6)
 		draw_rect(Rect2(x, y, bw * (st - sf) / st, 18), accent)
@@ -2709,7 +2737,10 @@ func _draw_footer(w: float, h: float, a: float) -> void:
 		x -= 26.0
 	if skyroms_present:
 		_icon("drive", Vector2(64, h - 46), 22.0, Color(accent, 0.8 * a))
-		_text("Pendrive de jogos conectado", Vector2(86, h - 40), 14, Color(MUTED, a))
+		var sk_txt := "Pendrive de jogos conectado"
+		if skyroms_hd:
+			sk_txt = "Jogos do HD (SKYROMS)" + ("" if skyroms_rw else " · só leitura")
+		_text(sk_txt, Vector2(86, h - 40), 14, Color(MUTED, a))
 
 
 func _draw_panel(w: float, h: float) -> void:

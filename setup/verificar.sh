@@ -94,6 +94,23 @@ echo "== 7.5 Potência nos jogos"
 v "serviço de potência ativo" "sudo skystation-atualizar" systemctl is-enabled --quiet skystation-potencia.path
 echo "  · agora: governador $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null), energia $(cat /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference 2>/dev/null || echo -), $(awk '/MHz/ {s+=$4; n++} END {if (n) printf "%d MHz em média", s/n}' /proc/cpuinfo)"
 
+echo "== 7.6 Jogos direto do HD/SSD do PC (pasta SKYROMS)"
+v "serviço que procura a pasta SKYROMS" "Sistema → Atualizar o SkyStation" systemctl is-enabled --quiet skystation-skyroms-hd.service
+v "driver NTFS do kernel (ntfs3)" "" sh -c "grep -qw ntfs3 /proc/filesystems || modprobe -n ntfs3"
+hd="$(cat /run/skystation/skyroms-hd 2>/dev/null)"
+case "$hd" in
+    *estado=ok*)
+        echo "  ✓ pasta $(echo "$hd" | sed -n 's/^pasta=//p') em $(echo "$hd" | sed -n 's/^disco=//p') ($(echo "$hd" | sed -n 's/^dev=//p'))"
+        if echo "$hd" | grep -q '^modo=ro'; then
+            echo "  · só leitura: o Windows está hibernado. No Windows: Painel de Controle → Opções de Energia →"
+            echo "    'Escolher a função dos botões' → desmarque 'Ativar inicialização rápida' (ou: powercfg /h off)"
+        fi ;;
+    *estado=bitlocker*) echo "  ✗ o HD do PC está com BitLocker (criptografado): o Linux não consegue ler"
+                        echo "      → no Windows: Configurações → Privacidade e segurança → Criptografia do dispositivo → Desativar" ;;
+    *estado=pendrive*)  echo "  · pendrive SKYROMS conectado: ele tem prioridade sobre o HD" ;;
+    *)                  echo "  · nenhuma pasta SKYROMS nos discos do PC (crie C:\\SKYROMS ou D:\\SKYROMS e reinicie)" ;;
+esac
+
 echo "== 7.1 Mais consoles"
 F71="sudo bash /opt/skystation-src/setup/fase7-1.sh"
 C=/opt/skystation/emu/cores

@@ -43,7 +43,7 @@ for pair in skystation-atualizar.sh:skystation-atualizar expandir.sh:skystation-
             diag.sh:skystation-diag marca.sh:skystation-marca diag-controle.sh:skystation-diag-controle \
             energia.sh:skystation-energia som-ligar.sh:skystation-som-ligar \
             atualizar-menu.sh:skystation-atualizar-menu diag-ps2.sh:skystation-diag-ps2 verificar.sh:skystation-verificar \
-            potencia.sh:skystation-potencia; do  # (o sky-backup vai junto com console/bin)
+            potencia.sh:skystation-potencia skyroms-hd.sh:skystation-skyroms-hd; do  # (o sky-backup vai junto com console/bin)
     f="$SRC/setup/${pair%%:*}"; [ -f "$f" ] || continue
     sed 's/\r$//' "$f" > "/usr/local/bin/${pair##*:}.new"
     chmod 755 "/usr/local/bin/${pair##*:}.new"
@@ -97,8 +97,27 @@ Unit=skystation-potencia.service
 [Install]
 WantedBy=paths.target
 UNIT
+# Jogos direto do HD/SSD do PC (Fase 7.6): no boot procura uma pasta SKYROMS nos discos do PC
+# e a monta em /mnt/skyroms (o mesmo lugar do pendrive SKYROMS).
+cat >/etc/systemd/system/skystation-skyroms-hd.service <<'UNIT'
+[Unit]
+Description=SkyStation: jogos do HD/SSD do PC (pasta SKYROMS)
+After=local-fs.target systemd-udevd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/skystation-skyroms-hd
+ExecStop=/usr/local/bin/skystation-skyroms-hd parar
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target
+UNIT
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
+    systemctl enable skystation-skyroms-hd.service >/dev/null 2>&1 || true
+    systemctl restart skystation-skyroms-hd.service >/dev/null 2>&1 || true
     systemctl enable skystation-potencia.path >/dev/null 2>&1 || true
     systemctl restart skystation-potencia.path >/dev/null 2>&1 || true
     systemctl enable skystation-atualizar.path >/dev/null 2>&1 || true

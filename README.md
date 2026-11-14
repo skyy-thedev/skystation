@@ -23,6 +23,7 @@ skystation/
 │   ├── fase6-0.sh    desempenho por jogo (PS2), Modo TV, Central web, copiar disco (cdrdao, chdman)
 │   ├── fase7-0.sh    Central web em segundo plano, som de ligar na TV, PS3 (RPCS3), boot em outro PC
 │   ├── fase7-1.sh    GameCube, Wii, DS, 3DS, GB/GBA, NES, Mega Drive (RetroArch) e Xbox 360 (Xenia)
+│   ├── skyroms-hd.sh jogos direto do HD/SSD do PC: pasta SKYROMS → /mnt/skyroms (skystation-skyroms-hd)
 │   ├── atualizar-menu.sh  "Atualizar o SkyStation" do menu, sem sudo (serviço + .path do systemd)
 │   ├── marca.sh      identidade do sistema (comando skystation-marca, reaplicado pelo pacman)
 │   ├── diag.sh       diagnóstico do boot (comando skystation-diag)
@@ -98,6 +99,23 @@ Para guardar jogos fora do sistema (útil na mídia de 8 GB): formate um pendriv
 rótulo **SKYROMS** e crie as pastas `ps1/` e `ps2/` (capas opcionais em `ps1/covers/Nome do Jogo.png`).
 Ao conectar, ele monta sozinho em `/mnt/skyroms` e os jogos aparecem no console; ao tirar, somem.
 Dica: `.chd` ocupa bem menos que `.bin/.cue` (converta com o `chdman` no PC).
+
+## Jogos direto do HD/SSD do PC (Fase 7.6)
+
+Em vez de copiar os jogos para o pendrive, o SkyStation lê direto do disco do PC onde ele dá boot.
+No Windows, crie uma pasta **SKYROMS** na raiz de um disco (`C:\SKYROMS`, `D:\SKYROMS`; também vale um
+nível abaixo, como `D:\Jogos\SKYROMS`) com as mesmas subpastas do pendrive (`ps1`, `ps2`, `ps3`, `psp`,
+`gc`, `wii`, `nds`, `3ds`, `x360`…). No boot, o serviço `skystation-skyroms-hd` procura a pasta nos discos
+do PC (NTFS, exFAT, FAT32, ext4, btrfs, xfs — nunca no pendrive do sistema) e a monta em `/mnt/skyroms`,
+o mesmo lugar do pendrive SKYROMS: tudo funciona igual (capas, mover jogos, Central web, BIOS em `bios/`).
+
+- **Prioridade:** com o pendrive SKYROMS conectado, ele vale; ao tirar, os jogos do HD voltam.
+- **Só leitura:** se o Windows estiver hibernado (Inicialização rápida ligada) o HD é montado só para
+  leitura — os jogos rodam, mas nada é gravado ali (gravar faria o Windows perder dados ao voltar).
+  Para liberar: no Windows, `powercfg /h off` (prompt como administrador) ou desmarque "Ativar
+  inicialização rápida" nas Opções de Energia. Saves e estados ficam sempre no pendrive do sistema.
+- **BitLocker:** disco criptografado não dá para ler; o console avisa na categoria vazia.
+- Procurar de novo sem reiniciar: `sudo skystation-skyroms-hd`. Ver o que achou: `skystation-skyroms-hd status`.
 
 ## Recursos da Fase 5.6
 

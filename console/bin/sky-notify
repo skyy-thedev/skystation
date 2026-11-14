@@ -5,7 +5,7 @@ Roda a sessão inteira em segundo plano (iniciado pelo sky-shell) e toca um som 
 cada coisa que acontece, mesmo com um jogo aberto:
 
   controle conectado / desconectado      dispositivo USB conectado / removido
-  pendrive de jogos (SKYROMS) conectado  jogo novo encontrado
+  jogos SKYROMS (pendrive ou HD) prontos  jogo novo encontrado
   carregador ligado / desligado          bateria do console em 15 %, 5 % e 3 %
   bateria do controle fraca              temperatura alta
   disco de PS1/PS2 no leitor (Fase 5.8): identifica e escreve $XDG_RUNTIME_DIR/skystation/disco.json
@@ -358,11 +358,32 @@ def usb_devices():
 
 
 def skyroms_mounted():
+    """Origem do que está em /mnt/skyroms: o dispositivo de cima (pendrive ou HD) ou None."""
+    src = None
     for line in read("/proc/mounts").splitlines():
         parts = line.split()
         if len(parts) > 1 and parts[1] == SKYROMS:
-            return True
-    return False
+            src = parts[0]   # montagens repetidas: a última é a que aparece
+    return src
+
+
+def skyroms_hd():
+    """Fase 7.6: dados da pasta SKYROMS do HD/SSD do PC (escritos pelo skystation-skyroms-hd)."""
+    d = {}
+    for line in read("/run/skystation/skyroms-hd").splitlines():
+        k, _, v = line.partition("=")
+        d[k] = v
+    return d
+
+
+def skyroms_aviso(src):
+    hd = skyroms_hd()
+    if src and hd.get("estado") == "ok" and hd.get("dev") == src:
+        txt = "Jogos do HD encontrados (pasta SKYROMS)"
+        if hd.get("modo") == "ro":
+            txt += " · só leitura: desligue a Inicialização rápida do Windows"
+        return txt
+    return "Pendrive de jogos conectado"
 
 
 def game_keys():
@@ -482,15 +503,18 @@ def main():
         # pendrive de jogos
         m = skyroms_mounted()
         if m != mounted:
-            mounted = m
+            antes, mounted = mounted, m
             if m:
                 for sub in ("ps1", "ps2", "ps1/covers", "ps2/covers"):
                     try:
                         os.makedirs(os.path.join(SKYROMS, sub), exist_ok=True)
                     except OSError:
-                        pass
-            event("pendrive", "Pendrive de jogos conectado" if m else "Pendrive de jogos removido",
-                  "pendrive-on" if m else "pendrive-off")
+                        pass   # HD só leitura: tudo bem, os jogos abrem do mesmo jeito
+            if m and antes:   # tirou o pendrive e o HD apareceu por baixo (ou o contrário)
+                event("pendrive", skyroms_aviso(m), "pendrive-on")
+            else:
+                event("pendrive", skyroms_aviso(m) if m else "Jogos SKYROMS removidos",
+                      "pendrive-on" if m else "pendrive-off")
             event("jogos", "recarregar")
             special = True
             quiet_games_until = now + 8   # os jogos do pendrive não tocam "jogo novo" um a um

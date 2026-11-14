@@ -57,6 +57,15 @@ def mounted(path):
         return False
 
 
+def gravavel(path):
+    """Fase 7.6: a pasta SKYROMS do HD fica só leitura com o Windows hibernado."""
+    return os.access(path, os.W_OK)
+
+
+SO_LEITURA = ("SKYROMS do HD está só leitura: no Windows, desligue a Inicialização rápida "
+              "(ou use Desligar com Shift) e ligue o SkyStation de novo")
+
+
 def space(path):
     try:
         u = shutil.disk_usage(path)
@@ -126,9 +135,15 @@ def mover(path, dest_kind):
         if not mounted(SKYROMS):
             out({"ok": False, "error": "Pendrive SKYROMS não está conectado"})
             return
+        if not gravavel(SKYROMS):
+            out({"ok": False, "error": SO_LEITURA})
+            return
         base = SKYROMS
     else:
         base = INTERNO
+        if path.startswith(SKYROMS + "/") and not gravavel(os.path.dirname(path)):
+            out({"ok": False, "error": SO_LEITURA})
+            return
     dest_dir = os.path.join(base, sys_id)
     src_dir = os.path.dirname(path)
     if os.path.realpath(src_dir) == os.path.realpath(dest_dir):
@@ -180,13 +195,16 @@ def mover(path, dest_kind):
             pass
     if os.path.isdir(path):
         shutil.rmtree(path, ignore_errors=True)
-    out({"ok": True, "message": "Jogo movido para o " + ("pendrive SKYROMS" if dest_kind == "skyroms" else "console")})
+    out({"ok": True, "message": "Jogo movido para o " + ("SKYROMS" if dest_kind == "skyroms" else "console")})
 
 
 def apagar(path):
     path = path.rstrip("/")
     if not _is_game(path) or not system_of(path):
         out({"ok": False, "error": "Jogo não encontrado"})
+        return
+    if path.startswith(SKYROMS + "/") and not gravavel(os.path.dirname(path)):
+        out({"ok": False, "error": SO_LEITURA})
         return
     n = 0
     for f in game_files(path):
@@ -356,6 +374,9 @@ def copiar_disco(dest_kind):
     sys_id, dev = info["sistema"], info["dev"]
     if dest_kind == "skyroms" and not mounted(SKYROMS):
         out({"ok": False, "error": "Pendrive SKYROMS não está conectado"})
+        return
+    if dest_kind == "skyroms" and not gravavel(SKYROMS):
+        out({"ok": False, "error": SO_LEITURA})
         return
     dest_dir = os.path.join(SKYROMS if dest_kind == "skyroms" else INTERNO, sys_id)
     os.makedirs(os.path.join(dest_dir, "covers"), exist_ok=True)

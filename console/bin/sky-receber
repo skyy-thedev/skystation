@@ -293,7 +293,8 @@ def emit(obj):
 def skyroms_ok():
     try:
         with open("/proc/mounts") as f:
-            return any(len(l.split()) > 1 and l.split()[1] == "/mnt/skyroms" for l in f)
+            ok = any(len(l.split()) > 1 and l.split()[1] == "/mnt/skyroms" for l in f)
+        return ok and os.access("/mnt/skyroms", os.W_OK)   # HD do Windows hibernado = só leitura
     except OSError:
         return False
 
