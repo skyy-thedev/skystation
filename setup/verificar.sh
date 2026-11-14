@@ -79,7 +79,7 @@ echo "== 7.0 Central web em segundo plano / som de ligar na TV / PS3"
 F70="sudo bash /opt/skystation-src/setup/fase7-0.sh"
 v "Central web em segundo plano" "Sistema → Atualizar o SkyStation" grep -q servir /opt/skystation/bin/sky-receber
 v "som de ligar sai na TV" "sudo skystation-atualizar" grep -q placa_da_tv /usr/local/bin/skystation-som-ligar
-v "emulador de PS3 (RPCS3)" "$F70" test -x /opt/rpcs3/AppRun
+v "emulador de PS3 (RPCS3)" "$F70  (log: /var/log/skystation-instalar.log)" test -x /opt/rpcs3/AppRun
 v "controles Sony direto no RPCS3" "$F70" test -f /etc/udev/rules.d/72-skystation-controles.rules
 v "driver de vídeo AMD (Vulkan)" "$F70" pacman -Q vulkan-radeon
 v "boot em qualquer PC (sem autodetect)" "$F70" sh -c "! grep -qE '^HOOKS=.*autodetect' /etc/mkinitcpio.conf"

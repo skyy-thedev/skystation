@@ -61,22 +61,30 @@ install -d /etc/security/limits.d
 printf '%s soft nofile 65536\n%s hard nofile 524288\n' "$USER_NAME" "$USER_NAME" >/etc/security/limits.d/skystation.conf
 
 echo "==> [4/6] Emulador de PS3 (RPCS3, AppImage oficial extraído)"
+source "$SRC/setup/appimage.sh"
+anota "== fase7-0: RPCS3"
 if [ ! -x /opt/rpcs3/AppRun ]; then
     free_mb="$(df -m --output=avail / | tail -1 | tr -d ' ')"
     if [ "${free_mb:-0}" -lt 1200 ]; then
         echo "    AVISO: pouco espaço (${free_mb} MB) para o RPCS3; libere espaço e rode de novo"
+        anota "pouco espaço: ${free_mb} MB"
     else
-        TMP="$(mktemp -d)"
-        URL="$(curl -fsSL https://api.github.com/repos/RPCS3/rpcs3-binaries-linux/releases/latest 2>/dev/null \
-            | grep -o '"browser_download_url": *"[^"]*_linux64\.AppImage"' | head -1 | sed 's/.*"\(https[^"]*\)"/\1/' || true)"
+        TMP="$(mktemp -d /var/tmp/skystation-rpcs3.XXXXXX)"
+        URL="$(curl -fsSL https://api.github.com/repos/RPCS3/rpcs3-binaries-linux/releases/latest 2>>"$LOG_INST" \
+            | grep -o '"browser_download_url": *"[^"]*linux[^"]*\.AppImage"' | grep -v -i aarch64 | head -1 \
+            | sed 's/.*"\(https[^"]*\)"/\1/' || true)"
+        anota "link: ${URL:-nenhum (API do GitHub não respondeu)}"
         [ -n "$URL" ] || URL="https://rpcs3.net/latest-appimage"
+        echo "    baixando $(basename "$URL")…"
         if curl -fL --progress-bar -o "$TMP/rpcs3.AppImage" "$URL" && [ "$(stat -c %s "$TMP/rpcs3.AppImage")" -gt 20000000 ]; then
-            chmod +x "$TMP/rpcs3.AppImage"
-            (cd "$TMP" && ./rpcs3.AppImage --appimage-extract >/dev/null 2>&1)
-            rm -rf /opt/rpcs3 && mv "$TMP/squashfs-root" /opt/rpcs3 && chmod -R a+rX /opt/rpcs3
-            echo "    RPCS3 instalado em /opt/rpcs3"
+            if instalar_appimage "$TMP/rpcs3.AppImage" /opt/rpcs3; then
+                echo "    RPCS3 instalado em /opt/rpcs3"
+            else
+                echo "    ERRO: o RPCS3 não instalou. Detalhes em $LOG_INST (e SKYROMS/diag-instalar.txt)"
+            fi
         else
             echo "    AVISO: não consegui baixar o RPCS3 (confira a internet e rode de novo)"
+            anota "download falhou: $URL"; copia_log
         fi
         rm -rf "$TMP"
     fi

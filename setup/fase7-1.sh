@@ -72,7 +72,9 @@ if [ ! -x /opt/xenia/xenia_canary ]; then
         # AppImage (solto ou dentro do pacote): extrai, porque o console não usa FUSE
         APPI="$(find "$TMP/x" -type f -iname '*.AppImage' | head -1)"
         if [ -n "$APPI" ]; then
-            chmod +x "$APPI"; (cd "$TMP" && "$APPI" --appimage-extract >/dev/null 2>&1) && rm -rf "$TMP/x" && mv "$TMP/squashfs-root" "$TMP/x"
+            source "$SRC/setup/appimage.sh"; anota "== fase7-1: Xenia ($(basename "$URL"))"
+            mv "$APPI" "$TMP/xenia.AppImage"
+            instalar_appimage "$TMP/xenia.AppImage" "$TMP/x" || echo "    AVISO: não consegui extrair o AppImage do Xenia"
         fi
         # o programa: o maior arquivo executável (ELF) com "xenia" no nome, ou o AppRun
         BIN=""
