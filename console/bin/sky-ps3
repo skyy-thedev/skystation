@@ -23,7 +23,8 @@ SKY = os.path.join(HOME, "skystation")
 RP = os.environ.get("SKY_RPCS3_DIR") or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"), "rpcs3")
 RPCS3 = os.environ.get("SKY_RPCS3_BIN", "/opt/rpcs3/AppRun")
 BASES = [(os.path.join(SKY, "roms/ps3"), "interno"), ("/mnt/skyroms/ps3", "skyroms")]
-FW_DIRS = [os.path.join(SKY, "bios/ps3"), "/mnt/skyroms/bios/ps3", "/mnt/skyroms/bios", "/mnt/skyroms"]
+FW_DIRS = [os.path.join(SKY, "bios/ps3"), os.path.join(SKY, "roms/ps3"), "/mnt/skyroms/bios/ps3", "/mnt/skyroms/bios",
+           "/mnt/skyroms/ps3", "/mnt/skyroms"]   # 7.6.2: também ao lado dos jogos (SKYROMS/ps3)
 CACHE = os.path.join(HOME, ".cache/skystation/ps3")
 PROC = os.environ.get("SKY_PROC", "/proc")
 SYSFS = os.environ.get("SKY_SYS", "/sys")

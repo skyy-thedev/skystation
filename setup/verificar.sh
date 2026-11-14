@@ -83,7 +83,7 @@ v "emulador de PS3 (RPCS3)" "$F70" test -x /opt/rpcs3/AppRun
 v "controles Sony direto no RPCS3" "$F70" test -f /etc/udev/rules.d/72-skystation-controles.rules
 v "driver de vídeo AMD (Vulkan)" "$F70" pacman -Q vulkan-radeon
 v "boot em qualquer PC (sem autodetect)" "$F70" sh -c "! grep -qE '^HOOKS=.*autodetect' /etc/mkinitcpio.conf"
-v "firmware do PS3 (PS3UPDAT.PUP)" "envie pela Central web → Sistema: Firmware do PS3" sh -c "ls $H/skystation/bios/ps3/*.[Pp][Uu][Pp] $H/.config/rpcs3/dev_flash/sys/external/liblv2.sprx 2>/dev/null | grep -q ."
+v "firmware do PS3 (PS3UPDAT.PUP)" "envie pela Central web → Sistema: Firmware do PS3" sh -c "ls $H/skystation/bios/ps3/*.[Pp][Uu][Pp] /mnt/skyroms/ps3/*.[Pp][Uu][Pp] /mnt/skyroms/bios/ps3/*.[Pp][Uu][Pp] $H/.config/rpcs3/dev_flash/sys/external/liblv2.sprx 2>/dev/null | grep -q ."
 t="$(nproc)"; if [ "$t" -ge 6 ]; then echo "  ✓ este PC tem $t threads: PS3 liberado"; else echo "  · este PC tem $t threads: PS3 só abre em PC com 6+ (normal no notebook antigo)"; fi
 
 echo "== 7.2 Velocidade / erros com código / menu de energia"
