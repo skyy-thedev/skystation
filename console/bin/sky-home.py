@@ -5,9 +5,10 @@ Roda em segundo plano durante toda a sessão (iniciado pelo sky-shell, dentro do
 e escuta todos os controles e teclados, sem atrapalhar ninguém.
 
 Com um jogo aberto:
-  - TOQUE no Home (ou Select+Start, ou F12): o jogo PAUSA e abre o menu por cima:
-    Voltar ao jogo, Salvar/Carregar estado (PS1), Salvar captura de tela, Volume e Fechar jogo,
-    com bateria, temperatura e hora no rodapé (Fase 5.6).
+  - TOQUE no Home (ou Select+Start, ou F12): o jogo PAUSA e abre o menu por cima, no estilo
+    do XMB do PS3 (Fase 8.0): categorias na horizontal — Jogo (voltar, salvar/carregar estado,
+    captura, fechar), Troféus (com os NOVOS desta partida), Amigos (SkyNetwork), Ajustes
+    (volume e brilho) e Energia. ◀ ▶ (ou L1/R1) troca de categoria; ▲ ▼ escolhe o item.
   - SEGURAR 1,5 s (com ou sem jogo): menu de energia — Fechar jogo, Modo de espera, Reiniciar,
     Desligar o console (Fase 7.2).
   - CONTINUAR SEGURANDO até 5 s: fecha o jogo direto (saída de emergência, mesmo se o menu falhar).
@@ -56,6 +57,9 @@ NAV_UP = {E.KEY_UP, E.BTN_DPAD_UP, E.KEY_W}
 NAV_DOWN = {E.KEY_DOWN, E.BTN_DPAD_DOWN, E.KEY_S}
 NAV_LEFT = {E.KEY_LEFT, E.BTN_DPAD_LEFT, E.KEY_A}
 NAV_RIGHT = {E.KEY_RIGHT, E.BTN_DPAD_RIGHT, E.KEY_D}
+CAT_PREV = {E.BTN_TL, E.KEY_PAGEUP, E.KEY_Q}
+CAT_NEXT = {E.BTN_TR, E.KEY_PAGEDOWN, E.KEY_E}
+SKY_BIN = os.path.dirname(os.path.abspath(__file__))
 ACCEPT = {E.BTN_SOUTH, E.KEY_ENTER, E.KEY_KPENTER, E.KEY_SPACE}
 BACK = {E.BTN_EAST, E.KEY_ESC, E.KEY_BACKSPACE, E.BTN_MODE, E.KEY_F12, E.BTN_START}
 
@@ -94,6 +98,43 @@ def change_volume(delta):
     subprocess.run(["wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", f"{abs(delta)}%{sign}"],
                    capture_output=True, timeout=2)
     subprocess.run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "0"], capture_output=True, timeout=2)
+
+
+def get_brightness():
+    try:
+        out = subprocess.run(["brightnessctl", "-m"], capture_output=True, text=True, timeout=2)
+        if out.returncode == 0:
+            return int(out.stdout.strip().split(",")[3].rstrip("%"))
+    except (OSError, subprocess.SubprocessError, IndexError, ValueError):
+        pass
+    return -1
+
+
+def change_brightness(delta):
+    v = get_brightness()
+    if v < 0:
+        return
+    v = max(5, min(100, v + delta))   # nunca apaga a tela de vez
+    subprocess.run(["brightnessctl", "-q", "set", f"{v}%"], capture_output=True, timeout=2)
+
+
+def trophies():
+    """Troféus do perfil; os ganhos depois do começo desta partida vêm marcados como NOVO."""
+    try:
+        out = subprocess.run([sys.executable, os.path.join(SKY_BIN, "sky-trofeus"), "listar"],
+                             capture_output=True, text=True, timeout=5)
+        d = json.loads(out.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return 0, 0, []
+    try:
+        inicio = int(read(os.path.join(RUN, "game.start"), "0"))
+    except ValueError:
+        inicio = 0
+    lst = d.get("trofeus", [])
+    lst.sort(key=lambda t: (-(t["ganho"] >= inicio > 0), -bool(t["ganho"]), -t["ganho"]))
+    items = [{"t": t["nome"], "sub": t["desc"], "kind": "trofeu", "nivel": t["nivel"], "ganho": bool(t["ganho"]),
+              "novo": bool(t["ganho"]) and inicio > 0 and t["ganho"] >= inicio} for t in lst]
+    return d.get("ganhos", 0), d.get("total", 0), items
 
 
 def status_info():
@@ -176,7 +217,9 @@ class Home:
         self.sel = 0
         self.grabbed = False
         self.ungrab_at = None
-        self.items = []         # [(ação, texto)]
+        self.items = []         # [(ação, {"t": texto, ...})] da categoria atual
+        self.cats = []
+        self.cat = 0
         self.info_at = 0.0
 
     # ---------------------------------------------------------- dispositivos
@@ -249,30 +292,52 @@ class Home:
                 shot = SHOT if os.path.exists(SHOT) else ""
             except (OSError, subprocess.SubprocessError):
                 shot = ""
-        self.items = [("resume", "Voltar ao jogo" if pid else "Voltar")]
-        if power:
-            if pid:
-                self.items.append(("close", "Fechar jogo"))
-            self.items += [("suspend", "Modo de espera"), ("reboot", "Reiniciar o console"), ("poweroff", "Desligar o console")]
-        elif read(os.path.join(RUN, "game.sys")) in ("ps1", "snes", "n64", "psp", "gc", "wii", "nds", "3ds", "gba", "gb", "nes", "md"):
-            self.items += [("save", "Salvar estado"), ("load", "Carregar estado")]
-        if shot and not power:
-            self.items.append(("shot", "Salvar captura de tela"))
-        if not power:
-            self.items += [("volume", "Volume"), ("close", "Fechar jogo")]
+        # Fase 8.0: categorias do XMB. Cada item: (ação, {"t": texto, ...})
+        jogo = [("resume", {"t": "Voltar ao jogo" if pid else "Voltar"})]
+        if pid and read(os.path.join(RUN, "game.sys")) in ("ps1", "snes", "n64", "psp", "gc", "wii", "nds", "3ds", "gba", "gb", "nes", "md"):
+            jogo += [("save", {"t": "Salvar estado"}), ("load", {"t": "Carregar estado"})]
+        if shot:
+            jogo.append(("shot", {"t": "Salvar captura de tela"}))
+        if pid:
+            jogo.append(("close", {"t": "Fechar jogo", "sub": "O que não foi salvo no jogo será perdido"}))
+        ganhos, total, trof = trophies()
+        trof_items = [("trofeu", it) for it in trof] or [("nada", {"t": "Nenhum troféu ainda", "kind": "info"})]
+        if total:
+            trof_items.insert(0, ("nada", {"t": f"{ganhos} de {total} troféus", "kind": "info",
+                                           "sub": f"{round(100 * ganhos / total)}% conquistados neste perfil"}))
+        self.cats = [
+            {"id": "jogo", "title": "Jogo", "icon": "pad", "items": jogo},
+            {"id": "trofeus", "title": "Troféus", "icon": "trophy", "items": trof_items},
+            {"id": "amigos", "title": "Amigos", "icon": "friends",
+             "items": [("nada", {"t": "SkyNetwork chega em breve", "kind": "info",
+                                 "sub": "Ver o que os amigos estão jogando e trocar mensagens"})]},
+            {"id": "ajustes", "title": "Ajustes", "icon": "gear",
+             "items": [("volume", {"t": "Volume", "kind": "slider", "id": "volume"}),
+                       ("brilho", {"t": "Brilho", "kind": "slider", "id": "brilho"})]},
+            {"id": "energia", "title": "Energia", "icon": "power",
+             "items": ([("close", {"t": "Fechar jogo"})] if pid and power else []) +
+                      [("suspend", {"t": "Modo de espera"}), ("reboot", {"t": "Reiniciar o console"}),
+                       ("poweroff", {"t": "Desligar o console"})]},
+        ]
+        # segurar Home abre direto em Energia; o toque abre em Jogo (como no PS3)
+        self.cat = len(self.cats) - 1 if power else 0
         self.sel = 0
+        self.items = self.cats[self.cat]["items"]
         try:
-            self.overlay = subprocess.Popen([sys.executable, OVERLAY, ("Energia" if power else title) or "Jogo", shot],
+            self.overlay = subprocess.Popen([sys.executable, OVERLAY, (title or "Jogo") if pid else "", shot],
                                             stdin=subprocess.PIPE, text=True)
         except OSError as e:
             log(f"não consegui abrir o overlay: {e}; voltando ao jogo")
             self.overlay = None
             self.choose("resume")
             return
-        self.send("items " + json.dumps([t for _, t in self.items], ensure_ascii=False))
-        self.send(f"sel {self.sel}")
+        self.send("cats " + json.dumps([{"id": c["id"], "title": c["title"], "icon": c["icon"],
+                                         "items": [it for _, it in c["items"]]} for c in self.cats],
+                                       ensure_ascii=False))
+        self.send(f"sel {self.cat} {self.sel}")
         vol, muted = get_volume()
         self.send(f"vol {vol} {int(muted)}")
+        self.send(f"bri {get_brightness()}")
         self.send("info " + json.dumps(status_info(), ensure_ascii=False))
         self.info_at = time.monotonic()
 
@@ -355,6 +420,9 @@ class Home:
             if self.retroarch("LOAD_STATE"):
                 play("carregado")
             self.choose("resume")
+        elif action == "trofeu":
+            it = self.items[self.sel][1]
+            self.send("msg " + (it["sub"] if it.get("ganho") else "Ainda não conquistado: " + it["sub"]))
         elif action == "shot":
             os.makedirs(CAPTURAS, exist_ok=True)
             gid = read(os.path.join(RUN, "game.id"), "jogo")
@@ -366,20 +434,38 @@ class Home:
             except OSError:
                 self.send("msg Não consegui salvar a captura")
 
+    def set_cat(self, k):
+        self.cat = k % len(self.cats)
+        self.items = self.cats[self.cat]["items"]
+        self.sel = 0
+        play("navegar")
+        self.send(f"sel {self.cat} {self.sel}")
+
     def menu_key(self, code):
         n = len(self.items)
-        if code in NAV_UP:
+        action = self.items[self.sel][0] if n else ""
+        if code in NAV_UP and n:
             self.sel = (self.sel - 1) % n
-            self.send(f"sel {self.sel}")
-        elif code in NAV_DOWN:
+            self.send(f"sel {self.cat} {self.sel}")
+        elif code in NAV_DOWN and n:
             self.sel = (self.sel + 1) % n
-            self.send(f"sel {self.sel}")
+            self.send(f"sel {self.cat} {self.sel}")
+        elif code in CAT_PREV:
+            self.set_cat(self.cat - 1)
+        elif code in CAT_NEXT:
+            self.set_cat(self.cat + 1)
         elif code in NAV_LEFT or code in NAV_RIGHT:
-            if self.items[self.sel][0] == "volume":
-                change_volume(5 if code in NAV_RIGHT else -5)
+            up = code in NAV_RIGHT
+            if action == "volume":
+                change_volume(5 if up else -5)
                 vol, muted = get_volume()
                 self.send(f"vol {vol} {int(muted)}")
-        elif code in ACCEPT:
+            elif action == "brilho":
+                change_brightness(10 if up else -10)
+                self.send(f"bri {get_brightness()}")
+            else:
+                self.set_cat(self.cat + (1 if up else -1))
+        elif code in ACCEPT and n:
             self.activate()
         elif code in BACK:
             self.choose("resume")

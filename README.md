@@ -100,6 +100,18 @@ rótulo **SKYROMS** e crie as pastas `ps1/` e `ps2/` (capas opcionais em `ps1/co
 Ao conectar, ele monta sozinho em `/mnt/skyroms` e os jogos aparecem no console; ao tirar, somem.
 Dica: `.chd` ocupa bem menos que `.bin/.cue` (converta com o `chdman` no PC).
 
+## Menu Home no estilo PS3 e troféus ao vivo (Fase 8.0)
+
+- **Home no meio do jogo** abre a barra cruzada por cima da imagem congelada, como o XMB do PS3:
+  **Jogo** (voltar, salvar/carregar estado, captura, fechar), **Troféus** (os ganhos nesta partida
+  aparecem como NOVO), **Amigos** (SkyNetwork, em breve), **Ajustes** (volume e brilho) e **Energia**.
+  ◀ ▶ ou L1/R1 trocam de categoria; ▲ ▼ escolhem; nos ajustes, ◀ ▶ mudam o valor. Segurar Home abre
+  direto em Energia. Teste sem tela: `SDL_VIDEODRIVER=dummy SKY_OVERLAY_PNG=/tmp/x.png sky-overlay.py`.
+- **Troféus durante o jogo:** o `sky-run` confere a cada minuto contando a partida em andamento;
+  ao ganhar, o som do troféu toca na hora. Novos troféus: PS3, Xbox 360 e Nintendo.
+- Roteiro (jogos em segundo plano, aviso de troféu desenhado por cima do jogo, SkyNetwork):
+  `docs/roteiro-fase8.md`.
+
 ## Jogos direto do HD/SSD do PC (Fase 7.6)
 
 Em vez de copiar os jogos para o pendrive, o SkyStation lê direto do disco do PC onde ele dá boot.
@@ -340,6 +352,7 @@ curl -fsSL https://raw.githubusercontent.com/skyy-thedev/skystation/main/setup/s
 - [ ] Case impressa em 3D (protótipo v0.1 em hardware/case)
 - [ ] Fase 6: ISO próprio do SkyStation
 - [x] Fase 7.0: Central web em segundo plano, som de ligar na TV, PS3 pelo RPCS3 em PC forte (não testado em hardware)
+- [x] Fase 8.0: menu Home no estilo XMB do PS3 + troféus durante o jogo
 - [x] Fase 7.1: GameCube, Wii, DS, 3DS, GB/GBC/GBA, NES, Mega Drive e Xbox 360 experimental (não testado em hardware)
 - [x] Fase 7.2: velocidade nas transferências, erros com código, menu de energia no Home, ponteiro escondido, revisão
 - [x] Fase 7.4: qualidade por aparelho (perfil potente para o Ryzen) e item "Este aparelho"

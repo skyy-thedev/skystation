@@ -3,7 +3,7 @@
 
     sky-trofeus listar      {"ganhos": 3, "total": 17, "trofeus": [{"id","nome","desc","nivel","ganho"}]}
     sky-trofeus conferir    marca os recém-conquistados, avisa na tela e toca o som (o sky-run chama
-                            depois de cada partida)
+                            a cada minuto durante a partida e de novo no fim; Fase 8.0)
 """
 import json
 import os
@@ -15,7 +15,7 @@ import time
 HOME = os.path.expanduser("~")
 SAVES = os.path.join(HOME, "skystation/saves")
 RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
-SISTEMAS = ("ps1", "ps2", "snes", "n64", "psp")
+SISTEMAS = ("ps1", "ps2", "ps3", "snes", "n64", "psp", "x360", "gc", "wii", "nds", "3ds", "gba", "gb", "nes", "md")
 
 
 def sistema(gid):
@@ -30,6 +30,21 @@ def stats():
     except (OSError, ValueError):
         t = {}
     t = {k: v for k, v in t.items() if isinstance(v, dict) and k != "terminal"}
+    # Fase 8.0: com um jogo aberto, conta também a partida em andamento (troféu ganho NA HORA)
+    try:
+        with open(os.path.join(RUN, "game.pid")) as f:
+            os.kill(int(f.read().strip()), 0)
+        with open(os.path.join(RUN, "game.id")) as f:
+            gid = f.read().strip()
+        with open(os.path.join(RUN, "game.start")) as f:
+            dur = int(time.time()) - int(f.read().strip())
+        if gid and dur >= 10:
+            g = dict(t.get(gid, {}))
+            g["seconds"] = int(g.get("seconds", 0)) + dur
+            g["plays"] = int(g.get("plays", 0)) + 1
+            t[gid] = g
+    except (OSError, ValueError):
+        pass
     secs = [int(v.get("seconds", 0)) for v in t.values()]
     plays = [int(v.get("plays", 0)) for v in t.values()]
     return {"total": sum(secs), "maior": max(secs, default=0), "jogos": len(t), "partidas": sum(plays),
@@ -55,6 +70,10 @@ TROFEUS = [
     ("snes", "Cartucho soprado", "Jogue um jogo de SNES", "bronze", lambda s: "snes" in s["sistemas"]),
     ("n64", "Três alças", "Jogue um jogo de N64", "bronze", lambda s: "n64" in s["sistemas"]),
     ("psp", "No bolso", "Jogue um jogo de PSP", "bronze", lambda s: "psp" in s["sistemas"]),
+    ("ps3", "Célula de poder", "Jogue um jogo de PS3", "prata", lambda s: "ps3" in s["sistemas"]),
+    ("x360", "Do outro lado", "Jogue um jogo de Xbox 360", "prata", lambda s: "x360" in s["sistemas"]),
+    ("nintendo", "Encanador honorário", "Jogue um jogo da Nintendo",
+     "bronze", lambda s: bool(s["sistemas"] & {"snes", "n64", "gc", "wii", "nds", "3ds", "gba", "gb", "nes"})),
     ("proprio", "Feito em casa", "Jogue um jogo próprio do SkyStation", "bronze", lambda s: "proprio" in s["sistemas"]),
     ("todos", "Volta ao mundo", "Jogue em 4 sistemas diferentes", "ouro", lambda s: len(s["sistemas"]) >= 4),
 ]

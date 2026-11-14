@@ -23,6 +23,7 @@ echo "$TITLE" >"$RUN/game.title"     # o menu Home mostra o nome do jogo
 echo "$ID" >"$RUN/game.id"
 case "${ID%%-*}" in ps1|ps2|ps3|psp|snes|n64|gc|wii|x360|nds|3ds|gba|gb|nes|md) echo "${ID%%-*}" ;; *) echo "" ;; esac >"$RUN/game.sys"   # salvar estado só no PS1
 START=$(date +%s)
+echo "$START" >"$RUN/game.start"     # Fase 8.0: troféus da partida em andamento e "NOVO" no Home
 
 export SKY_MSG_FILE="$RUN/last_msg"     # sky-emu escreve aqui mensagens para o jogador
 export SKY_PROFILE="$(/opt/skystation/bin/sky-perfil)"
@@ -55,8 +56,18 @@ setsid bash -c 'cd -- "$1" || exit 97; eval "exec $2 $3"' sky-game "$DIR" "$PREF
 child=$!
 echo "$child" >"$RUN/game.pid"
 
+# Fase 8.0: troféus durante o jogo. A cada minuto confere; se ganhou, toca o som do troféu na hora
+# (o som sai por cima do jogo) e o troféu aparece como NOVO no menu Home e no aviso ao voltar.
+if [ -x /opt/skystation/bin/sky-trofeus ]; then
+    ( while sleep 60; do kill -0 "$child" 2>/dev/null || break
+          /opt/skystation/bin/sky-trofeus conferir >/dev/null 2>&1
+      done ) &
+    TROF_PID=$!
+fi
+
 wait "$child"
 code=$?
+[ -n "${TROF_PID:-}" ] && kill "$TROF_PID" 2>/dev/null
 
 rm -f "$RUN/game.pid"
 echo "=== saiu com código $code" >>"$LOG"
