@@ -97,6 +97,30 @@ Unit=skystation-potencia.service
 [Install]
 WantedBy=paths.target
 UNIT
+# Bluetooth em qualquer notebook (Fase 8.0.1): adaptador sempre ligado no boot, destravado no rfkill
+# (muitos notebooks Ryzen ligam com o Bluetooth "bloqueado") e controles reconectando sozinhos.
+if [ -f /etc/bluetooth/main.conf ]; then
+    if grep -qE '^#?\s*AutoEnable' /etc/bluetooth/main.conf; then
+        sed -i -E 's/^#?\s*AutoEnable\s*=.*/AutoEnable=true/' /etc/bluetooth/main.conf
+    else
+        printf '\n[Policy]\nAutoEnable=true\n' >>/etc/bluetooth/main.conf
+    fi
+    sed -i -E 's/^#?\s*FastConnectable\s*=.*/FastConnectable=true/' /etc/bluetooth/main.conf
+fi
+# Controles "compatíveis" de DS4/DS3 não fazem o pareamento completo; sem isto o BlueZ os recusa.
+if [ -f /etc/bluetooth/input.conf ]; then
+    if grep -qE '^#?\s*ClassicBondedOnly' /etc/bluetooth/input.conf; then
+        sed -i -E 's/^#?\s*ClassicBondedOnly\s*=.*/ClassicBondedOnly=false/' /etc/bluetooth/input.conf
+    else
+        printf '\n[General]\nClassicBondedOnly=false\n' >>/etc/bluetooth/input.conf
+    fi
+fi
+install -d /etc/systemd/system/bluetooth.service.d
+cat >/etc/systemd/system/bluetooth.service.d/skystation.conf <<'UNIT'
+[Service]
+ExecStartPre=-/usr/bin/rfkill unblock bluetooth
+UNIT
+
 # Jogos direto do HD/SSD do PC (Fase 7.6): no boot procura uma pasta SKYROMS nos discos do PC
 # e a monta em /mnt/skyroms (o mesmo lugar do pendrive SKYROMS).
 cat >/etc/systemd/system/skystation-skyroms-hd.service <<'UNIT'
@@ -117,6 +141,9 @@ UNIT
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
     systemctl enable skystation-skyroms-hd.service >/dev/null 2>&1 || true
+    rfkill unblock bluetooth 2>/dev/null || true
+    systemctl enable bluetooth.service >/dev/null 2>&1 || true
+    systemctl restart bluetooth.service >/dev/null 2>&1 || true
     systemctl restart skystation-skyroms-hd.service >/dev/null 2>&1 || true
     systemctl enable skystation-potencia.path >/dev/null 2>&1 || true
     systemctl restart skystation-potencia.path >/dev/null 2>&1 || true

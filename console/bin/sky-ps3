@@ -260,7 +260,17 @@ confirmationBoxBootGame=false
 
 [Meta]
 checkUpdateStart=false
+
+[GSFrame]
+showMouseInFullscreen=false
+hideMouseOnIdle=true
+hideMouseOnIdleTime=500
 """
+
+# Fase 8.0.1: sempre garantidas, mesmo em instalações antigas (o .ini já existe e não é recriado)
+GUI_FORCAR = {"GSFrame": {"showMouseInFullscreen": "false", "hideMouseOnIdle": "true",
+                          "hideMouseOnIdleTime": "500"},
+              "Meta": {"checkUpdateStart": "false"}}
 CONFIG_YML = """Miscellaneous:
   Exit RPCS3 when process finishes: true
   Start games in fullscreen mode: true
@@ -272,6 +282,37 @@ def write_if_missing(path, text):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             f.write(text)
+
+
+def garantir_ini(path, valores):
+    """Ajusta chaves de um .ini do Qt sem apagar o resto (seções e chaves que o RPCS3 gravou)."""
+    try:
+        with open(path) as f:
+            linhas = f.read().splitlines()
+    except OSError:
+        linhas = []
+    for secao, kv in valores.items():
+        cab = f"[{secao}]"
+        if cab not in linhas:
+            linhas += ["", cab] + [f"{k}={v}" for k, v in kv.items()]
+            continue
+        i = linhas.index(cab) + 1
+        fim = i
+        while fim < len(linhas) and not linhas[fim].startswith("["):
+            fim += 1
+        while fim > i and not linhas[fim - 1].strip():   # novas chaves antes da linha em branco
+            fim -= 1
+        for k, v in kv.items():
+            for j in range(i, fim):
+                if linhas[j].split("=", 1)[0].strip() == k:
+                    linhas[j] = f"{k}={v}"
+                    break
+            else:
+                linhas.insert(fim, f"{k}={v}")
+                fim += 1
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write("\n".join(linhas) + "\n")
 
 
 def user_id():
@@ -292,6 +333,7 @@ def preparar():
     if n < MIN_THREADS and not os.path.exists(os.path.join(HOME, ".config/skystation/ps3-forcar")):
         return out({"ok": False, "error": f"PS3 precisa de um processador com {MIN_THREADS}+ threads (este tem {n}). Dê boot com o pendrive num PC mais forte."})
     write_if_missing(os.path.join(RP, "GuiConfigs/CurrentSettings.ini"), GUI_INI)
+    garantir_ini(os.path.join(RP, "GuiConfigs/CurrentSettings.ini"), GUI_FORCAR)   # cursor escondido
     write_if_missing(os.path.join(RP, "config.yml"), CONFIG_YML)
     yml, players = input_yaml()
     if not players:
