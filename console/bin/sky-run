@@ -38,8 +38,9 @@ command -v gamemoderun >/dev/null 2>&1 && PREFIX="gamemoderun"
 if [ -f "$CONF/mangohud.on" ] && command -v mangohud >/dev/null 2>&1; then
     BENCH="$HOME/skystation/benchmarks"
     [ -w /mnt/skystation ] && BENCH="/mnt/skystation/benchmarks"   # na VM, vai direto para a pasta compartilhada
+    [ -w /mnt/skyroms ] && BENCH="/mnt/skyroms/benchmarks"         # 8.0.3: no HD/pendrive SKYROMS (dá para ler no Windows)
     mkdir -p "$BENCH"
-    export MANGOHUD_CONFIG="fps,frametime,frame_timing,cpu_stats,cpu_temp,cpu_mhz,gpu_stats,ram,position=top-left,font_size=20,autostart_log=1,log_duration=0,output_folder=$BENCH"
+    export MANGOHUD_CONFIG="fps,frametime,frame_timing,cpu_stats,cpu_temp,cpu_mhz,core_load,core_bars,gpu_stats,ram,position=top-left,font_size=20,autostart_log=1,log_duration=0,output_folder=$BENCH"
     PREFIX="$PREFIX mangohud"
 fi
 
