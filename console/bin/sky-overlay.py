@@ -329,12 +329,17 @@ def main():
     pygame.display.init()
     pygame.font.init()
     if os.environ.get("SDL_VIDEODRIVER") == "dummy":
-        screen = pygame.display.set_mode((1280, 720))
+        display = pygame.display.set_mode((1280, 720))
     else:
-        screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        display = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
     pygame.display.set_caption("SkyStation - Home")
     pygame.mouse.set_visible(False)
-    W, H = screen.get_size()
+    W, H = display.get_size()
+    # 8.1.1: no Wayland (cage) a tela do SDL tem canal alfa e o compositor RESPEITA esse alfa. Desenhando
+    # direto nela, o texto e os brilhos viravam caixas (o alfa da tela caía para 0 em volta deles). Agora
+    # tudo é desenhado numa tela de trabalho SEM alfa (24 bits) e copiado inteiro no fim de cada quadro.
+    screen = pygame.Surface((W, H), 0, 24)
+    tela_com_alfa = bool(display.get_masks()[3]) or bool(display.get_flags() & pygame.SRCALPHA)
     s = H / 720
     names = "opensans,notosans,dejavusans,liberationsans"
 
@@ -561,6 +566,9 @@ def main():
             surf.set_alpha(int(255 * fade))
             screen.blit(surf, (bxp + int(28 * s), byp + int(12 * s)))
 
+        display.blit(screen, (0, 0))
+        if tela_com_alfa:   # garante alfa 255 em todos os pixels (janela 100% opaca para o compositor)
+            display.fill((0, 0, 0, 255), special_flags=pygame.BLEND_RGBA_MAX)
         pygame.display.flip()
         clock.tick(30)
 

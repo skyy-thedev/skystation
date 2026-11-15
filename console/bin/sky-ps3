@@ -279,10 +279,17 @@ CONFIG_YML = """Miscellaneous:
 
 # Ajustes por jogo (o RPCS3 lê custom_configs/config_<código>.yml por cima da config geral).
 # Só sobrescrevemos/apagamos arquivos que nós mesmos criamos (primeira linha "# SkyStation").
+# Teste 1 (8.1.1), UMA mudança só: blocos maiores na tradução dos coprocessadores (SPU) do Cell.
+# Resolução 50%/75% não mudou o FPS no Ryzen 5 5500U: o gargalo é o processador, não o vídeo.
+SPU_MEGA = """# SkyStation: teste 1 do God of War III (apague esta linha para editar à mão)
+Core:
+  SPU Block Size: Mega
+"""
 POR_JOGO = {
-    # 8.0.4: o ajuste "leve" do God of War III (sem intérprete + precisão baixa + RSX multithread +
-    # ZCULL relaxado) piorou a introdução para 1 FPS no notebook Ryzen. Voltou ao padrão do RPCS3;
-    # os ajustes agora são testados um por um no menu do próprio RPCS3 antes de virarem padrão.
+    # 8.0.4: o ajuste "leve" (sem intérprete + precisão baixa + RSX multithread + ZCULL relaxado)
+    # piorou a introdução para 1 FPS. Agora: uma mudança por vez, medida no notebook.
+    "BCUS98111": SPU_MEGA,   # God of War III (EUA)
+    "BCES00510": SPU_MEGA,   # God of War III (Europa)
 }
 
 
