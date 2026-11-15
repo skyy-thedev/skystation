@@ -277,23 +277,33 @@ CONFIG_YML = """Miscellaneous:
 """
 
 
-# Fase 8.0.2: ajustes por jogo (o RPCS3 lê custom_configs/config_<código>.yml por cima da config geral).
-# Feitos para PC com vídeo integrado (Vega 7). Só sobrescrevemos arquivos que nós mesmos criamos.
-LEVE_GPU = """# SkyStation: ajuste automático para vídeo integrado (apague esta linha para editar à mão)
-Video:
-  Shader Mode: Async Recompiler (multi-threaded)
-  Shader Precision: Low
-  Multithreaded RSX: true
-  Relaxed ZCULL Sync: true
-"""
+# Ajustes por jogo (o RPCS3 lê custom_configs/config_<código>.yml por cima da config geral).
+# Só sobrescrevemos/apagamos arquivos que nós mesmos criamos (primeira linha "# SkyStation").
 POR_JOGO = {
-    "BCUS98111": LEVE_GPU,   # God of War III (EUA)
-    "BCES00510": LEVE_GPU,   # God of War III (Europa)
+    # 8.0.4: o ajuste "leve" do God of War III (sem intérprete + precisão baixa + RSX multithread +
+    # ZCULL relaxado) piorou a introdução para 1 FPS no notebook Ryzen. Voltou ao padrão do RPCS3;
+    # os ajustes agora são testados um por um no menu do próprio RPCS3 antes de virarem padrão.
 }
 
 
 def ajustes_por_jogo():
     d = os.path.join(RP, "custom_configs")
+    try:
+        nomes = os.listdir(d)
+    except OSError:
+        nomes = []
+    # remove os ajustes automáticos antigos que saíram da lista (só os criados pelo SkyStation)
+    for nome in nomes:
+        serial = nome[len("config_"):-len(".yml")] if nome.startswith("config_") and nome.endswith(".yml") else ""
+        if serial and serial not in POR_JOGO:
+            path = os.path.join(d, nome)
+            try:
+                with open(path) as f:
+                    nosso = f.readline().startswith("# SkyStation")
+                if nosso:
+                    os.remove(path)
+            except OSError:
+                pass
     for serial, texto in POR_JOGO.items():
         path = os.path.join(d, f"config_{serial}.yml")
         try:
