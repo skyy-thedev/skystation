@@ -137,6 +137,22 @@ def trophies():
     return d.get("ganhos", 0), d.get("total", 0), items
 
 
+ICONE_NOTIF = {"central": "download", "controle": "pad", "usb": "usb", "pendrive": "drive", "jogo": "disc",
+               "disco": "disc", "tv": "monitor", "trofeu": "trophy", "bateria": "battery", "energia": "battery",
+               "calor": "thermo"}
+
+
+def quando(t):
+    d = max(0, int(time.time() - float(t or 0)))
+    if d < 60:
+        return "agora"
+    if d < 3600:
+        return f"há {d // 60} min"
+    if d < 86400:
+        return f"há {d // 3600} h"
+    return time.strftime("%d/%m %H:%M", time.localtime(float(t)))
+
+
 def status_info():
     """Bateria do console e dos controles, temperatura e hora, para o rodapé do menu."""
     info = {"hora": time.strftime("%H:%M")}
@@ -273,7 +289,32 @@ class Home:
             except (BrokenPipeError, OSError):
                 pass
 
-    def open_menu(self, pid, power=False):
+    def send_cats(self):
+        self.send("cats " + json.dumps([{"id": c["id"], "title": c["title"], "icon": c["icon"],
+                                         "items": [dict(it, acao=a) for a, it in c["items"]]} for c in self.cats],
+                                       ensure_ascii=False))
+        self.send(f"sel {self.cat} {self.sel}")
+
+    def cat_index(self, cid):
+        return next((k for k, c in enumerate(self.cats) if c["id"] == cid), 0)
+
+    def notif_items(self):
+        try:
+            import skyhist
+            lst = skyhist.load()
+        except Exception:
+            lst = []
+        if not lst:
+            return [("nada", {"t": "Nenhuma notificação", "kind": "info",
+                              "sub": "Os avisos do console aparecem aqui"})]
+        items = [("limpar", {"t": "Limpar todas", "sub": f"{len(lst)} notificação(ões)"})]
+        for n in lst[:30]:
+            items.append(("notif", {"t": n["text"], "sub": quando(n.get("t", 0)) + "  ·  A para apagar",
+                                    "kind": "notif", "icone": ICONE_NOTIF.get(n.get("kind", ""), "info"),
+                                    "nid": n.get("id")}))
+        return items
+
+    def open_menu(self, pid, power=False, aba=""):
         log("menu de energia aberto" if power else "menu Home aberto")
         self.menu_pid = pid
         self.menu, self.power = True, power
@@ -308,6 +349,7 @@ class Home:
         self.cats = [
             {"id": "jogo", "title": "Jogo", "icon": "pad", "items": jogo},
             {"id": "trofeus", "title": "Troféus", "icon": "trophy", "items": trof_items},
+            {"id": "notificacoes", "title": "Notificações", "icon": "bell", "items": self.notif_items()},
             {"id": "amigos", "title": "Amigos", "icon": "friends",
              "items": [("nada", {"t": "SkyNetwork chega em breve", "kind": "info",
                                  "sub": "Ver o que os amigos estão jogando e trocar mensagens"})]},
@@ -320,7 +362,7 @@ class Home:
                        ("poweroff", {"t": "Desligar o console"})]},
         ]
         # segurar Home abre direto em Energia; o toque abre em Jogo (como no PS3)
-        self.cat = len(self.cats) - 1 if power else 0
+        self.cat = len(self.cats) - 1 if power else (self.cat_index(aba) if aba else 0)
         self.sel = 0
         self.items = self.cats[self.cat]["items"]
         try:
@@ -331,10 +373,7 @@ class Home:
             self.overlay = None
             self.choose("resume")
             return
-        self.send("cats " + json.dumps([{"id": c["id"], "title": c["title"], "icon": c["icon"],
-                                         "items": [it for _, it in c["items"]]} for c in self.cats],
-                                       ensure_ascii=False))
-        self.send(f"sel {self.cat} {self.sel}")
+        self.send_cats()
         vol, muted = get_volume()
         self.send(f"vol {vol} {int(muted)}")
         self.send(f"bri {get_brightness()}")
@@ -420,6 +459,20 @@ class Home:
             if self.retroarch("LOAD_STATE"):
                 play("carregado")
             self.choose("resume")
+        elif action == "notif":
+            try:
+                import skyhist
+                skyhist.remove(self.items[self.sel][1].get("nid"))
+            except Exception:
+                pass
+            self.refresh_notifs("Notificação apagada")
+        elif action == "limpar":
+            try:
+                import skyhist
+                skyhist.clear()
+            except Exception:
+                pass
+            self.refresh_notifs("Notificações limpas")
         elif action == "trofeu":
             it = self.items[self.sel][1]
             self.send("msg " + (it["sub"] if it.get("ganho") else "Ainda não conquistado: " + it["sub"]))
@@ -433,6 +486,14 @@ class Home:
                 self.send("msg Captura salva em Capturas")
             except OSError:
                 self.send("msg Não consegui salvar a captura")
+
+    def refresh_notifs(self, msg):
+        k = self.cat_index("notificacoes")
+        self.cats[k]["items"] = self.notif_items()
+        self.items = self.cats[k]["items"]
+        self.sel = min(self.sel, len(self.items) - 1)
+        self.send_cats()
+        self.send("msg " + msg)
 
     def set_cat(self, k):
         self.cat = k % len(self.cats)
@@ -531,6 +592,19 @@ class Home:
                             self.menu_abs(path, dev, ev)
                 except OSError:
                     last_scan = 0.0
+
+            # Fase 8.1: deslize no touchpad (sky-notify) pede o menu já na aba Notificações
+            pedido = os.path.join(RUN, "home.pedido")
+            if os.path.exists(pedido):
+                try:
+                    os.remove(pedido)
+                except OSError:
+                    pass
+                pid = game_pid()
+                if pid and not self.menu_open():
+                    self.open_menu(pid, aba="notificacoes")
+                elif self.menu_open():
+                    self.set_cat(self.cat_index("notificacoes"))
 
             # overlay morreu sozinho? volta ao jogo para não deixá-lo congelado
             if self.menu_open() and (self.overlay is None or self.overlay.poll() is not None):

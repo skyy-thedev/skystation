@@ -111,6 +111,13 @@ def conferir():
         for k, (nome, nivel) in enumerate(novos):
             f.write(json.dumps({"t": time.time() + k * 0.01, "kind": "trofeu",
                                 "text": f"Troféu de {nivel}: {nome}"}, ensure_ascii=False) + "\n")
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import skyhist          # Fase 8.1: central de notificações
+        for nome, nivel in reversed(novos):
+            skyhist.add("trofeu", f"Troféu de {nivel}: {nome}")
+    except Exception:
+        pass
     som = "/opt/skystation/sounds/trofeu.wav"
     player = shutil.which("pw-play") or shutil.which("aplay")
     if player and os.path.exists(som) and not os.path.exists(os.path.join(HOME, ".config/skystation/avisos.off")):

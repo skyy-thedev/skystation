@@ -218,6 +218,30 @@ func _activate() -> void:
 		"bt_pair":
 			status = "Pareando %s…" % it["text"]
 			_async(["bt", "pair", it["arg"]], _on_result.bind(section))
+		"bt_opts":
+			var mac: String = it["arg"]
+			var nm: String = it["name"]
+			items = [
+				{"text": "← Voltar à lista", "action": "bt_back"},
+				{"text": ("Desconectar  " + nm) if it["connected"] else ("Conectar  " + nm),
+					"action": "bt_cmd", "arg": ["disconnect" if it["connected"] else "connect", mac]},
+				{"text": "Esquecer este aparelho", "action": "bt_forget", "arg": mac, "name": nm},
+			]
+			item = 1
+			status = nm + "  (" + mac + ")"
+		"bt_back":
+			_load_section()
+		"bt_cmd":
+			status = "Aguarde…"
+			_async(["bt"] + it["arg"], _on_result.bind(section))
+		"bt_forget":
+			# confirmação: o mesmo item pede um segundo A
+			if it.get("confirm", false):
+				status = "Esquecendo %s…" % it["name"]
+				_async(["bt", "remove", it["arg"]], _on_result.bind(section))
+			else:
+				it["confirm"] = true
+				it["text"] = "Confirmar: esquecer %s?  (aperte A de novo)" % it["name"]
 		"vol_up":
 			_set_volume(volume + 10)
 		"vol_down":
@@ -258,10 +282,14 @@ func _on_bt(data: Dictionary, sec: int) -> void:
 		return
 	for d in data["devices"]:
 		var t: String = str(d["name"])
-		if d["paired"]:
+		if d.get("connected", false):
+			t += "   · conectado"
+		elif d["paired"]:
 			t += "   · pareado"
-		items.append({"text": t, "action": "bt_pair", "arg": d["mac"]})
-	status = "%d dispositivo(s)" % (items.size() - 1)
+		# Fase 8.1: aparelho já pareado abre as opções (desconectar, esquecer…); novo vai direto parear
+		items.append({"text": t, "action": "bt_opts" if d["paired"] else "bt_pair", "arg": d["mac"],
+			"name": str(d["name"]), "connected": d.get("connected", false)})
+	status = "%d dispositivo(s)  ·  A em um pareado: conectar, desconectar ou esquecer" % (items.size() - 1)
 	item = clamp(item, 0, items.size() - 1)
 
 

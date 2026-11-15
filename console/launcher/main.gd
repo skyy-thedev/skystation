@@ -235,6 +235,14 @@ var storage_data: Dictionary = {}   # tela Armazenamento (vazio = fechada)
 var job_thread: Thread = null
 var job_cancel_hint: bool = false
 var confirm_delete: bool = false
+# Fase 8.1: central de notificações (touchpad de cima para baixo, como no Android)
+var notif_open: bool = false
+var notif_t: float = 0.0
+var notif_sel: int = 0
+var notif_list: Array = []
+var notif_scroll: float = 0.0
+const NOTIF_ICONS := {"central": "download", "controle": "pad", "usb": "usb", "pendrive": "drive", "jogo": "disc",
+	"disco": "disc", "tv": "monitor", "trofeu": "trophy", "bateria": "battery", "energia": "battery", "calor": "thermo"}
 
 
 # ---------------------------------------------------------------- ciclo de vida
@@ -356,6 +364,8 @@ func _process(delta: float) -> void:
 	cat_smooth = lerp(cat_smooth, float(cat), k)
 	item_smooth = lerp(item_smooth, float(_cur_item()), k)
 	panel_t = move_toward(panel_t, 1.0 if panel_open else 0.0, delta * 6.0)
+	notif_t = move_toward(notif_t, 1.0 if notif_open else 0.0, delta * 6.5)
+	notif_scroll = lerp(notif_scroll, float(notif_sel), 1.0 - exp(-delta * 12.0))
 
 
 # ---------------------------------------------------------------- entradas
@@ -387,6 +397,8 @@ func _setup_actions() -> void:
 	_add_action("sky_accept", [KEY_ENTER, KEY_KP_ENTER, KEY_SPACE], [JOY_BUTTON_A])
 	_add_action("sky_back", [KEY_BACKSPACE, KEY_ESCAPE], [JOY_BUTTON_B])
 	_add_action("sky_menu", [KEY_M, KEY_TAB], [JOY_BUTTON_START, JOY_BUTTON_Y])
+	_add_action("sky_x", [KEY_X, KEY_DELETE], [JOY_BUTTON_X])            # Quadrado no DS4: apagar
+	_add_action("sky_notif", [KEY_N], [])                                # teclado: abrir notificações
 
 
 func _nav_dir() -> Vector2i:
@@ -418,6 +430,12 @@ func _input(event: InputEvent) -> void:
 
 func _handle_input(delta: float) -> void:
 	if cooldown > 0.0:
+		return
+	if notif_open:
+		_notif_input(delta)
+		return
+	if Input.is_action_just_pressed("sky_notif") and not recv_open and storage_data.is_empty() and not viewer_open:
+		_open_notifs()
 		return
 	if panel_open == false and not recv_open and storage_data.is_empty():
 		_tick_secret(delta)
@@ -1665,6 +1683,15 @@ func _poll_events() -> void:
 			reload_at = t + 0.8
 			covers_at = t + 3.0
 			continue
+		if kind == "painel":
+			# deslize no touchpad (sky-notify): abre/fecha a central, só se o pedido for recente
+			if Time.get_unix_time_from_system() - float(ev.get("t", 0)) < 3.0 and dim_t <= 0.0 \
+					and busy_msg == "" and (settings == null or not settings.visible):
+				if notif_open:
+					_close_notifs()
+				else:
+					_open_notifs()
+			continue
 		if kind == "tv":
 			_apply_tv_scale()
 			_refresh_sys_items()
@@ -2425,7 +2452,9 @@ func _draw() -> void:
 			_draw_panel(w, h)
 		if slider_t > 0.0:
 			_draw_slider(w, h)
-	if toast_t > 0.0:
+	if notif_t > 0.0:
+		_draw_notifs(w, h)
+	if toast_t > 0.0 and not notif_open:
 		var ta: float = clamp(toast_t, 0.0, 1.0) * a
 		var icon_w := 34.0 if toast_icon != "" else 0.0
 		# avisos longos (erros com código) quebram em linhas em vez de sair da tela
@@ -2761,6 +2790,202 @@ func _draw_panel(w: float, h: float) -> void:
 		_text(str(panel_items[i][0]), Vector2(x + 44, y), 20, Color(WHITE if on else MUTED, e), on)
 
 
+# ---------------------------------------------------------------- central de notificações (Fase 8.1)
+# Histórico em ~/skystation/notificacoes.json (gravado pelo sky-notify, sky-trofeus e sky-receber via
+# skyhist.py). Abre deslizando um dedo de cima para baixo no touchpad do controle (ou N no teclado).
+# ▲▼ escolhem · A abre a seção do aviso · Quadrado (X) apaga um · "Limpar todas" no topo · B fecha.
+
+func _notif_path() -> String:
+	return home_dir + "/skystation/notificacoes.json"
+
+
+func _notif_load() -> void:
+	var d = JSON.parse_string(_read_text(_notif_path(), "[]"))
+	notif_list = d if typeof(d) == TYPE_ARRAY else []
+
+
+func _notif_save() -> void:
+	var tmp := _notif_path() + ".tmp"
+	var f := FileAccess.open(tmp, FileAccess.WRITE)
+	if f == null:
+		return
+	f.store_string(JSON.stringify(notif_list, "", true, true))   # full_precision: ids grandes intactos
+	f.close()
+	DirAccess.rename_absolute(tmp, _notif_path())   # troca atômica, como o skyhist.py
+
+
+func _open_notifs() -> void:
+	_notif_load()
+	notif_open = true
+	panel_open = false
+	notif_sel = 1 if notif_list.size() > 0 else 0    # 0 = "Limpar todas"; começa na mais nova
+	notif_scroll = float(notif_sel)
+	_play("swoosh")
+	cooldown = 0.2
+
+
+func _close_notifs() -> void:
+	notif_open = false
+	_play("back")
+	cooldown = 0.15
+
+
+func _notif_rows() -> int:
+	return notif_list.size() + (1 if notif_list.size() > 0 else 0)
+
+
+func _notif_input(delta: float) -> void:
+	var d := _nav_dir()
+	if d != hold_dir:
+		hold_dir = d
+		hold_t = 0.38
+		if d.y != 0:
+			_notif_move(d.y)
+	elif d.y != 0:
+		hold_t -= delta
+		if hold_t <= 0.0:
+			hold_t = 0.11
+			_notif_move(d.y)
+	if Input.is_action_just_pressed("sky_back") or Input.is_action_just_pressed("sky_notif"):
+		_close_notifs()
+	elif Input.is_action_just_pressed("sky_accept") and _notif_rows() > 0:
+		if notif_sel == 0:
+			notif_list = []
+			_notif_save()
+			notif_sel = 0
+			_play("back")
+			_toast("Notificações limpas", 2.0, "bell")
+		else:
+			var n: Dictionary = notif_list[notif_sel - 1]
+			_play("accept")
+			notif_open = false
+			_notif_go(str(n.get("kind", "")))
+	elif Input.is_action_just_pressed("sky_x") and notif_sel > 0 and notif_sel <= notif_list.size():
+		notif_list.remove_at(notif_sel - 1)
+		_notif_save()
+		_play("back")
+		if notif_list.is_empty():
+			notif_sel = 0
+		else:
+			notif_sel = clampi(notif_sel, 1, notif_list.size())
+
+
+func _notif_move(dy: int) -> void:
+	var n := _notif_rows()
+	if n <= 1:
+		return
+	var nv := clampi(notif_sel + dy, 0, n - 1)
+	if nv != notif_sel:
+		notif_sel = nv
+		_play("tick")
+
+
+func _goto_cat(cid: String) -> bool:
+	for i in cats.size():
+		if cats[i]["id"] == cid:
+			cat = i
+			return true
+	return false
+
+
+func _notif_go(kind: String) -> void:
+	"""Abre a seção a que o aviso se refere."""
+	match kind:
+		"trofeu":
+			if not _goto_cat("trofeus"):
+				_toast("Os troféus aparecem na categoria Troféus", 2.5, "trophy")
+		"controle":
+			_open_settings(1)        # Configurações → Bluetooth
+		"central":
+			_open_receive()
+		"bateria", "energia", "calor":
+			_goto_cat("energia")
+		"tv":
+			_goto_cat("sistema")
+		"pendrive", "usb", "jogo", "disco":
+			if not _goto_cat("jogos"):
+				_goto_cat("recentes")
+		_:
+			_goto_cat("sistema")
+
+
+func _ago(epoch: float) -> String:
+	var dsec := int(Time.get_unix_time_from_system() - epoch)
+	if dsec < 60:
+		return "agora"
+	if dsec < 3600:
+		return "há %d min" % (dsec / 60)
+	if dsec < 86400:
+		return "há %d h" % (dsec / 3600)
+	return _fmt_when(int(epoch))
+
+
+func _draw_notifs(w: float, h: float) -> void:
+	var e := notif_t * notif_t * (3.0 - 2.0 * notif_t)
+	draw_rect(Rect2(0, 0, w, h), Color(0, 0, 0, 0.45 * e))
+	var pw := minf(860.0, w - 120.0)
+	var ph := minf(h * 0.78, 120.0 + 74.0 * maxf(2.0, float(_notif_rows())))
+	var x := (w - pw) / 2.0
+	var y := -ph + (ph + 28.0) * e        # desce do topo, como a cortina do Android
+	var r := Rect2(x, y, pw, ph)
+	_rrect(Rect2(r.position + Vector2(0, 6), r.size), Color(0, 0, 0, 0.35 * e), 26)
+	_rrect(r, Color(palette[1].darkened(0.25) if not palette.is_empty() else Color.BLACK, 0.94 * e), 26,
+		Color(accent, 0.35 * e), 1)
+	# alça, como a cortina do Android
+	_rrect(Rect2(x + pw / 2.0 - 28, y + ph - 16, 56, 5), Color(WHITE, 0.25 * e), 3)
+	_icon("bell", Vector2(x + 50, y + 50), 30.0, Color(accent, e))
+	_text("Notificações", Vector2(x + 78, y + 59), 24, Color(WHITE, e), true)
+	var cnt := "%d" % notif_list.size() if notif_list.size() > 0 else "nenhuma"
+	_text(cnt, Vector2(x, y + 59), 16, Color(MUTED, e), false, pw - 40, HORIZONTAL_ALIGNMENT_RIGHT)
+	var top := y + 92.0
+	var bottom := y + ph - 64.0
+	if notif_list.is_empty():
+		_text("Nenhuma notificação por aqui", Vector2(x, top + 70), 20, Color(MUTED, e), false, pw,
+			HORIZONTAL_ALIGNMENT_CENTER)
+		_text("Os avisos do console (controles, troféus, jogos recebidos…) ficam guardados aqui.",
+			Vector2(x, top + 104), 15, Color(DIM, e), false, pw, HORIZONTAL_ALIGNMENT_CENTER)
+	else:
+		var row_h := 70.0
+		var view := bottom - top
+		var off := clampf(notif_scroll * row_h - view * 0.4, 0.0, maxf(0.0, _notif_rows() * row_h - view))
+		for i in _notif_rows():
+			var ry := top + i * row_h - off
+			if ry < top - row_h * 0.5 or ry > bottom - row_h * 0.5:
+				continue
+			var on := i == notif_sel
+			var rr := Rect2(x + 22, ry, pw - 44, row_h - 10)
+			if on:
+				_rrect(rr, Color(accent, 0.16 * e), 16, Color(accent, 0.55 * e), 1)
+			if i == 0:
+				_icon("trash", Vector2(rr.position.x + 34, rr.position.y + rr.size.y / 2), 24.0,
+					Color(accent if on else MUTED, e))
+				_text("Limpar todas", Vector2(rr.position.x + 66, rr.position.y + 38), 19,
+					Color(WHITE if on else MUTED, e), on)
+				continue
+			var n: Dictionary = notif_list[i - 1]
+			var ic := str(NOTIF_ICONS.get(str(n.get("kind", "")), "info"))
+			draw_circle(Vector2(rr.position.x + 34, rr.position.y + rr.size.y / 2), 22.0, Color(accent, (0.22 if on else 0.1) * e))
+			_icon(ic, Vector2(rr.position.x + 34, rr.position.y + rr.size.y / 2), 24.0, Color(WHITE if on else MUTED, e))
+			var when := _ago(float(n.get("t", 0)))
+			var ww := font.get_string_size(when, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
+			_text(str(n.get("text", "")), Vector2(rr.position.x + 70, rr.position.y + 38), 18,
+				Color(WHITE if on else MUTED, e), on, rr.size.x - 110 - ww)
+			_text(when, Vector2(rr.position.x + rr.size.x - ww - 20, rr.position.y + 37), 14, Color(DIM, e))
+	# rodapé com os botões
+	var hints := [["A", "Abrir"], ["□", "Apagar"], ["B", "Fechar"]] if not notif_list.is_empty() else [["B", "Fechar"]]
+	var hx := x + pw - 34.0
+	var hy := y + ph - 30.0
+	for i in range(hints.size() - 1, -1, -1):
+		var label: String = hints[i][1]
+		var lw := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
+		hx -= lw
+		_text(label, Vector2(hx, hy), 14, Color(MUTED, e))
+		hx -= 28.0
+		draw_circle(Vector2(hx + 10, hy - 5), 10.0, Color(WHITE, 0.16 * e))
+		_text(str(hints[i][0]), Vector2(hx, hy), 12, Color(WHITE, 0.9 * e), true, 20, HORIZONTAL_ALIGNMENT_CENTER)
+		hx -= 24.0
+
+
 func _draw_busy(w: float, h: float) -> void:
 	draw_rect(Rect2(0, 0, w, h), Color(0, 0, 0, 0.55))
 	var c := Vector2(w / 2.0, h / 2.0 - 30)
@@ -2921,5 +3146,18 @@ func _icon(kind: String, c: Vector2, s: float, col: Color) -> void:
 		"thermo":
 			_rrect(Rect2(c.x - s * 0.08, c.y - s * 0.38, s * 0.16, s * 0.5), Color(0, 0, 0, 0), int(s * 0.08), col, int(lw))
 			draw_circle(c + Vector2(0, s * 0.22), s * 0.14, col, true, -1.0, true)
+		"bell":
+			draw_colored_polygon(PackedVector2Array([c + Vector2(-s * 0.30, s * 0.20), c + Vector2(-s * 0.22, s * 0.05),
+				c + Vector2(-s * 0.22, -s * 0.12), c + Vector2(-s * 0.12, -s * 0.28), c + Vector2(s * 0.12, -s * 0.28),
+				c + Vector2(s * 0.22, -s * 0.12), c + Vector2(s * 0.22, s * 0.05), c + Vector2(s * 0.30, s * 0.20)]), col)
+			draw_circle(c + Vector2(0, -s * 0.17), s * 0.2, col, true, -1.0, true)
+			_rrect(Rect2(c.x - s * 0.34, c.y + s * 0.16, s * 0.68, s * 0.08), col, int(s * 0.04))
+			draw_circle(c + Vector2(0, s * 0.31), s * 0.07, col, true, -1.0, true)
+		"trash":
+			_rrect(Rect2(c.x - s * 0.24, c.y - s * 0.18, s * 0.48, s * 0.5), Color(0, 0, 0, 0), int(s * 0.05), col, int(lw))
+			draw_line(c + Vector2(-s * 0.32, -s * 0.24), c + Vector2(s * 0.32, -s * 0.24), col, lw, true)
+			_rrect(Rect2(c.x - s * 0.1, c.y - s * 0.34, s * 0.2, s * 0.08), col, int(s * 0.03))
+			draw_line(c + Vector2(-s * 0.08, -s * 0.06), c + Vector2(-s * 0.08, s * 0.2), col, lw, true)
+			draw_line(c + Vector2(s * 0.08, -s * 0.06), c + Vector2(s * 0.08, s * 0.2), col, lw, true)
 		_:
 			draw_circle(c, s * 0.3, col, false, lw, true)

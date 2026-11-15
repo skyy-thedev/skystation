@@ -6,7 +6,7 @@
   sky-config audio list | next          (saída de som: alto-falantes / HDMI)
   sky-config brilho get | set <5-100>
   sky-config wifi list | connect <ssid> [senha] | status
-  sky-config bt list | scan | pair <MAC>
+  sky-config bt list | scan | pair <MAC> | connect <MAC> | disconnect <MAC> | remove <MAC>
 """
 import json
 import os
@@ -245,6 +245,15 @@ def _devices(kind=""):
     return devs
 
 
+def _bt_list():
+    """Aparelhos conhecidos, com pareado/conectado; os conectados primeiro."""
+    paired = {d["mac"] for d in _devices("Paired")}
+    conectados = {d["mac"] for d in _devices("Connected")}
+    devs = [dict(d, paired=d["mac"] in paired, connected=d["mac"] in conectados) for d in _devices()]
+    devs.sort(key=lambda d: (not d["connected"], not d["paired"], d["name"].lower()))
+    return devs
+
+
 def bt(args):
     sub = args[0] if args else "list"
     code, so, se = run(["bluetoothctl", "show"])
@@ -260,14 +269,12 @@ def bt(args):
             motivo = "bloqueado (rfkill)" if "Blocked" in (so2 + se2) else "não liga"
             fail(f"O Bluetooth deste PC está {motivo}. Rode no terminal: sudo skystation-diag-controle")
     if sub == "list":
-        paired = {d["mac"] for d in _devices("Paired")}
-        out({"ok": True, "devices": [dict(d, paired=d["mac"] in paired) for d in _devices()]})
+        out({"ok": True, "devices": _bt_list()})
     if sub == "scan":
         code, so2, se2 = run(["bluetoothctl", "--timeout", "8", "scan", "on"], timeout=15)
         if "Failed" in (so2 + se2) or "org.bluez.Error" in (so2 + se2):
             fail("A busca do Bluetooth falhou: " + ((so2 + se2).strip().splitlines() or ["?"])[-1])
-        paired = {d["mac"] for d in _devices("Paired")}
-        devs = [dict(d, paired=d["mac"] in paired) for d in _devices()]
+        devs = _bt_list()
         if not devs:
             fail("Nenhum aparelho encontrado. Segure Share + PS até a luz piscar rápido e procure de novo.")
         out({"ok": True, "devices": devs})
@@ -282,6 +289,24 @@ def bt(args):
         if "Connection successful" in so or code == 0:
             out({"ok": True, "message": "Controle pareado e conectado"})
         fail("Pareou, mas não conectou. Aperte um botão do controle.")
+    # Fase 8.1: gerenciar aparelhos (desconectar, conectar, esquecer)
+    if sub in ("connect", "disconnect", "remove") and len(args) > 1:
+        mac = args[1]
+        if not re.fullmatch(r"[0-9A-F:]{17}", mac):
+            fail("Endereço inválido")
+        if sub == "connect":
+            code, so, se = run(["bluetoothctl", "connect", mac], timeout=20)
+            if "Connection successful" in so:
+                out({"ok": True, "message": "Conectado"})
+            fail("Não conectou. Ligue o aparelho (no controle, aperte PS) e tente de novo.")
+        if sub == "disconnect":
+            run(["bluetoothctl", "disconnect", mac], timeout=15)
+            out({"ok": True, "message": "Desconectado"})
+        run(["bluetoothctl", "disconnect", mac], timeout=15)
+        code, so, se = run(["bluetoothctl", "remove", mac], timeout=15)
+        if "removed" in so.lower() or code == 0:
+            out({"ok": True, "message": "Aparelho esquecido. Para usar de novo, pareie outra vez."})
+        fail("Não consegui remover: " + ((so + se).strip().splitlines() or ["?"])[-1])
     fail("comando de Bluetooth inválido")
 
 

@@ -100,6 +100,19 @@ rótulo **SKYROMS** e crie as pastas `ps1/` e `ps2/` (capas opcionais em `ps1/co
 Ao conectar, ele monta sozinho em `/mnt/skyroms` e os jogos aparecem no console; ao tirar, somem.
 Dica: `.chd` ocupa bem menos que `.bin/.cue` (converta com o `chdman` no PC).
 
+## Central de notificações, Home redesenhado e Bluetooth (Fase 8.1)
+
+- **Central de notificações:** deslize **um dedo de cima para baixo** no touchpad do controle (começando
+  no terço de cima), como no Android — ou N no teclado. Mostra os avisos recentes (controles, troféus,
+  jogos recebidos, bateria, disco, pendrive/HD…). **A** abre a seção do aviso, **Quadrado** apaga um,
+  **Limpar todas** no topo, **B** fecha. Com um jogo aberto, o mesmo gesto abre o menu Home já na aba
+  Notificações. Histórico em `~/skystation/notificacoes.json` (até 80, gravado pelo `skyhist.py`).
+- **Menu Home redesenhado:** ícones, cantos e brilhos com antialiasing (desenhados em 4x e reduzidos),
+  no mesmo desenho do launcher; onda do XMB no fundo; cartão de vidro no item selecionado; itens
+  anteriores sobem acima das categorias, como no PS3.
+- **Bluetooth:** em Configurações → Bluetooth, A num aparelho pareado abre Conectar/Desconectar e
+  **Esquecer este aparelho** (pede confirmação). `sky-config bt connect|disconnect|remove <MAC>`.
+
 ## Menu Home no estilo PS3 e troféus ao vivo (Fase 8.0)
 
 - **Home no meio do jogo** abre a barra cruzada por cima da imagem congelada, como o XMB do PS3:
@@ -352,6 +365,7 @@ curl -fsSL https://raw.githubusercontent.com/skyy-thedev/skystation/main/setup/s
 - [ ] Case impressa em 3D (protótipo v0.1 em hardware/case)
 - [ ] Fase 6: ISO próprio do SkyStation
 - [x] Fase 7.0: Central web em segundo plano, som de ligar na TV, PS3 pelo RPCS3 em PC forte (não testado em hardware)
+- [x] Fase 8.1: central de notificações, Home redesenhado, esquecer aparelhos Bluetooth
 - [x] Fase 8.0: menu Home no estilo XMB do PS3 + troféus durante o jogo
 - [x] Fase 7.1: GameCube, Wii, DS, 3DS, GB/GBC/GBA, NES, Mega Drive e Xbox 360 experimental (não testado em hardware)
 - [x] Fase 7.2: velocidade nas transferências, erros com código, menu de energia no Home, ponteiro escondido, revisão

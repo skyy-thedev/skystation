@@ -248,7 +248,13 @@ def write_status():
 
 
 def aviso(kind, text):
-    """Aviso no menu do console (mesmo arquivo que o sky-notify usa)."""
+    """Aviso no menu do console (mesmo arquivo que o sky-notify usa) e no histórico (Fase 8.1)."""
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import skyhist
+        skyhist.add(kind, text)
+    except Exception:
+        pass
     try:
         with open(EVENTS, "a") as f:
             f.write(json.dumps({"t": time.time(), "kind": kind, "text": text}, ensure_ascii=False) + "\n")
