@@ -94,6 +94,13 @@ echo "== 7.5 Potência nos jogos"
 v "serviço de potência ativo" "sudo skystation-atualizar" systemctl is-enabled --quiet skystation-potencia.path
 echo "  · agora: governador $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null), energia $(cat /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference 2>/dev/null || echo -), $(awk '/MHz/ {s+=$4; n++} END {if (n) printf "%d MHz em média", s/n}' /proc/cpuinfo)"
 
+echo "== Energia e cooler (modo de desempenho do notebook)"
+if [ -r /sys/firmware/acpi/platform_profile ]; then
+    echo "  ✓ modos: $(cat /sys/firmware/acpi/platform_profile_choices)  ·  agora: $(cat /sys/firmware/acpi/platform_profile)"
+else
+    echo "  · este notebook não expõe modos de energia ao Linux (IdeaPad: reinicie depois de atualizar)"
+fi
+
 echo "== 7.6 Jogos direto do HD/SSD do PC (pasta SKYROMS)"
 v "serviço que procura a pasta SKYROMS" "Sistema → Atualizar o SkyStation" systemctl is-enabled --quiet skystation-skyroms-hd.service
 v "driver NTFS do kernel (ntfs3)" "" sh -c "grep -qw ntfs3 /proc/filesystems || modprobe -n ntfs3"

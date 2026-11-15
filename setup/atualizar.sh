@@ -121,6 +121,15 @@ cat >/etc/systemd/system/bluetooth.service.d/skystation.conf <<'UNIT'
 ExecStartPre=-/usr/bin/rfkill unblock bluetooth
 UNIT
 
+# Lenovo IdeaPad (8.1.4): no IdeaPad 3 15ALC6 (Ryzen 5 5500U) os modos de energia da Lenovo
+# (o "Desempenho extremo" do Fn+Q, que muda limites de energia e o comportamento do cooler) só
+# aparecem no Linux com allow_v4_dytc. Com eles, o skystation-potencia liga "performance" nos jogos
+# e volta ao normal no menu. Vale a partir do próximo boot.
+if grep -qi lenovo /sys/class/dmi/id/sys_vendor 2>/dev/null && \
+   grep -qi ideapad /sys/class/dmi/id/product_version /sys/class/dmi/id/product_family 2>/dev/null; then
+    echo "options ideapad_laptop allow_v4_dytc=Y" >/etc/modprobe.d/skystation-ideapad.conf
+fi
+
 # Jogos direto do HD/SSD do PC (Fase 7.6): no boot procura uma pasta SKYROMS nos discos do PC
 # e a monta em /mnt/skyroms (o mesmo lugar do pendrive SKYROMS).
 cat >/etc/systemd/system/skystation-skyroms-hd.service <<'UNIT'
