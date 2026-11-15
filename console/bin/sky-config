@@ -250,14 +250,27 @@ def bt(args):
     code, so, se = run(["bluetoothctl", "show"])
     if code != 0 or "Controller" not in so:
         fail("Nenhum adaptador Bluetooth encontrado (na VM isso é normal)")
-    run(["bluetoothctl", "power", "on"])
+    code, so2, se2 = run(["bluetoothctl", "power", "on"])
+    if "Powered: yes" not in run(["bluetoothctl", "show"])[1]:
+        # Fase 8.0.1: notebooks que ligam com o Bluetooth bloqueado (rfkill) — tenta destravar
+        run(["rfkill", "unblock", "bluetooth"])
+        time.sleep(1)
+        code, so2, se2 = run(["bluetoothctl", "power", "on"])
+        if "Powered: yes" not in run(["bluetoothctl", "show"])[1]:
+            motivo = "bloqueado (rfkill)" if "Blocked" in (so2 + se2) else "não liga"
+            fail(f"O Bluetooth deste PC está {motivo}. Rode no terminal: sudo skystation-diag-controle")
     if sub == "list":
         paired = {d["mac"] for d in _devices("Paired")}
         out({"ok": True, "devices": [dict(d, paired=d["mac"] in paired) for d in _devices()]})
     if sub == "scan":
-        run(["bluetoothctl", "--timeout", "8", "scan", "on"], timeout=15)
+        code, so2, se2 = run(["bluetoothctl", "--timeout", "8", "scan", "on"], timeout=15)
+        if "Failed" in (so2 + se2) or "org.bluez.Error" in (so2 + se2):
+            fail("A busca do Bluetooth falhou: " + ((so2 + se2).strip().splitlines() or ["?"])[-1])
         paired = {d["mac"] for d in _devices("Paired")}
-        out({"ok": True, "devices": [dict(d, paired=d["mac"] in paired) for d in _devices()]})
+        devs = [dict(d, paired=d["mac"] in paired) for d in _devices()]
+        if not devs:
+            fail("Nenhum aparelho encontrado. Segure Share + PS até a luz piscar rápido e procure de novo.")
+        out({"ok": True, "devices": devs})
     if sub == "pair" and len(args) > 1:
         mac = args[1]
         log = _bt_session(["agent NoInputNoOutput", "default-agent", f"pair {mac}"],
