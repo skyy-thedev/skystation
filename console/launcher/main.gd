@@ -398,7 +398,8 @@ func _setup_actions() -> void:
 	_add_action("sky_back", [KEY_BACKSPACE, KEY_ESCAPE], [JOY_BUTTON_B])
 	_add_action("sky_menu", [KEY_M, KEY_TAB], [JOY_BUTTON_START, JOY_BUTTON_Y])
 	_add_action("sky_x", [KEY_X, KEY_DELETE], [JOY_BUTTON_X])            # Quadrado no DS4: apagar
-	_add_action("sky_notif", [KEY_N], [])                                # teclado: abrir notificações
+	# notificações: N no teclado ou CLIQUE no touchpad do controle (além do deslize, que vem do sky-notify)
+	_add_action("sky_notif", [KEY_N], [JOY_BUTTON_TOUCHPAD])
 
 
 func _nav_dir() -> Vector2i:

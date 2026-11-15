@@ -112,7 +112,7 @@ def _event_write(kind, text):
 
 # ------------------------------------------------------------------ gestos no touchpad do DS4 (Fase 6.2)
 # Dois dedos deslizando: metade esquerda = brilho, metade direita = volume (cima aumenta).
-# Um dedo de cima para baixo (começando no terço de cima): abre a central de notificações (Fase 8.1).
+# Um dedo de cima para baixo (começando na metade de cima): abre a central de notificações (Fase 8.1).
 # Vale no menu e dentro dos jogos. Desligar: ~/.config/skystation/touchpad.off
 class Gesto:
     """Transforma posições de dedos em passos (+1/-1) de brilho ou volume. Sem E/S: fácil de testar."""
@@ -141,8 +141,8 @@ class Gesto:
         if len(pts) == 1 and len(self.slots) == 1:
             y = pts[0][1]
             if self.um is None:
-                self.um = y if y < self.ymax / 3 else -1     # só vale se começar em cima
-            elif self.um >= 0 and y - self.um > self.ymax * 0.45:
+                self.um = y if y < self.ymax * 0.45 else -1  # só vale se começar na metade de cima
+            elif self.um >= 0 and y - self.um > self.ymax * 0.35:
                 self.um = -1                                   # dispara uma vez por toque
                 self.lado = None
                 return "painel", 1
@@ -196,44 +196,61 @@ def abrir_notificacoes():
         event("painel", "notificacoes")
 
 
+def touchpad_leitor(path):
+    """Lê UM touchpad até ele sumir (controle desligado). Um por aparelho: notebook e controle juntos."""
+    E = evdev.ecodes
+    nomes = {E.ABS_MT_SLOT: "SLOT", E.ABS_MT_TRACKING_ID: "ID", E.ABS_MT_POSITION_X: "X", E.ABS_MT_POSITION_Y: "Y"}
+    try:
+        dev = evdev.InputDevice(path)
+        g = Gesto(dev.absinfo(E.ABS_MT_POSITION_X).max, dev.absinfo(E.ABS_MT_POSITION_Y).max)
+        log(f"touchpad: ouvindo {dev.name} ({path})")
+        ultimo = 0.0
+        for ev in dev.read_loop():
+            if ev.type == E.EV_ABS and ev.code in nomes:
+                g.abs(nomes[ev.code], ev.value)
+            elif ev.type == E.EV_SYN and ev.code == E.SYN_REPORT:
+                r = g.sync()
+                if not r or os.path.exists(os.path.join(CONF, "touchpad.off")):
+                    continue
+                if r[0] == "painel":
+                    log(f"touchpad: deslize para baixo em {dev.name} -> notificações")
+                    abrir_notificacoes()
+                    continue
+                txt = ajustar(*r)
+                if txt and time.monotonic() - ultimo > 0.35:
+                    ultimo = time.monotonic()
+                    event("ajuste", txt, None)
+    except OSError:
+        pass
+    finally:
+        TOUCHPADS.discard(path)
+
+
+TOUCHPADS = set()
+
+
 def touchpad_worker():
+    """8.1.2: antes só o PRIMEIRO touchpad era lido — num notebook, o dele próprio, e o do controle
+    ficava de fora. Agora cada touchpad (controle e notebook) ganha seu leitor, e controles
+    ligados depois também entram (procura a cada 3 s)."""
     if evdev is None:
         return
     E = evdev.ecodes
-    nomes = {E.ABS_MT_SLOT: "SLOT", E.ABS_MT_TRACKING_ID: "ID", E.ABS_MT_POSITION_X: "X", E.ABS_MT_POSITION_Y: "Y"}
     while True:
-        dev = None
         for path in evdev.list_devices():
+            if path in TOUCHPADS:
+                continue
             try:
                 d = evdev.InputDevice(path)
                 caps = d.capabilities().get(E.EV_ABS, [])
-                if "touchpad" in d.name.lower() and any(c[0] == E.ABS_MT_POSITION_X for c in caps):
-                    dev = d
-                    break
+                ok = "touchpad" in d.name.lower() and any(c[0] == E.ABS_MT_POSITION_X for c in caps)
                 d.close()
             except OSError:
                 continue
-        if dev is None:
-            time.sleep(5)
-            continue
-        try:
-            g = Gesto(dev.absinfo(E.ABS_MT_POSITION_X).max, dev.absinfo(E.ABS_MT_POSITION_Y).max)
-            ultimo = 0.0
-            for ev in dev.read_loop():
-                if ev.type == E.EV_ABS and ev.code in nomes:
-                    g.abs(nomes[ev.code], ev.value)
-                elif ev.type == E.EV_SYN and ev.code == E.SYN_REPORT:
-                    r = g.sync()
-                    if r and r[0] == "painel" and not os.path.exists(os.path.join(CONF, "touchpad.off")):
-                        abrir_notificacoes()
-                    elif r and not os.path.exists(os.path.join(CONF, "touchpad.off")):
-                        txt = ajustar(*r)
-                        if txt and time.monotonic() - ultimo > 0.35:
-                            ultimo = time.monotonic()
-                            event("ajuste", txt, None)
-        except OSError:
-            pass
-        time.sleep(2)
+            if ok:
+                TOUCHPADS.add(path)
+                threading.Thread(target=touchpad_leitor, args=(path,), daemon=True).start()
+        time.sleep(3)
 
 
 # ------------------------------------------------------------------ Modo TV (Fase 6.0)
