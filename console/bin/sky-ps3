@@ -277,6 +277,36 @@ CONFIG_YML = """Miscellaneous:
 """
 
 
+# Fase 8.0.2: ajustes por jogo (o RPCS3 lê custom_configs/config_<código>.yml por cima da config geral).
+# Feitos para PC com vídeo integrado (Vega 7). Só sobrescrevemos arquivos que nós mesmos criamos.
+LEVE_GPU = """# SkyStation: ajuste automático para vídeo integrado (apague esta linha para editar à mão)
+Video:
+  Shader Mode: Async Recompiler (multi-threaded)
+  Shader Precision: Low
+  Multithreaded RSX: true
+  Relaxed ZCULL Sync: true
+"""
+POR_JOGO = {
+    "BCUS98111": LEVE_GPU,   # God of War III (EUA)
+    "BCES00510": LEVE_GPU,   # God of War III (Europa)
+}
+
+
+def ajustes_por_jogo():
+    d = os.path.join(RP, "custom_configs")
+    for serial, texto in POR_JOGO.items():
+        path = os.path.join(d, f"config_{serial}.yml")
+        try:
+            with open(path) as f:
+                if not f.readline().startswith("# SkyStation"):
+                    continue          # o usuário editou: não mexe
+        except OSError:
+            pass
+        os.makedirs(d, exist_ok=True)
+        with open(path, "w") as f:
+            f.write(texto)
+
+
 def write_if_missing(path, text):
     if not os.path.exists(path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -334,6 +364,7 @@ def preparar():
         return out({"ok": False, "error": f"PS3 precisa de um processador com {MIN_THREADS}+ threads (este tem {n}). Dê boot com o pendrive num PC mais forte."})
     write_if_missing(os.path.join(RP, "GuiConfigs/CurrentSettings.ini"), GUI_INI)
     garantir_ini(os.path.join(RP, "GuiConfigs/CurrentSettings.ini"), GUI_FORCAR)   # cursor escondido
+    ajustes_por_jogo()
     write_if_missing(os.path.join(RP, "config.yml"), CONFIG_YML)
     yml, players = input_yaml()
     if not players:
