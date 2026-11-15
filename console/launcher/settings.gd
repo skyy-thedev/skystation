@@ -125,6 +125,9 @@ func _input(event: InputEvent) -> void:
 			c = "y" if kb_open else "b"
 		KEY_BACKSPACE:
 			c = "b"
+		KEY_Y:
+			if not kb_open:
+				c = "y"
 		_:
 			if kb_open and k.unicode >= 32:
 				c = "char:" + String.chr(k.unicode)
@@ -168,6 +171,11 @@ func _command(c: String) -> void:
 	elif c == "left":
 		column = 0
 	elif c == "a":
+		_activate()
+	elif c == "y" and column == 1 and not items.is_empty() and items[item]["action"] == "bt_dev":
+		var opts: Dictionary = items[item].duplicate()
+		opts["action"] = "bt_opts"
+		items[item] = opts
 		_activate()
 	elif c == "b":
 		if column == 1:
@@ -218,6 +226,10 @@ func _activate() -> void:
 		"bt_pair":
 			status = "Pareando %s…" % it["text"]
 			_async(["bt", "pair", it["arg"]], _on_result.bind(section))
+		"bt_dev":
+			# 8.1.3: A num aparelho pareado = conectar/desconectar direto; opções ficam no Triângulo (Y)
+			status = ("Desconectando %s…" if it["connected"] else "Conectando %s… (ligue o aparelho)") % it["name"]
+			_async(["bt", "disconnect" if it["connected"] else "connect", it["arg"]], _on_result.bind(section))
 		"bt_opts":
 			var mac: String = it["arg"]
 			var nm: String = it["name"]
@@ -287,9 +299,9 @@ func _on_bt(data: Dictionary, sec: int) -> void:
 		elif d["paired"]:
 			t += "   · pareado"
 		# Fase 8.1: aparelho já pareado abre as opções (desconectar, esquecer…); novo vai direto parear
-		items.append({"text": t, "action": "bt_opts" if d["paired"] else "bt_pair", "arg": d["mac"],
+		items.append({"text": t, "action": "bt_dev" if d["paired"] else "bt_pair", "arg": d["mac"],
 			"name": str(d["name"]), "connected": d.get("connected", false)})
-	status = "%d dispositivo(s)  ·  A em um pareado: conectar, desconectar ou esquecer" % (items.size() - 1)
+	status = "%d dispositivo(s)  ·  A conecta/desconecta  ·  Triângulo (Y): opções e esquecer" % (items.size() - 1)
 	item = clamp(item, 0, items.size() - 1)
 
 
@@ -486,7 +498,10 @@ func _draw() -> void:
 	if not threads.is_empty():
 		st = "…  " + st
 	_text(st, Vector2(x0, h - 120), 18, MUTED, w - x0 - 60)
-	_text("Direcional  navegar      A  escolher      B  voltar", Vector2(48, h - 44), 16, DIM)
+	var dica := "Direcional  navegar      A  escolher      B  voltar"
+	if section == 1 and column == 1 and not items.is_empty() and items[item]["action"] == "bt_dev":
+		dica = "A  conectar/desconectar      Triângulo (Y)  opções e esquecer      B  voltar"
+	_text(dica, Vector2(48, h - 44), 16, DIM)
 
 	if kb_open:
 		_draw_keyboard()

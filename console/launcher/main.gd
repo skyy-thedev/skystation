@@ -2538,18 +2538,31 @@ func _draw_header(w: float, _h: float, a: float) -> void:
 		_battery(Vector2(x - tw - 30, 49), bat_cap, bat_charging, a)
 		x -= tw + 62.0
 	if pads > 0:
-		_icon("pad", Vector2(x, 50), 30.0, Color(WHITE, 0.85 * a))
+		# 8.1.3: porcentagem e raio de "carregando" de cada controle (o primeiro com texto, como a bateria)
+		var ptxt := ""
+		var pchg := false
+		if not pad_bats.is_empty():
+			ptxt = "%d%%" % int(pad_bats[0][0])
+			pchg = bool(pad_bats[0][1])
+		var ptw := font.get_string_size(ptxt, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x if ptxt != "" else 0.0
+		var low := not pad_bats.is_empty() and int(pad_bats[0][0]) <= 15 and not pchg
+		if ptxt != "":
+			_text(ptxt, Vector2(x - ptw + 14, 62), 15, Color(Color("ffaa5a") if low else WHITE, 0.9 * a))
+		var ix := x - ptw - (14.0 if pchg else 4.0)
+		if pchg:   # raio: carregando
+			var b := Vector2(x - ptw + 2, 50)
+			draw_colored_polygon(PackedVector2Array([b + Vector2(1, -9), b + Vector2(-5, 1), b + Vector2(-1, 1),
+				b + Vector2(-3, 9), b + Vector2(4, -2), b + Vector2(0, -2)]), Color(accent, a))
+		_icon("pad", Vector2(ix - 12, 50), 30.0, Color(WHITE, 0.85 * a))
 		if pads > 1:
-			_text(str(pads), Vector2(x + 14, 66), 13, Color(accent, a), true)
-		for i in pad_bats.size():  # nível do controle: 4 tracinhos embaixo do ícone
+			_text(str(pads), Vector2(ix + 2, 66), 13, Color(accent, a), true)
+		for i in range(1, pad_bats.size()):  # outros controles: tracinhos de nível embaixo do ícone
 			var cap: int = int(pad_bats[i][0])
 			var lvl := clampi(int(ceil(cap / 25.0)), 1, 4)
 			for k in 4:
 				var col := Color(accent, a) if k < lvl else Color(WHITE, 0.2 * a)
-				if cap <= 15 and not pad_bats[i][1]:
-					col = Color(Color("ffaa5a"), a) if k < lvl else col
-				draw_rect(Rect2(x - 12 + k * 6.5, 68 + i * 6, 5, 3), col)
-		x -= 46.0
+				draw_rect(Rect2(ix - 24 + k * 6.5, 68 + (i - 1) * 6, 5, 3), col)
+		x = ix - 12 - 46.0
 	if wifi_q >= 0:
 		var bars: int = 1 + int(clamp(wifi_q, 0, 70) / 18)
 		for i in 4:

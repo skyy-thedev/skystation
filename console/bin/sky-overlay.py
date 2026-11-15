@@ -296,6 +296,20 @@ def make_background(path, size, base_dark, base_light, accent):
     return surf
 
 
+_txt = {}
+
+
+def render(font, text, color):
+    """8.1.3: texto renderizado uma vez e reaproveitado (render de fonte é o que mais pesava por quadro)."""
+    key = (id(font), text, color)
+    sf = _txt.get(key)
+    if sf is None:
+        if len(_txt) > 600:
+            _txt.clear()
+        sf = _txt[key] = font.render(text, True, color)
+    return sf
+
+
 def fit(font, text, max_w):
     if font.size(text)[0] <= max_w:
         return text
@@ -309,10 +323,10 @@ def ease(cur, target, dt, speed=13.0):
 
 
 def shadow_text(screen, font, txt, color, pos, alpha=255):
-    sh = font.render(txt, True, (0, 0, 0))
+    sh = render(font, txt, (0, 0, 0))
     sh.set_alpha(int(alpha * 0.45))
     screen.blit(sh, (pos[0], pos[1] + 2))
-    sf = font.render(txt, True, color)
+    sf = render(font, txt, color)
     sf.set_alpha(alpha)
     screen.blit(sf, pos)
     return sf.get_width()
@@ -359,6 +373,7 @@ def main():
     msg, msg_t = "", 0.0
     t0 = last = time.monotonic()
     cam_x, cam_y = 0.0, 0.0
+    sujo, minuto = True, ""
     dias = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
     meses = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
 
@@ -386,6 +401,7 @@ def main():
                     info = json.loads(rest)
                 elif head == "msg":
                     msg, msg_t = rest, time.monotonic()
+                sujo = True
         except queue.Empty:
             pass
         except (ValueError, json.JSONDecodeError):
@@ -399,12 +415,23 @@ def main():
         cam_y = ease(cam_y, si, dt)
         appear = min(1.0, (now - t0) / 0.25)
         ap = 1 - (1 - appear) ** 3
+        # 8.1.3: só redesenha quando algo muda (animação, comando, aviso, minuto). Parado, não gasta nada.
+        if time.strftime("%H:%M") != minuto:
+            minuto, sujo = time.strftime("%H:%M"), True
+        animando = abs(cam_x - sc) > 0.003 or abs(cam_y - si) > 0.003 or appear < 1.0 \
+            or (msg and now - msg_t < 2.8)
+        if not (sujo or animando):
+            clock.tick(30)
+            continue
+        if not animando:
+            cam_x, cam_y = float(sc), float(si)
+        sujo = False
 
         screen.blit(bg, (0, 0))
         mx = int(64 * s)
 
         # ---- topo esquerdo: o jogo em andamento
-        tg = f_tag.render("EM JOGO" if title else "SKYSTATION", True, accent)
+        tg = render(f_tag, "EM JOGO" if title else "SKYSTATION", accent)
         screen.blit(rrect(tg.get_width() + int(20 * s), int(24 * s), int(12 * s), accent, 40), (mx, int(40 * s)))
         screen.blit(tg, (mx + int(10 * s), int(40 * s) + (int(24 * s) - tg.get_height()) // 2))
         shadow_text(screen, f_game, fit(f_game, title or "Menu do sistema", int(600 * s)), WHITE, (mx, int(70 * s)))
@@ -412,17 +439,17 @@ def main():
         # ---- topo direito: hora, data, bateria, controles, temperatura (como no launcher)
         lt = time.localtime()
         hora = info.get("hora", time.strftime("%H:%M"))
-        cs = f_clock.render(hora, True, WHITE)
+        cs = render(f_clock, hora, WHITE)
         cx = W - mx - cs.get_width()
         shadow_text(screen, f_clock, hora, WHITE, (cx, int(34 * s)))
-        ds = f_date.render(f"{dias[lt.tm_wday]}, {lt.tm_mday} de {meses[lt.tm_mon - 1]}", True, MUTED)
+        ds = render(f_date, f"{dias[lt.tm_wday]}, {lt.tm_mday} de {meses[lt.tm_mon - 1]}", MUTED)
         screen.blit(ds, (W - mx - ds.get_width(), int(76 * s)))
         rx = cx - int(28 * s)
         cy = int(54 * s)
 
         def chip(txt, ic_kind, cor):
             nonlocal rx
-            t_ = f_sub.render(txt, True, cor)
+            t_ = render(f_sub, txt, cor)
             rx -= t_.get_width()
             screen.blit(t_, (rx, cy - t_.get_height() // 2))
             if ic_kind:
@@ -435,7 +462,7 @@ def main():
             cap, chg = info["bateria"]
             chip(f"{cap}%" + (" ⚡" if chg else ""), "battery", WARN if cap <= 15 and not chg else MUTED)
         for cap, chg in info.get("controles", []):
-            chip(f"{cap}%", "pad", MUTED)
+            chip(f"{cap}%" + (" ⚡" if chg else ""), "pad", WARN if cap <= 15 and not chg else MUTED)
         if "temp" in info:
             chip(f"{info['temp']}°C", "thermo", WARN if info["temp"] >= 85 else MUTED)
 
@@ -458,7 +485,7 @@ def main():
             ic.set_alpha(int(255 * (1 - 0.5 * d) * ap))
             screen.blit(ic, (cxk - size / 2, row_y - size / 2))
             if on:
-                lbl = f_cat.render(cat["title"], True, WHITE)
+                lbl = render(f_cat, cat["title"], WHITE)
                 lbl.set_alpha(int(255 * ap))
                 screen.blit(lbl, (cxk - lbl.get_width() / 2, row_y + int(46 * s)))
 
@@ -507,18 +534,18 @@ def main():
                 cor_txt = MUTED if on else DIM
             has_sub = bool(on and it.get("sub"))
             room = lw - int(90 * s) - (int(330 * s) if kind == "slider" else 0)
-            ts = font.render(fit(font, it["t"], room), True, cor_txt)
+            ts = render(font, fit(font, it["t"], room), cor_txt)
             ts.set_alpha(alpha)
             ty = iy - ts.get_height() // 2 - (int(9 * s) if has_sub else 0)
             screen.blit(ts, (tx, ty))
             if it.get("novo"):
-                nv = f_tag.render("NOVO", True, dark)
+                nv = render(f_tag, "NOVO", dark)
                 bx = tx + ts.get_width() + int(12 * s)
                 screen.blit(rrect(nv.get_width() + int(14 * s), int(22 * s), int(11 * s), accent),
                             (bx, iy - int(11 * s) - (int(9 * s) if has_sub else 0)))
                 screen.blit(nv, (bx + int(7 * s), iy - nv.get_height() // 2 - (int(9 * s) if has_sub else 0)))
             if has_sub:
-                ss = f_small.render(fit(f_small, it["sub"], lw - int(90 * s)), True, MUTED)
+                ss = render(f_small, fit(f_small, it["sub"], lw - int(90 * s)), MUTED)
                 screen.blit(ss, (tx, iy + int(4 * s)))
             if kind == "slider":
                 is_vol = it.get("id") == "volume"
@@ -532,7 +559,7 @@ def main():
                     fw = max(bh, int(bw * val / 100))
                     screen.blit(rrect(fw, bh, bh // 2, DIM if (is_vol and muted) else accent), (bx, by))
                     screen.blit(rrect(int(18 * s), int(18 * s), int(9 * s), WHITE), (bx + fw - int(9 * s), iy - int(9 * s)))
-                vt = f_sub.render(txt, True, WHITE if on else MUTED)
+                vt = render(f_sub, txt, WHITE if on else MUTED)
                 screen.blit(vt, (bx + bw + int(18 * s), iy - vt.get_height() // 2))
 
         # ---- rodapé: botões no estilo do launcher (pílula com a tecla + ação)
@@ -545,10 +572,10 @@ def main():
         x = W - mx
         yb = H - int(44 * s)
         for k, label in reversed(hints):
-            lt_ = f_sub.render(label, True, MUTED)
+            lt_ = render(f_sub, label, MUTED)
             x -= lt_.get_width()
             screen.blit(lt_, (x, yb - lt_.get_height() // 2))
-            ks = f_tag.render(k, True, WHITE)
+            ks = render(f_tag, k, WHITE)
             pw = max(int(24 * s), ks.get_width() + int(14 * s))
             x -= pw + int(8 * s)
             screen.blit(rrect(pw, int(24 * s), int(12 * s), (255, 255, 255), 40), (x, yb - int(12 * s)))
@@ -557,7 +584,7 @@ def main():
 
         if msg and now - msg_t < 2.5:
             fade = min(1.0, (2.5 - (now - msg_t)) / 0.3)
-            surf = f_item.render(msg, True, WHITE)
+            surf = render(f_item, msg, WHITE)
             bw_, bh_ = surf.get_width() + int(56 * s), surf.get_height() + int(24 * s)
             box = rrect(bw_, bh_, bh_ // 2, (0, 0, 0), 170, (*accent, 140), 1).copy()
             box.set_alpha(int(255 * fade))
@@ -570,7 +597,7 @@ def main():
         if tela_com_alfa:   # garante alfa 255 em todos os pixels (janela 100% opaca para o compositor)
             display.fill((0, 0, 0, 255), special_flags=pygame.BLEND_RGBA_MAX)
         pygame.display.flip()
-        clock.tick(30)
+        clock.tick(60 if animando else 30)
 
 
 if __name__ == "__main__":
