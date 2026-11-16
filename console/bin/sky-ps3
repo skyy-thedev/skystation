@@ -147,6 +147,15 @@ def listar():
                 continue
             path = os.path.join(base, n)
             info = game_info(path)
+            if info is None and onde != "rpcs3" and os.path.isdir(path):
+                # 8.2.1: o 7-Zip costuma extrair como "Jogo/Jogo.iso"; usa o .iso de dentro da pasta
+                try:
+                    isos = [x for x in os.listdir(path) if x.lower().endswith(".iso")]
+                except OSError:
+                    isos = []
+                if len(isos) == 1:
+                    path = os.path.join(path, isos[0])
+                    info = game_info(path)
             if not info or (onde == "rpcs3" and info.get("categoria") != "HG"):
                 continue
             key = info["id"] or n.lower()
