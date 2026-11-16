@@ -294,10 +294,18 @@ SPU_MEGA = """# SkyStation: teste 1 do God of War III (apague esta linha para ed
 Core:
   SPU Block Size: Mega
 """
+GOW3 = """# SkyStation: teste 2 do God of War III (apague esta linha para editar à mão)
+Core:
+  Max SPURS Threads: 4
+Video:
+  Frame limit: 30
+"""
 POR_JOGO = {
-    # 8.3: o SPU "Mega" não mudou nada no God of War III (33 FPS vs 31; mesmas quedas a 8–13 FPS).
-    # Ele volta ao padrão recomendado pela wiki do RPCS3 (SPU "Safe") e ganha os patches oficiais
-    # (sem MLAA, motion blur e profundidade de campo; ver skypatches.py).
+    # 8.3: o SPU "Mega" piorou as lutas (33 FPS vs 45 com o padrão "Safe"); voltou ao padrão.
+    # 8.3.2: travado em 30 (as cenas leves não esquentam o processador antes das lutas) e
+    # no máximo 4 SPURS por grupo (menos disputa pelos 6 núcleos do Ryzen 5 5500U).
+    "BCUS98111": GOW3,   # God of War III (EUA)
+    "BCES00510": GOW3,   # God of War III (Europa)
 }
 
 
