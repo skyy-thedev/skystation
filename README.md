@@ -100,6 +100,14 @@ rótulo **SKYROMS** e crie as pastas `ps1/` e `ps2/` (capas opcionais em `ps1/co
 Ao conectar, ele monta sozinho em `/mnt/skyroms` e os jogos aparecem no console; ao tirar, somem.
 Dica: `.chd` ocupa bem menos que `.bin/.cue` (converta com o `chdman` no PC).
 
+## Benchmarks com nome do jogo (Fase 8.2)
+
+Com o painel de desempenho ligado, cada partida grava um CSV do MangoHud em `SKYROMS/benchmarks`
+(ou `~/skystation/benchmarks`). Ao fechar o jogo, o `sky-bench` renomeia o arquivo para
+`2026-11-15 20-36 · Forza Motorsport 4 (xenia_canary).csv` e acrescenta uma linha no `resumo.csv`
+(abre no Excel): minutos jogados (sem o tempo congelado no Home), FPS mediano, os 10% piores,
+% do tempo abaixo de 30 FPS, temperatura e clocks. `sky-bench resumo <arquivo.csv>` resume qualquer log.
+
 ## Central de notificações, Home redesenhado e Bluetooth (Fase 8.1)
 
 - **Central de notificações:** deslize **um dedo de cima para baixo** no touchpad do controle (começando

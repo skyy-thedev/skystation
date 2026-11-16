@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""SkyStation: resumo de desempenho de cada partida (Fase 8.2).
+
+O MangoHud grava um CSV por partida com nome do emulador (rpcs3_2026-11-15_10-51-13.csv), sem o
+nome do jogo. Ao fechar o jogo, o sky-run chama:
+
+    sky-bench fechar <pasta> <início-unix> <id> <título>
+
+que (1) renomeia o CSV da partida para "2026-11-15 10-51 · Resident Evil 5 (rpcs3).csv" e
+(2) acrescenta uma linha em <pasta>/resumo.csv com FPS mediano, os 10% piores, o tempo abaixo de
+30 FPS, temperatura e clocks. O tempo em que o jogo ficou congelado (menu Home aberto, modo de
+espera) não entra na conta: intervalos de mais de 5 s entre amostras são descartados.
+
+    sky-bench resumo <arquivo.csv>     mostra o resumo de um CSV qualquer
+"""
+import csv
+import os
+import re
+import statistics as st
+import sys
+import time
+
+COLS = ["fps", "frametime", "cpu_load", "cpu_power", "gpu_load", "cpu_temp", "gpu_temp", "gpu_core_clock",
+        "gpu_mem_clock", "gpu_vram_used", "gpu_power", "ram_used", "swap_used", "process_rss", "cpu_mhz", "elapsed"]
+CAB = ["data", "jogo", "id", "emulador", "minutos", "fps_mediano", "fps_10pct_piores", "pct_abaixo_30",
+       "temp_mediana", "temp_p95", "cpu_mhz", "gpu_mhz", "gpu_uso", "arquivo"]
+
+
+def ler(path):
+    with open(path, newline="") as f:
+        rows = list(csv.reader(f))
+    # cabeçalho do MangoHud: linha 1 = sistema, linha 3 = nomes das colunas
+    idx = next((i for i, r in enumerate(rows[:6]) if r and r[0] == "fps"), 2)
+    nomes = rows[idx]
+    dados = []
+    for r in rows[idx + 1:]:
+        try:
+            dados.append({k: float(v) for k, v in zip(nomes, r)})
+        except ValueError:
+            continue
+    return dados
+
+
+def resumo(dados):
+    if len(dados) < 10:
+        return None
+    # só o tempo jogando: descarta saltos > 5 s (jogo congelado no menu Home ou console suspenso)
+    jogando = 0.0
+    for a, b in zip(dados, dados[1:]):
+        dt = (b["elapsed"] - a["elapsed"]) / 1e9
+        if 0 < dt < 5:
+            jogando += dt
+    fps = sorted(d["fps"] for d in dados)
+    q = lambda xs, p: xs[int(p * (len(xs) - 1))]
+    temps = sorted(d.get("cpu_temp", 0) for d in dados)
+    return {
+        "minutos": round(jogando / 60, 1),
+        "fps_mediano": round(st.median(fps), 1),
+        "fps_10pct_piores": round(q(fps, 0.10), 1),
+        "pct_abaixo_30": round(100 * sum(1 for x in fps if x < 29.5) / len(fps)),
+        "temp_mediana": round(st.median(temps)),
+        "temp_p95": round(q(temps, 0.95)),
+        "cpu_mhz": round(st.median(d.get("cpu_mhz", 0) for d in dados)),
+        "gpu_mhz": round(st.median(d.get("gpu_core_clock", 0) for d in dados)),
+        "gpu_uso": round(st.median(d.get("gpu_load", 0) for d in dados)),
+    }
+
+
+def limpo(t):
+    return re.sub(r'[\\/:*?"<>|\n\r\t]+', " ", t).strip()[:80] or "jogo"
+
+
+def fechar(pasta, inicio, gid, titulo):
+    """Acha o(s) CSV(s) desta partida (criados depois do início), renomeia e resume."""
+    try:
+        nomes = os.listdir(pasta)
+    except OSError:
+        return
+    novos = [n for n in nomes if n.endswith(".csv") and n != "resumo.csv" and "·" not in n
+             and os.path.getmtime(os.path.join(pasta, n)) >= inicio - 5]
+    for n in sorted(novos):
+        path = os.path.join(pasta, n)
+        emu = n.split("_20")[0] if "_20" in n else "emulador"
+        quando = time.strftime("%Y-%m-%d %H-%M", time.localtime(inicio))
+        novo = f"{quando} · {limpo(titulo)} ({emu}).csv"
+        destino = os.path.join(pasta, novo)
+        try:
+            os.replace(path, destino)
+        except OSError:
+            destino, novo = path, n
+        try:
+            r = resumo(ler(destino))
+        except (OSError, ValueError):
+            r = None
+        if not r:
+            continue
+        linha = {"data": time.strftime("%Y-%m-%d %H:%M", time.localtime(inicio)), "jogo": titulo, "id": gid,
+                 "emulador": emu, "arquivo": novo, **r}
+        resumo_path = os.path.join(pasta, "resumo.csv")
+        novo_arq = not os.path.exists(resumo_path)
+        with open(resumo_path, "a", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=CAB, delimiter=";")
+            if novo_arq:
+                w.writeheader()
+            w.writerow(linha)
+
+
+def main():
+    a = sys.argv[1:]
+    if len(a) >= 5 and a[0] == "fechar":
+        fechar(a[1], int(a[2]), a[3], a[4])
+    elif len(a) == 2 and a[0] == "resumo":
+        print(resumo(ler(a[1])))
+    else:
+        print(__doc__)
+
+
+if __name__ == "__main__":
+    main()

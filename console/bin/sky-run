@@ -95,6 +95,10 @@ PY
 echo "$code" >"$RUN/last_exit"
 potencia normal
 
+# Fase 8.2: o log do MangoHud ganha o nome do jogo e uma linha no resumo.csv da pasta de benchmarks.
+[ -n "${BENCH:-}" ] && [ -x /opt/skystation/bin/sky-bench ] && \
+    /opt/skystation/bin/sky-bench fechar "$BENCH" "$START" "$ID" "$TITLE" 2>>"$LOG"
+
 # Fase 6.3: troféus do perfil (avisa na tela se conquistou algum nesta partida).
 [ -x /opt/skystation/bin/sky-trofeus ] && /opt/skystation/bin/sky-trofeus conferir >/dev/null 2>&1
 
