@@ -295,10 +295,9 @@ Core:
   SPU Block Size: Mega
 """
 POR_JOGO = {
-    # 8.0.4: o ajuste "leve" (sem intérprete + precisão baixa + RSX multithread + ZCULL relaxado)
-    # piorou a introdução para 1 FPS. Agora: uma mudança por vez, medida no notebook.
-    "BCUS98111": SPU_MEGA,   # God of War III (EUA)
-    "BCES00510": SPU_MEGA,   # God of War III (Europa)
+    # 8.3: o SPU "Mega" não mudou nada no God of War III (33 FPS vs 31; mesmas quedas a 8–13 FPS).
+    # Ele volta ao padrão recomendado pela wiki do RPCS3 (SPU "Safe") e ganha os patches oficiais
+    # (sem MLAA, motion blur e profundidade de campo; ver skypatches.py).
 }
 
 
@@ -382,7 +381,20 @@ def user_id():
         return "00000001"
 
 
-def preparar():
+def patches(rom):
+    """8.3: liga os patches oficiais do RPCS3 que o SkyStation recomenda para este jogo."""
+    try:
+        info = game_info(rom) if rom else None
+        if info and info.get("id"):
+            sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+            import skypatches
+            return skypatches.aplicar(RP, info["id"])
+    except Exception as e:   # um patch nunca pode impedir o jogo de abrir
+        sys.stderr.write(f"patches: {e}\n")
+    return []
+
+
+def preparar(rom=""):
     if not os.access(RPCS3, os.X_OK):
         return out({"ok": False, "error": "Emulador de PS3 não instalado. Rode a Fase 7.0 (fase7-0.sh)."})
     n = os.cpu_count() or 1
@@ -391,6 +403,7 @@ def preparar():
     write_if_missing(os.path.join(RP, "GuiConfigs/CurrentSettings.ini"), GUI_INI)
     garantir_ini(os.path.join(RP, "GuiConfigs/CurrentSettings.ini"), GUI_FORCAR)   # cursor escondido
     ajustes_por_jogo()
+    ligados = patches(rom)
     write_if_missing(os.path.join(RP, "config.yml"), CONFIG_YML)
     yml, players = input_yaml()
     if not players:
@@ -414,7 +427,7 @@ def preparar():
             os.symlink(alvo, sd)
     except OSError:
         pass
-    out({"ok": True, "user": user, "controles": [f"{h}: {dv}" for h, dv, _ in players]})
+    out({"ok": True, "user": user, "patches": ligados, "controles": [f"{h}: {dv}" for h, dv, _ in players]})
 
 
 def main():
@@ -422,7 +435,7 @@ def main():
     if a[:1] == ["listar"]:
         listar()
     elif a[:1] == ["preparar"]:
-        preparar()
+        preparar(a[1] if len(a) > 1 else "")
     elif a[:1] == ["controles"]:
         yml, players = input_yaml()
         print(yml)

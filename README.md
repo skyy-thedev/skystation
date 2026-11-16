@@ -100,6 +100,13 @@ rótulo **SKYROMS** e crie as pastas `ps1/` e `ps2/` (capas opcionais em `ps1/co
 Ao conectar, ele monta sozinho em `/mnt/skyroms` e os jogos aparecem no console; ao tirar, somem.
 Dica: `.chd` ocupa bem menos que `.bin/.cue` (converta com o `chdman` no PC).
 
+## Patches automáticos do PS3 (Fase 8.3)
+
+Ao abrir um jogo de PS3, o `sky-ps3` baixa (1x por semana) a base oficial de patches do RPCS3 e liga
+os recomendados para jogos da lista em `console/bin/skypatches.py`. Hoje: **God of War III** (sem MLAA,
+sem motion blur, sem profundidade de campo, FPS destravado). O que foi ligado fica em
+`SKYROMS/diag-patches.txt`. Jogos que já rodam no limite do console (RE5, MK, Naruto) não precisam.
+
 ## Benchmarks com nome do jogo (Fase 8.2)
 
 Com o painel de desempenho ligado, cada partida grava um CSV do MangoHud em `SKYROMS/benchmarks`

@@ -135,7 +135,7 @@ x360)
 ps3)
     # O sky-ps3 desliga as telas de aviso do RPCS3, configura o controle ligado agora, instala o
     # firmware na primeira vez (demora alguns minutos) e devolve o usuário do perfil em uso.
-    PREP="$(python3 /opt/skystation/bin/sky-ps3 preparar 2>/dev/null | tail -1)"
+    PREP="$(python3 /opt/skystation/bin/sky-ps3 preparar "$ROM" 2>>"${LOG:-/dev/null}" | tail -1)"
     ERR="$(printf '%s' "$PREP" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("" if d.get("ok") else d.get("error","erro"))' 2>/dev/null || echo "Não consegui preparar o RPCS3.")"
     [ -z "$ERR" ] || fail "$ERR"
     USR="$(printf '%s' "$PREP" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("user","00000001"))')"
