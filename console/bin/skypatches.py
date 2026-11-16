@@ -25,6 +25,12 @@ DESLIGAR = r"^(?!.*\benable\b)"   # "Disable MLAA" sim; um eventual "Enable MLAA
 # Jogo (código) -> lista de expressões (sem maiúsculas) para os nomes dos patches a ligar.
 GOW3 = [DESLIGAR + r".*mlaa", DESLIGAR + r".*motion ?blur", DESLIGAR + r".*(depth of field|\bdof\b)",
         r"unlock.*(fps|frame)|(fps|frame).*unlock"]
+# Patches de SPU (como o "Disable MLAA") são gravados no programa das SPUs e valem para várias versões;
+# na base eles costumam aparecer com serial "All". Para aceitá-los, o título precisa bater com isto:
+TITULOS = {
+    "BCUS98111": "god of war iii", "BCES00510": "god of war iii",
+    "BCAS20107": "god of war iii", "BCJS37001": "god of war iii",
+}
 REGRAS = {
     # God of War III: recomendações do RPCS3 (desligar MLAA, motion blur e profundidade de campo; FPS destravado)
     "BCUS98111": GOW3,
@@ -115,7 +121,11 @@ def escrever_config(cfg):
     return "\n".join(out) + "\n"
 
 
+ERRO_BASE = ""
+
+
 def baixar_base(rp):
+    global ERRO_BASE
     path = os.path.join(rp, "patches", "patch.yml")
     try:
         if time.time() - os.path.getmtime(path) < 7 * 86400:
@@ -131,8 +141,10 @@ def baixar_base(rp):
             with open(path + ".tmp", "w") as f:
                 f.write(d["patch"])
             os.replace(path + ".tmp", path)
-    except (OSError, ValueError):
-        pass   # sem internet: segue com a base que já existir
+        else:
+            ERRO_BASE = f"site respondeu return_code={d.get('return_code')}"
+    except (OSError, ValueError) as e:
+        ERRO_BASE = f"download falhou: {e}"   # sem internet: segue com a base que já existir
     return path
 
 
@@ -145,7 +157,7 @@ def aplicar(rp, serial, skyroms="/mnt/skyroms"):
         with open(baixar_base(rp)) as f:
             base = ler_base(f.read())
     except OSError:
-        return []
+        base = []
     cfg_path = os.path.join(rp, "patch_config.yml")
     try:
         with open(cfg_path) as f:
@@ -153,18 +165,39 @@ def aplicar(rp, serial, skyroms="/mnt/skyroms"):
     except OSError:
         cfg = {}
     ligados = []
+    alvo_titulo = TITULOS.get(serial, "\0")
+    candidatos = []   # para o diagnóstico: tudo da base que parece ser deste jogo
     for h, nome, titulo, ser, vers in base:
-        if ser != serial or not any(re.search(rx, nome.lower()) for rx in regras):
+        do_jogo = ser == serial or (ser.lower() == "all" and (alvo_titulo in titulo.lower() or alvo_titulo in nome.lower()))
+        if not do_jogo:
+            continue
+        candidatos.append(nome)
+        if not any(re.search(rx, nome.lower()) for rx in regras):
             continue
         for v in vers:
             cfg.setdefault(h, {}).setdefault(nome, {}).setdefault(titulo, {}).setdefault(ser, {}) \
                .setdefault(v, {})["Enabled"] = "true"
-        ligados.append(f"{nome}  ({h}, {', '.join(vers)})")
+        ligados.append(f"{nome}  ({h}, {titulo}, {ser}, {', '.join(vers)})")
+    if not any("mlaa" in x.lower() for x in ligados) and any("mlaa" in rx for rx in regras):
+        # O "Disable MLAA" de SPU às vezes vem só como patch genérico (Games: All/All): ele altera o
+        # módulo de MLAA da Sony, que é o mesmo em vários jogos. Sem um específico, liga o genérico.
+        for h, nome, titulo, ser, vers in base:
+            if titulo.lower() == "all" and ser.lower() == "all" and h.startswith("SPU-") \
+                    and re.search(DESLIGAR + r".*mlaa", nome.lower()):
+                for v in vers:
+                    cfg.setdefault(h, {}).setdefault(nome, {}).setdefault(titulo, {}).setdefault(ser, {}) \
+                       .setdefault(v, {})["Enabled"] = "true"
+                ligados.append(f"{nome}  ({h}, genérico)")
     if ligados:
         with open(cfg_path + ".tmp", "w") as f:
             f.write(escrever_config(cfg))
         os.replace(cfg_path + ".tmp", cfg_path)
-    nota = f"{time.strftime('%Y-%m-%d %H:%M')}  {serial}: " + ("; ".join(ligados) or "nenhum patch encontrado na base") + "\n"
+    if ligados:
+        detalhe = "; ".join(ligados)
+    else:
+        detalhe = (f"nenhum patch ligado ({ERRO_BASE or 'base ok'}). Base: {len(base)} patches; deste jogo: "
+                   + (", ".join(sorted(set(candidatos))) or "nenhum"))
+    nota = f"{time.strftime('%Y-%m-%d %H:%M')}  {serial}: {detalhe}\n"
     for p in (os.path.join(rp, "skystation-patches.txt"), os.path.join(skyroms, "diag-patches.txt")):
         try:
             if os.path.isdir(os.path.dirname(p)) and os.access(os.path.dirname(p), os.W_OK):

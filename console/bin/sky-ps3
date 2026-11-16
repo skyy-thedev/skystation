@@ -388,7 +388,7 @@ def patches(rom):
         if info and info.get("id"):
             sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
             import skypatches
-            return skypatches.aplicar(RP, info["id"])
+            return skypatches.aplicar(RP, info["id"])  # título vem da própria base
     except Exception as e:   # um patch nunca pode impedir o jogo de abrir
         sys.stderr.write(f"patches: {e}\n")
     return []
