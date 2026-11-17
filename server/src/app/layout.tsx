@@ -18,7 +18,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       <body>
         <header className="topo">
           <Link href="/" className="marca">
-            Sky<span>Network</span>
+            {"Sky"}<span>Network</span>
           </Link>
           <nav className="menu">
             {eu ? (

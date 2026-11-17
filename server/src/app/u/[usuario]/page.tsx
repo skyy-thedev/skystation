@@ -19,6 +19,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return { title: `@${usuario.toLowerCase()}` };
 }
 
+function curta(d: Date | string) {
+  return new Date(d).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit", timeZone: "America/Sao_Paulo" });
+}
+
 function data(d: Date | string) {
   return new Date(d).toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric", timeZone: "America/Sao_Paulo" });
 }
@@ -91,7 +95,7 @@ export default async function Perfil({ params }: Props) {
                     {t.nome || t.trofeu}
                     <span className="apagado"> · {t.jogoId === "skystation" ? "SkyStation" : t.jogo || t.jogoId}</span>
                   </span>
-                  <span className="apagado">{data(t.ganhoEm)}</span>
+                  <span className="apagado">{curta(t.ganhoEm)}</span>
                 </li>
               ))}
             </ul>

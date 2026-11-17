@@ -131,6 +131,10 @@ No console:
   pausar o jogo (`sky-toast`). Se o gamescope sair com erro, a sessão volta sozinha ao cage e o motivo
   fica em `~/.config/skystation/compositor.falhou` (log completo em `gamescope.log`). No gamescope o
   menu Home abre sem a foto do jogo congelado ao fundo, e o Modo TV não troca de tela sozinho.
+- **Conta pessoal** (Fase 10.5): SkyNetwork → "Criar conta" transforma o perfil numa conta com ID e
+  senha. Ela entra no site (`skyntwk.vercel.app`), em qualquer outro console ("Já tenho conta") e
+  sobrevive à perda do pendrive. "Trocar a senha da conta" é o esqueci-a-senha. O ícone do perfil
+  (16 desenhos próprios do SkyStation) troca no console ou no site e aparece para os amigos.
 - Saves do **Xbox 360** também vão para a nuvem: o Xenia passa a guardar os saves na pasta do perfil
   (`saves/x360`; na primeira vez copia os que já existiam). Só saves e o perfil do Xbox; DLC e
   atualizações de jogo ficam no console.
