@@ -35,6 +35,7 @@ skystation/
 ├── hardware/case/    case impressa em 3D (OpenSCAD paramétrico, STLs, renders) — protótipo v0.1
 ├── system/           configurações que vão para /etc e para a home (+ tema de boot Plymouth)
 ├── docs/             guias (clonar para cartão/pendrive)
+├── server/           SkyNetwork: servidor dos saves na nuvem e da rede de amigos (Next.js + Prisma)
 └── console/          tudo que roda no console (vira /opt/skystation)
     ├── session.sh    abre o cage com o launcher e o vigia do botão Home
     ├── sounds/       sons de aviso e música ambiente (originais, gerados por tools/gerar-sons.py)
@@ -99,6 +100,13 @@ Para guardar jogos fora do sistema (útil na mídia de 8 GB): formate um pendriv
 rótulo **SKYROMS** e crie as pastas `ps1/` e `ps2/` (capas opcionais em `ps1/covers/Nome do Jogo.png`).
 Ao conectar, ele monta sozinho em `/mnt/skyroms` e os jogos aparecem no console; ao tirar, somem.
 Dica: `.chd` ocupa bem menos que `.bin/.cue` (converta com o `chdman` no PC).
+
+## Servidor: SkyCloud e SkyNetwork (Fases 9.4 e 10)
+
+A pasta `server/` é o servidor que os consoles acessam pela internet: saves na nuvem por perfil e
+por jogo (com 5 versões guardadas e aviso de conflito), amigos por código de 6 letras, quem está
+jogando o quê, mensagens, convites e troféus. Como colocar no ar e a lista de rotas:
+`server/README.md`. O lado do console (`sky-cloud` e `sky-net`) ainda não existe.
 
 ## Patches automáticos do PS3 (Fase 8.3)
 

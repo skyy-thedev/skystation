@@ -1,0 +1,146 @@
+// SkyStation — banco do servidor (SkyCloud + SkyNetwork).
+// Datas sempre em UTC. Depois de mudar este arquivo: npm run db:nova-migracao
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// Um console físico (pendrive do SkyStation). O token fica só no console; aqui só o hash.
+model Console {
+  id             String   @id @default(cuid())
+  nome           String
+  tokenHash      String   @unique
+  criadoEm       DateTime @default(now())
+  vistoEm        DateTime?
+  // limite de requisições por minuto (janela simples)
+  janelaInicio   DateTime @default(now())
+  janelaContagem Int      @default(0)
+
+  perfis  Perfil[]
+  versoes SaveVersao[]
+}
+
+/// Um jogador. Cada console tem até 4 perfis locais (p1..p4, do sky-perfis).
+model Perfil {
+  id        String   @id @default(cuid())
+  consoleId String
+  console   Console  @relation(fields: [consoleId], references: [id], onDelete: Cascade)
+  localId   String   // "p1", "p2"… o id do perfil dentro do console
+  apelido   String
+  cor       String   @default("#4fd1ff")
+  invisivel Boolean  @default(false)
+  codigo    String   @unique // 6 letras/números para adicionar como amigo
+  criadoEm  DateTime @default(now())
+
+  saves     Save[]
+  presenca  Presenca?
+  enviadas  Mensagem[]    @relation("de")
+  recebidas Mensagem[]    @relation("para")
+  amizadesA Amizade[]     @relation("a")
+  amizadesB Amizade[]     @relation("b")
+  trofeus   TrofeuGanho[]
+
+  @@unique([consoleId, localId])
+}
+
+// ---------------------------------------------------------------- SkyCloud (Fase 9.4)
+
+/// O save de UM jogo de UM perfil (nunca o cartão de memória inteiro).
+model Save {
+  id           String   @id @default(cuid())
+  perfilId     String
+  perfil       Perfil   @relation(fields: [perfilId], references: [id], onDelete: Cascade)
+  sistema      String   // ps1, ps2, ps3, x360…
+  jogoId       String   // o mesmo id que o sky-run usa
+  titulo       String?
+  versaoAtual  Int      @default(0) // 0 = ainda não há nada na nuvem
+  atualizadoEm DateTime @default(now())
+
+  versoes SaveVersao[]
+
+  @@unique([perfilId, sistema, jogoId])
+}
+
+/// Cada envio vira uma versão; as 5 últimas confirmadas ficam guardadas.
+model SaveVersao {
+  id         String   @id @default(cuid())
+  saveId     String
+  save       Save     @relation(fields: [saveId], references: [id], onDelete: Cascade)
+  numero     Int
+  hash       String   // sha256 do conteúdo, calculado no console
+  tamanho    Int      // bytes
+  chave      String   // caminho do arquivo no armazenamento (S3/R2)
+  consoleId  String?
+  console    Console? @relation(fields: [consoleId], references: [id], onDelete: SetNull)
+  confirmada Boolean  @default(false) // vira true quando o arquivo chegou inteiro
+  criadaEm   DateTime @default(now())
+
+  @@unique([saveId, numero])
+  @@index([confirmada, criadaEm])
+}
+
+// ---------------------------------------------------------------- SkyNetwork (Fase 10)
+
+model Amizade {
+  id       String   @id @default(cuid())
+  aId      String   // quem pediu
+  bId      String   // quem recebeu o pedido
+  a        Perfil   @relation("a", fields: [aId], references: [id], onDelete: Cascade)
+  b        Perfil   @relation("b", fields: [bId], references: [id], onDelete: Cascade)
+  status   String   @default("pendente") // pendente | aceita
+  criadaEm DateTime @default(now())
+
+  @@unique([aId, bId])
+  @@index([bId])
+}
+
+model Presenca {
+  perfilId String   @id
+  perfil   Perfil   @relation(fields: [perfilId], references: [id], onDelete: Cascade)
+  status   String   // online | jogando | ausente
+  jogoId   String?
+  jogo     String?
+  sistema  String?
+  desde    DateTime @default(now()) // quando este status/jogo começou
+  vistoEm  DateTime @default(now()) // último sinal; sem sinal há 90 s = offline
+}
+
+model Mensagem {
+  id        String    @id @default(cuid())
+  deId      String
+  paraId    String
+  de        Perfil    @relation("de", fields: [deId], references: [id], onDelete: Cascade)
+  para      Perfil    @relation("para", fields: [paraId], references: [id], onDelete: Cascade)
+  tipo      String    @default("texto") // texto | convite
+  texto     String    // até 280 caracteres
+  // só nos convites: o jogo para o qual está chamando
+  jogoId    String?
+  jogo      String?
+  sistema   String?
+  enviadaEm DateTime  @default(now())
+  lidaEm    DateTime?
+
+  @@index([paraId, enviadaEm])
+  @@index([deId, enviadaEm])
+}
+
+model TrofeuGanho {
+  id       String   @id @default(cuid())
+  perfilId String
+  perfil   Perfil   @relation(fields: [perfilId], references: [id], onDelete: Cascade)
+  jogoId   String   @default("skystation") // "skystation" = troféus do próprio console
+  jogo     String?
+  trofeu   String   // id do troféu
+  nome     String?  // nome que aparece na tela
+  tipo     String   // bronze | prata | ouro | platina
+  ganhoEm  DateTime @default(now())
+  criadoEm DateTime @default(now())
+
+  @@unique([perfilId, jogoId, trofeu])
+  @@index([criadoEm])
+}

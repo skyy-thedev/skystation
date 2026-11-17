@@ -1,0 +1,78 @@
+name: Servidor (SkyNetwork)
+
+# Roda a cada mudança no servidor: confere tipos, build e todas as rotas contra um Postgres e
+# um armazenamento S3 de mentira.
+on:
+  push:
+    paths: ["server/**", ".github/workflows/servidor.yml"]
+  pull_request:
+    paths: ["server/**", ".github/workflows/servidor.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  teste:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: sky
+          POSTGRES_DB: skynetwork
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:sky@localhost:5432/skynetwork
+      SKY_CONVITE: convite-do-teste
+      CRON_SECRET: segredo-do-teste
+      S3_ENDPOINT: http://localhost:5000
+      S3_REGION: us-east-1
+      S3_BUCKET: skycloud
+      S3_ACCESS_KEY_ID: teste
+      S3_SECRET_ACCESS_KEY: teste
+      AWS_ACCESS_KEY_ID: teste
+      AWS_SECRET_ACCESS_KEY: teste
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - name: Banco (migrações)
+        run: npx prisma migrate deploy
+      - name: Esquema e migrações batem
+        # Falha se alguém mudar o schema.prisma e esquecer de criar a migração.
+        run: npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
+      - name: Tipos
+        run: npm run tipos
+      - name: Build
+        run: npm run build
+      - name: Armazenamento de teste (moto)
+        run: |
+          pip install --quiet 'moto[server]'
+          nohup moto_server -H 127.0.0.1 -p 5000 >/tmp/moto.log 2>&1 &
+          for i in $(seq 1 30); do curl -s http://localhost:5000 >/dev/null && break; sleep 1; done
+          aws --endpoint-url http://localhost:5000 s3 mb s3://skycloud
+      - name: Sobe o servidor
+        run: |
+          nohup npm start >/tmp/servidor.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://localhost:3000/api/saude >/dev/null && break; sleep 1; done
+          curl -s http://localhost:3000/api/saude
+      - name: Teste de ponta a ponta
+        run: npm run teste
+      - name: Limpeza diária
+        run: |
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/cron/limpeza)" = 401
+          curl -sf -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/limpeza
+      - name: Log do servidor
+        if: always()
+        run: cat /tmp/servidor.log || true
