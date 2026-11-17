@@ -140,23 +140,27 @@ h.menu_key(E.BTN_SOUTH)
 ok(h.kb is not None and h.ultimo("kb ").startswith("kb {"), "A em Escrever abre o teclado na tela")
 for code in (E.KEY_O, E.KEY_I):
     h.menu_key(code)
-h.menu_key(E.BTN_NORTH)
-h.menu_key(E.BTN_WEST)
+h.menu_key(E.BTN_TR)                  # R1: espaço
+h.menu_key(E.BTN_TL2)                 # L2: maiúscula
 h.menu_key(E.BTN_SOUTH)               # o cursor está no "q": com maiúscula vira "Q"
-ok(json.loads(h.ultimo("kb ")[3:])["texto"] == "oi Q", "teclado de verdade, Y (espaço), X (maiúscula) e A (tecla)")
-h.menu_key(E.BTN_EAST)
-ok(h.kb.texto == "oi ", "B apaga a última letra")
+ok(json.loads(h.ultimo("kb ")[3:])["texto"] == "oi Q", "teclado de verdade, R1 (espaço), L2 (maiúscula) e ✕ (tecla)")
+h.menu_key(E.BTN_WEST)
+ok(h.kb.texto == "oi ", "□ apaga a última letra")
+h.menu_key(E.BTN_NORTH)
+ok(h.kb.simbolos, "△ troca para os símbolos")
+h.menu_key(E.BTN_NORTH)
 h.menu_key(E.KEY_W)
 ok(h.kb.texto == "oi w", "com o teclado aberto, W de um teclado de verdade digita (não navega)")
-h.menu_key(E.BTN_START)
-ok(h.kb is None and h.ultimo("kb") == "kb", "Start envia e fecha o teclado")
+h.menu_key(E.BTN_TR2)
+ok(h.kb is None and h.ultimo("kb") == "kb", "R2 envia e fecha o teclado")
 h.processar()
 ok(("mensagem", "pB", "oi w") in pedidos, "a mensagem foi para o sky-cloud")
 ok(h.ultimo("msg ") == "msg Mensagem enviada", "aviso de mensagem enviada")
 
 h.menu_key(E.BTN_SOUTH)               # abre o teclado de novo
-h.menu_key(E.BTN_EAST)                # B com texto vazio
-ok(h.kb is None, "B com o texto vazio fecha o teclado sem enviar")
+h.menu_key(E.KEY_X)
+h.menu_key(E.BTN_EAST)                # ○ cancela, mesmo com texto
+ok(h.kb is None, "○ cancela o teclado sem enviar")
 h.menu_key(E.BTN_SOUTH)
 h.menu_key(E.KEY_ESC)
 ok(h.kb is None and h.menu, "Esc/Home fecha só o teclado, o menu continua aberto")

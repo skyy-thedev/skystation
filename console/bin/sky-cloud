@@ -6,7 +6,7 @@ Rede:
     sky-cloud entrar <convite> [url]    registra este console na rede e envia os perfis
     sky-cloud sair                      esquece o token (os saves continuam no console e na nuvem)
     sky-cloud invisivel on|off          amigos não veem o que você joga
-    sky-cloud amigo <código>            pede amizade pelo código de 6 letras
+    sky-cloud amigo <ID ou código>      pede amizade pelo ID SkyNetwork ou pelo código de 6 letras
     sky-cloud aceitar|recusar <id>      responde a um pedido (ou desfaz uma amizade)
     sky-cloud mensagem <perfilId> <texto>     manda uma mensagem a um amigo
     sky-cloud convidar <perfilId>       chama o amigo para o jogo aberto agora
@@ -571,7 +571,8 @@ def main():
         return simples(st, r, "Invisível: " + ("ligado (os amigos veem você offline)" if a[1] == "on" else "desligado"))
     if c == "amigo" and len(a) == 2:
         cfg, perfil = exigir_rede()
-        st, r = api("POST", "/api/amigos", {"codigo": a[1].strip().upper()}, perfil=perfil, cfg=cfg)
+        # ID SkyNetwork (conta pessoal) ou código de amigo de 6 letras: o servidor procura os dois
+        st, r = api("POST", "/api/amigos", {"quem": a[1].strip().lstrip("@")}, perfil=perfil, cfg=cfg)
         nome = (r.get("amigo") or {}).get("apelido", "")
         return simples(st, r, f"Agora você e {nome} são amigos!" if r.get("status") == "aceita" else f"Pedido enviado para {nome}")
     if c == "aceitar" and len(a) == 2:

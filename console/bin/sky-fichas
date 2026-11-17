@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""SkyStation (Fase 9.1): baixa a ficha de cada jogo da biblioteca, com capa e arte de fundo.
+
+A ficha vem do servidor da SkyNetwork (GET /api/jogos/ficha), que consulta a IGDB, a RAWG e a
+Wikipédia. Por isso só funciona com o console na rede; as chaves dessas bases ficam no servidor.
+
+    sky-fichas                   lê a lista que o launcher grava em $XDG_RUNTIME_DIR/skystation/biblioteca.json
+    sky-fichas <id> <sis> <nome> baixa (de novo) a ficha de um jogo só
+
+Tudo fica em ~/.cache/skystation/fichas/ e funciona offline depois de baixado:
+    <id>.json        nome, resumo, ano, desenvolvedora, publicadora, gêneros, nota, modos, situação no catálogo
+    <id>-capa.png    capa em pé (512 px de altura) — usada quando o jogo não tem capa própria
+    <id>-arte.jpg    arte larga (1280 px) — o fundo que aparece ao parar no jogo, como no PS4
+
+Jogos sem ficha encontrada são tentados de novo depois de 3 dias; fichas encontradas, depois de 60.
+No máximo 40 jogos por rodada, com uma pausa entre eles (o servidor limita pedidos por minuto).
+
+Saída (uma linha JSON): {"ok": true, "novas": 3, "tentadas": 5}
+"""
+import io
+import json
+import os
+import re
+import sys
+import time
+import urllib.parse
+import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import skynet  # noqa: E402
+
+PASTA = os.path.join(skynet.HOME, ".cache/skystation/fichas")
+LISTA = os.path.join(skynet.RUN, "biblioteca.json")
+DE_NOVO_FALHA = 3 * 24 * 3600
+DE_NOVO_OK = 60 * 24 * 3600
+POR_RODADA = 40
+VERSAO = 2   # sobe quando a ficha ganha campos novos: as antigas são baixadas de novo
+
+
+def nome_arquivo(game_id):
+    return re.sub(r"[^A-Za-z0-9._-]", "_", game_id)[:150] or "jogo"
+
+
+def baixar(url):
+    req = urllib.request.Request(url, headers={"User-Agent": skynet.AGENTE})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return r.read(12 * 1024 * 1024)
+
+
+def gravar_imagem(dados, destino, altura=None, largura=None):
+    """Reduz com o pygame (já instalado no console) e grava. Sem pygame, grava o original."""
+    os.makedirs(os.path.dirname(destino), exist_ok=True)
+    tmp = destino + ".tmp" + os.path.splitext(destino)[1]
+    try:
+        os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+        import pygame
+        img = pygame.image.load(io.BytesIO(dados))
+        w, h = img.get_size()
+        if altura and h > altura:
+            img = pygame.transform.smoothscale(img, (max(1, int(w * altura / h)), altura))
+        elif largura and w > largura:
+            img = pygame.transform.smoothscale(img, (largura, max(1, int(h * largura / w))))
+        pygame.image.save(img, tmp)
+    except Exception:
+        with open(tmp, "wb") as f:
+            f.write(dados)
+    os.replace(tmp, destino)
+
+
+def precisa(game_id):
+    meta = skynet.ler_json(os.path.join(PASTA, nome_arquivo(game_id) + ".json"), None)
+    if not isinstance(meta, dict):
+        return True
+    idade = time.time() - float(meta.get("baixada", 0))
+    if meta.get("versao", 0) < VERSAO:
+        return True
+    return idade > (DE_NOVO_OK if meta.get("achou") else DE_NOVO_FALHA)
+
+
+def buscar(game_id, sistema, titulo, cfg):
+    q = urllib.parse.urlencode({"nome": titulo[:200], "sistema": sistema})
+    st, r = skynet.api("GET", "/api/jogos/ficha?" + q, cfg=cfg, timeout=25)
+    if st == 0 or st >= 500 or st == 429:
+        return None   # sem rede ou servidor ocupado: tenta na próxima rodada, sem marcar como falha
+    base = os.path.join(PASTA, nome_arquivo(game_id))
+    ficha = r.get("ficha") if st == 200 and isinstance(r.get("ficha"), dict) else {}
+    meta = {
+        "versao": VERSAO, "baixada": time.time(), "titulo": titulo, "sistema": sistema,
+        "achou": bool(ficha.get("resumo") or ficha.get("capa") or ficha.get("arte")),
+    }
+    for k in ("nome", "resumo", "ano", "desenvolvedora", "publicadora", "generos", "nota", "modos", "fonte"):
+        meta[k] = ficha.get(k)
+    cat = r.get("catalogo") if isinstance(r.get("catalogo"), dict) else None
+    if cat:
+        meta["situacao"] = cat.get("situacao")
+        meta["nota_skystation"] = cat.get("nota")
+    for chave, arq, opts in (("capa", "-capa.png", {"altura": 512}), ("arte", "-arte.jpg", {"largura": 1280})):
+        url = ficha.get(chave)
+        if not url:
+            continue
+        try:
+            gravar_imagem(baixar(url), base + arq, **opts)
+            meta[chave] = os.path.basename(base + arq)
+        except Exception:
+            pass
+    skynet.gravar_json(base + ".json", meta)
+    return meta
+
+
+def main():
+    cfg = skynet.config()
+    if not skynet.conectado(cfg):
+        return skynet.saida({"ok": False, "error": "O console não está na SkyNetwork: as fichas vêm do servidor."})
+    if len(sys.argv) == 4:
+        meta = buscar(sys.argv[1], sys.argv[2], sys.argv[3], cfg)
+        return skynet.saida({"ok": meta is not None, "novas": int(bool(meta and meta.get("achou"))), "tentadas": 1})
+    lista = skynet.ler_json(LISTA, [])
+    if not isinstance(lista, list):
+        lista = []
+    novas = tentadas = 0
+    for j in lista:
+        if tentadas >= POR_RODADA:
+            break
+        if not isinstance(j, dict) or not j.get("id") or not j.get("titulo"):
+            continue
+        if not precisa(str(j["id"])):
+            continue
+        tentadas += 1
+        meta = buscar(str(j["id"]), str(j.get("sis", "")), str(j["titulo"]), cfg)
+        if meta is None:
+            break   # sem rede: para a rodada inteira
+        if meta.get("achou"):
+            novas += 1
+        time.sleep(1.0)
+    skynet.saida({"ok": True, "novas": novas, "tentadas": tentadas})
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:  # nunca derruba o launcher
+        print(json.dumps({"ok": False, "error": str(e)}))
+        sys.exit(0)

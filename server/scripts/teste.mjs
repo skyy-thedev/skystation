@@ -91,6 +91,12 @@ try {
   // ---------------------------------------------------------------- amigos
   ok((await api("POST", "/api/amigos", { ...A, corpo: { codigo: codA } })).status === 400, "não dá para adicionar a si mesmo");
   ok((await api("POST", "/api/amigos", { ...A, corpo: { codigo: "ZZZZZZ" } })).status === 404, "código inexistente = 404");
+  ok((await api("POST", "/api/amigos", { ...A, corpo: { quem: "@ninguem_aqui" } })).status === 404, "ID SkyNetwork inexistente = 404");
+  ok((await api("POST", "/api/amigos", { ...A, corpo: { quem: codA.toLowerCase() } })).status === 400, "pelo campo novo (quem), o próprio código também é recusado");
+  // ficha do jogo para o console (Fase 9.1)
+  ok((await api("GET", "/api/jogos/ficha?nome=God%20of%20War&sistema=ps2", {})).status === 401, "ficha do jogo só para consoles da rede");
+  const fic = await api("GET", "/api/jogos/ficha?nome=God%20of%20War%20(USA)&sistema=ps2", { ...A });
+  ok(fic.status === 200 && fic.dados.ficha.nome && fic.dados.catalogo?.situacao === "perfeito", "ficha do jogo para o console, com a situação do catálogo");
   ok((await api("POST", "/api/mensagens", { ...A, corpo: { paraId: idB, texto: "oi" } })).status === 403, "mensagem para quem não é amigo = 403");
   const ped = await api("POST", "/api/amigos", { ...A, corpo: { codigo: codB.toLowerCase() } });
   ok(ped.status === 201 && ped.dados.status === "pendente", "A pede amizade a B (código em minúsculas vale)");

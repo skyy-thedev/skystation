@@ -730,8 +730,8 @@ def main():
         sel_kind = items[si].get("kind", "acao") if items else ""
         sel_acao = items[si].get("acao", "") if items else ""
         if kb:
-            hints = [("A", "Tecla"), ("B", "Apagar"), ("Y", "Espaço"), ("X", "Maiúscula"), ("Start", "Enviar"),
-                     ("Home", "Cancelar")]
+            hints = [("✕", "Tecla"), ("□", "Apagar"), ("△", "Símbolos"), ("L2", "Maiúsc."), ("R1", "Espaço"),
+                     ("R2", "Enviar"), ("○", "Cancelar")]
         elif sel_acao == "amigo":
             hints = [("◀ ▶", "Categorias"), ("A", "Conversar"), ("B", "Voltar ao jogo")]
         elif cats[sc].get("id") == "amigos" and sel_acao in ("voltar_amigos", "escrever", "rapida", "convidar", "nada"):

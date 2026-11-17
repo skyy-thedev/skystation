@@ -1,6 +1,6 @@
 import { EMULADORES, jogoDoCatalogo } from "./catalogo";
 import { db } from "./db";
-import { infoJogo, SISTEMAS, type InfoJogo } from "./jogos";
+import { fichaVazia, infoJogo, SISTEMAS, type InfoJogo } from "./jogos";
 import { OFFLINE_APOS_MS } from "./rede";
 
 // Dados da página inicial e da página de cada jogo.
@@ -159,7 +159,7 @@ export async function vitrine(eu: { id: string } | null, { comFichas = true } = 
 
   const trofeusBruto = trofeus.filter((t) => vis.has(t.perfilId)).slice(0, 12);
 
-  const semFicha = (titulo: string): InfoJogo => ({ nome: titulo, capa: null, arte: null, resumo: null, ano: null, generos: [], fonte: null, link: null });
+  const semFicha = (titulo: string): InfoJogo => fichaVazia(titulo);
   const ficha = !comFichas ? semFicha : await fichas([
     ...jogandoBruto.map((j) => ({ titulo: j.titulo, sistema: j.sistema })),
     ...recentesBruto.map((j) => ({ titulo: j.titulo, sistema: j.sistema })),
@@ -196,7 +196,7 @@ export async function vitrine(eu: { id: string } | null, { comFichas = true } = 
       jogoId: t.jogoId,
       sistema,
       info: doConsole
-        ? { nome: "SkyStation", capa: null, arte: null, resumo: null, ano: null, generos: [], fonte: null, link: null }
+        ? fichaVazia("SkyStation")
         : ficha(t.jogo || t.jogoId, sistema),
       href: doConsole ? (perfil.usuario ? `/u/${perfil.usuario}` : "/") : hrefJogo(sistema, t.jogoId),
       legenda: `${perfil.apelido} · ${haQuanto(t.ganhoEm)}`,

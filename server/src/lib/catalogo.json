@@ -41,7 +41,7 @@
       "nome": "Xbox 360",
       "emulador": "Xenia Canary",
       "situacao": "funciona",
-      "destaques": "Saves por perfil e na nuvem; pede PC forte"
+      "destaques": "Saves por perfil e na nuvem; roda bem a maioria dos jogos testados"
     }
   ],
   "emBreve": [
@@ -223,7 +223,7 @@
       "sistema": "x360",
       "ano": 2011,
       "situacao": "jogavel",
-      "nota": "~55 FPS, com quedas para 40 em alguns trechos."
+      "nota": "~55 FPS. Um erro leve de textura no asfalto, que não atrapalha a corrida."
     },
     {
       "id": "x360-gta-4",

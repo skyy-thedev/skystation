@@ -115,6 +115,15 @@ try:
 
     # ------------------------------------------------------------ amizade
     ok(A.sky("amigo", "zzzzzz")["ok"] is False, "código de amigo inexistente dá erro legível")
+    # Fase 9.1: ficha do jogo (sem rede para fora no teste, a ficha pode vir vazia, mas o caminho funciona)
+    with open(os.path.join(A.run, "biblioteca.json"), "w") as f:
+        json.dump([{"id": "ps2-God_of_War_(USA)", "sis": "ps2", "titulo": "God of War"}], f)
+    fi = A.sky(prog="sky-fichas")
+    meta = os.path.join(A.home, ".cache/skystation/fichas/ps2-God_of_War__USA_.json")
+    ok(fi["ok"] and fi["tentadas"] == 1 and os.path.exists(meta), "sky-fichas baixa a ficha dos jogos da biblioteca")
+    with open(meta) as f:
+        ok(json.load(f).get("situacao") == "perfeito", "a ficha traz a situação do catálogo de testados")
+    ok(A.sky(prog="sky-fichas")["tentadas"] == 0, "ficha já baixada não é pedida de novo")
     ok("Pedido enviado para Bart" in A.sky("amigo", eb["codigo"].lower())["message"], "A pede amizade a B")
     sb = B.sky("estado")
     ok(sb["online"] and len(sb["pedidos"]) == 1 and sb["pedidos"][0]["de"]["apelido"] == "Sky", "B vê o pedido de A")

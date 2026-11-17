@@ -42,6 +42,10 @@ export type InfoJogo = {
   resumo: string | null;
   ano: number | null;
   generos: string[];
+  desenvolvedora: string | null;
+  publicadora: string | null;
+  nota: number | null; // 0 a 100 (crítica da IGDB; senão Metacritic pela RAWG)
+  modos: string[]; // "Single player", "Multiplayer", "Split screen"…
   fonte: "igdb" | "rawg" | "wikipedia" | null;
   link: string | null; // página de onde veio o resumo
 };
@@ -102,13 +106,15 @@ type JogoIgdb = {
   name: string; summary?: string; first_release_date?: number; url?: string;
   genres?: { name: string }[]; cover?: { image_id: string }; artworks?: { image_id: string }[];
   screenshots?: { image_id: string }[];
+  involved_companies?: { company?: { name: string }; developer?: boolean; publisher?: boolean }[];
+  aggregated_rating?: number; total_rating?: number; game_modes?: { name: string }[];
 };
 
 async function buscarIgdb(nome: string, sistema: string, ano?: number): Promise<Partial<InfoJogo> | null> {
   const t = await tokenTwitch();
   if (!t) return null;
   const busca = nome.replace(/"/g, "");
-  const campos = "fields name,summary,first_release_date,url,genres.name,cover.image_id,artworks.image_id,screenshots.image_id;";
+  const campos = "fields name,summary,first_release_date,url,genres.name,cover.image_id,artworks.image_id,screenshots.image_id,involved_companies.company.name,involved_companies.developer,involved_companies.publisher,aggregated_rating,total_rating,game_modes.name;";
   const plat = PLATAFORMA[sistema]?.igdb;
   const pedir = (onde: string) =>
     json("https://api.igdb.com/v4/games", {
@@ -133,6 +139,10 @@ async function buscarIgdb(nome: string, sistema: string, ano?: number): Promise<
     resumo: j.summary ?? null,
     ano: j.first_release_date ? new Date(j.first_release_date * 1000).getUTCFullYear() : null,
     generos: (j.genres ?? []).map((g) => g.name).slice(0, 3),
+    desenvolvedora: j.involved_companies?.find((c) => c.developer)?.company?.name ?? null,
+    publicadora: j.involved_companies?.find((c) => c.publisher)?.company?.name ?? null,
+    nota: Math.round(j.aggregated_rating ?? j.total_rating ?? 0) || null,
+    modos: (j.game_modes ?? []).map((m) => m.name).slice(0, 4),
     link: j.url ?? null,
     fonte: "igdb",
   };
@@ -166,6 +176,9 @@ async function buscarRawg(nome: string, sistema: string, ano?: number): Promise<
     nome: j.name,
     arte: j.background_image ?? null,
     resumo: det?.description_raw ? resumir(det.description_raw) : null,
+    desenvolvedora: det?.developers?.[0]?.name ?? null,
+    publicadora: det?.publishers?.[0]?.name ?? null,
+    nota: typeof det?.metacritic === "number" ? det.metacritic : null,
     ano: j.released ? Number(j.released.slice(0, 4)) : null,
     generos: (j.genres ?? []).map((g) => g.name).slice(0, 3),
     link: `https://rawg.io/games/${j.slug}`,
@@ -267,25 +280,30 @@ async function montar(nome: string, sistema: string, ano?: number): Promise<Info
     resumo,
     ano: ano ?? base?.ano ?? pt?.ano ?? en?.ano ?? null,
     generos: igdb?.generos?.length ? igdb.generos : rawg?.generos ?? [],
+    desenvolvedora: igdb?.desenvolvedora ?? rawg?.desenvolvedora ?? null,
+    publicadora: igdb?.publicadora ?? rawg?.publicadora ?? null,
+    nota: igdb?.nota ?? rawg?.nota ?? null,
+    modos: igdb?.modos ?? [],
     fonte: (fonte?.fonte as InfoJogo["fonte"]) ?? null,
     link: fonte?.link ?? null,
   };
 }
 
-const emCache = unstable_cache(montar, ["sky-jogo-v6"], { revalidate: 7 * 24 * 60 * 60, tags: ["jogos"] });
+const emCache = unstable_cache(montar, ["sky-jogo-v7"], { revalidate: 7 * 24 * 60 * 60, tags: ["jogos"] });
 
-const VAZIO = (nome: string): InfoJogo => ({
-  nome, capa: null, arte: null, resumo: null, ano: null, generos: [], fonte: null, link: null,
+export const fichaVazia = (nome: string): InfoJogo => ({
+  nome, capa: null, arte: null, resumo: null, ano: null, generos: [],
+  desenvolvedora: null, publicadora: null, nota: null, modos: [], fonte: null, link: null,
 });
 
 /** Ficha do jogo pelo título que o console mandou. Nunca falha: sem internet, volta só o nome. */
 export async function infoJogo(titulo: string | null | undefined, sistema: string | null | undefined, ano?: number): Promise<InfoJogo> {
   const nome = limparNome(titulo ?? "");
-  if (!nome) return VAZIO(titulo ?? "");
-  if (process.env.SKY_SEM_BUSCA_JOGOS === "1") return VAZIO(nome);
+  if (!nome) return fichaVazia(titulo ?? "");
+  if (process.env.SKY_SEM_BUSCA_JOGOS === "1") return fichaVazia(nome);
   try {
     return await emCache(nome, sistema ?? "", ano);
   } catch {
-    return VAZIO(nome);
+    return fichaVazia(nome);
   }
 }

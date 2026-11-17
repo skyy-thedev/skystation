@@ -39,7 +39,7 @@ const ROM_SYSTEMS := {
 	# Fase 7.1
 	"gc": {"badge": "GC", "name": "GameCube", "color": "#7b68ee", "icon": "discG", "exts": ["iso", "gcm", "rvz", "gcz", "ciso"]},
 	"wii": {"badge": "Wii", "name": "Nintendo Wii", "color": "#7fd4ff", "icon": "discW", "exts": ["iso", "wbfs", "rvz", "gcz", "ciso", "wad"]},
-	"x360": {"badge": "360", "name": "Xbox 360 (experimental)", "color": "#8fd14f", "icon": "discX", "exts": ["iso", "zar", "xex"]},
+	"x360": {"badge": "360", "name": "Xbox 360", "color": "#8fd14f", "icon": "discX", "exts": ["iso", "zar", "xex"]},
 	"nds": {"badge": "DS", "name": "Nintendo DS", "color": "#c9d2e6", "icon": "cartD", "exts": ["nds", "dsi"]},
 	"3ds": {"badge": "3DS", "name": "Nintendo 3DS", "color": "#ff6b6b", "icon": "cart3", "exts": ["3ds", "cci", "cxi", "3dsx"]},
 	"gba": {"badge": "GBA", "name": "Game Boy Advance", "color": "#9d7bff", "icon": "cartA", "exts": ["gba"]},
@@ -207,6 +207,26 @@ var events_pos: int = -1
 var reload_at: float = -1.0
 var covers_at: float = 6.0
 var covers_busy: bool = false
+# Fase 9.1: ficha e arte de fundo do jogo (sky-fichas baixa; aparecem ao parar num jogo, como no PS4)
+var fichas_dir: String = home_dir + "/.cache/skystation/fichas/"
+var fichas_busy: bool = false
+var fichas_at: float = -1.0
+var ficha_cache: Dictionary = {}     # id do jogo -> ficha (Dictionary; vazio = sem ficha)
+var hover_id: String = ""
+var hover_t: float = 0.0
+var art_tex: Texture2D = null        # arte que está entrando
+var art_a: float = 0.0
+var art_prev: Texture2D = null       # arte que está saindo
+var art_prev_a: float = 0.0
+var art_for: String = ""
+var art_is_cover: bool = false
+var ficha_on: Dictionary = {}
+var ficha_on_game: Dictionary = {}
+var ficha_a: float = 0.0
+var shade_h: GradientTexture2D
+var shade_v: GradientTexture2D
+var arq_re: RegEx = null
+const ARTE_ESPERA := 1.0             # segundos parado num jogo até a arte entrar
 var playtime: Dictionary = {}
 var shots: Array = []            # caminhos das capturas (mais nova primeiro)
 var viewer_open: bool = false
@@ -337,6 +357,10 @@ func _process(delta: float) -> void:
 	if covers_at > 0.0 and t >= covers_at:
 		covers_at = -1.0
 		_fetch_covers()
+	if fichas_at > 0.0 and t >= fichas_at and not covers_busy:
+		fichas_at = -1.0
+		_fetch_fichas()
+	_tick_art(delta)
 	if update_check_at > 0.0 and t >= update_check_at:
 		update_check_at = t + 6.0 * 3600.0
 		_check_update()
@@ -596,8 +620,184 @@ func _reload_games() -> void:
 			if g != null:
 				games.append(g)
 	_scan_roms()
+	_apply_fichas()
 	games.sort_custom(_game_less)
 	_build_cats()
+
+
+func _ficha_arq(game_id: String) -> String:
+	# o mesmo nome de arquivo que o sky-fichas usa
+	if arq_re == null:
+		arq_re = RegEx.new()
+		arq_re.compile("[^A-Za-z0-9._-]")
+	var n := arq_re.sub(game_id, "_", true).substr(0, 150)
+	return n if n != "" else "jogo"
+
+
+func _apply_fichas() -> void:
+	# Fase 9.1: jogo sem capa própria usa a capa da ficha (Xbox 360, PS3 sem ícone, nomes fora do padrão).
+	# E grava a lista da biblioteca para o sky-fichas baixar o que falta.
+	ficha_cache.clear()
+	art_for = ""
+	var lista: Array = []
+	for g in games:
+		if str(g["sys"]) == "":
+			continue
+		if g["cover"] == null:
+			g["cover"] = _load_tex(fichas_dir + _ficha_arq(str(g["id"])) + "-capa.png")
+		lista.append({"id": g["id"], "sis": g["sys"], "titulo": g["title"]})
+	DirAccess.make_dir_recursive_absolute(run_dir)
+	_write_text(run_dir + "/biblioteca.json", JSON.stringify(lista))
+	if not fichas_busy:
+		fichas_at = t + (12.0 if t < 12.0 else 3.0)
+
+
+func _ficha(g: Dictionary) -> Dictionary:
+	var gid := str(g.get("id", ""))
+	if ficha_cache.has(gid):
+		return ficha_cache[gid]
+	var f = JSON.parse_string(_read_text(fichas_dir + _ficha_arq(gid) + ".json", "{}"))
+	var d: Dictionary = f if typeof(f) == TYPE_DICTIONARY and f.get("achou", false) else {}
+	ficha_cache[gid] = d
+	return d
+
+
+func _fetch_fichas() -> void:
+	if fichas_busy or not FileAccess.file_exists(SKY_BIN + "/sky-fichas") \
+			or not FileAccess.file_exists(conf_dir + "/rede.json"):
+		return
+	fichas_busy = true
+	_bg(_run_json.bind(SKY_BIN + "/sky-fichas", []), _on_fichas)
+
+
+func _on_fichas(r: Dictionary) -> void:
+	fichas_busy = false
+	var n := int(r.get("novas", 0))
+	if n > 0:
+		_reload_games()
+		_toast("%d jogo(s) com capa e ficha novas" % n, 3.0, "disc")
+	fichas_at = t + (5.0 if int(r.get("tentadas", 0)) >= 40 else 1800.0)   # mais na fila? continua já
+
+
+func _load_art(path: String) -> Texture2D:
+	if not FileAccess.file_exists(path):
+		return null
+	var img := Image.load_from_file(path)
+	if img == null or img.is_empty():
+		return null
+	if img.get_width() > 960:   # fundo: menor e um pouco macio de propósito (pesa menos e parece desfocado)
+		img.resize(960, int(img.get_height() * 960.0 / img.get_width()), Image.INTERPOLATE_BILINEAR)
+	return ImageTexture.create_from_image(img)
+
+
+func _tick_art(delta: float) -> void:
+	var it := _cur()
+	var gid := ""
+	if not it.is_empty() and it.get("kind", "") == "game" and not panel_open and not notif_open \
+			and storage_data.is_empty() and not recv_open and not viewer_open:
+		gid = str(it["game"]["id"])
+	if gid != hover_id:
+		hover_id = gid
+		hover_t = 0.0
+	else:
+		hover_t += delta
+	var want: bool = gid != "" and hover_t >= ARTE_ESPERA
+	if want and art_for != gid:
+		var f := _ficha(it["game"])
+		var tex: Texture2D = null
+		if f.has("arte") and f["arte"] != null:
+			tex = _load_art(fichas_dir + str(f["arte"]))
+		art_is_cover = tex == null
+		if tex == null:
+			tex = it["cover"]   # sem arte larga: a própria capa, bem escurecida, faz o papel
+		art_prev = art_tex
+		art_prev_a = art_a
+		art_tex = tex
+		art_a = 0.0
+		art_for = gid
+		ficha_on = f
+		ficha_on_game = it["game"]
+	var on: bool = want and art_for == gid
+	art_a = move_toward(art_a, 1.0 if on else 0.0, delta * 1.6)
+	art_prev_a = move_toward(art_prev_a, 0.0, delta * 2.4)
+	ficha_a = move_toward(ficha_a, 1.0 if on and not ficha_on.is_empty() else 0.0, delta * (2.5 if on else 6.0))
+
+
+func _draw_game_art(w: float, h: float, a: float) -> void:
+	var s: float = maxf(art_a, art_prev_a)
+	if s <= 0.01:
+		return
+	var full := Rect2(0, 0, w, h)
+	if art_prev != null and art_prev_a > 0.01:
+		_draw_cover(art_prev, full, art_prev_a * 0.85 * a)
+	if art_tex != null and art_a > 0.01:
+		_draw_cover(art_tex, full, art_a * (0.45 if art_is_cover else 0.85) * a)
+	draw_texture_rect(shade_h, full, false, Color(1, 1, 1, s * a))
+	draw_texture_rect(shade_v, full, false, Color(1, 1, 1, s * a))
+
+
+func _draw_ficha(w: float, h: float, a: float) -> void:
+	if ficha_a <= 0.01 or ficha_on.is_empty():
+		return
+	var f := ficha_on
+	var fa := ficha_a * a
+	var x0 := w * 0.60
+	var pw := w - x0 - 64.0
+	var y := h * 0.30 + 66.0   # abaixo da barra de categorias
+	var g := ficha_on_game
+	var linha1: PackedStringArray = []
+	if ROM_SYSTEMS.has(str(g.get("sys", ""))):
+		linha1.append(ROM_SYSTEMS[str(g["sys"])]["name"])
+	if f.get("ano") != null:
+		linha1.append(str(int(f["ano"])))
+	if _nulo(f.get("desenvolvedora")) != "":
+		linha1.append(_nulo(f.get("desenvolvedora")))
+	var resumo := _nulo(f.get("resumo"))
+	var linhas_max := 6 if h < 800.0 else 9
+	var rs := font.get_multiline_string_size(resumo, HORIZONTAL_ALIGNMENT_LEFT, pw, 17, linhas_max)
+	var titulo := _nulo(f.get("nome")) if _nulo(f.get("nome")) != "" else str(g.get("title", ""))
+	var ts := font_bold.get_multiline_string_size(titulo, HORIZONTAL_ALIGNMENT_LEFT, pw, 30, 2)
+	var generos_ok: bool = typeof(f.get("generos")) == TYPE_ARRAY and not f["generos"].is_empty()
+	var alto := 30.0 + ts.y + 52.0 + (24.0 if generos_ok else 0.0) + rs.y + 76.0
+	_rrect(Rect2(x0 - 28, y - 34, pw + 56, alto), Color(0, 0, 0, 0.42 * fa), 22, Color(1, 1, 1, 0.08 * fa), 1)
+	_text("  ·  ".join(linha1).to_upper(), Vector2(x0, y), 14, Color(MUTED, fa), true, pw)
+	y += 14.0
+	draw_multiline_string(font_bold, Vector2(x0, y + 28), titulo, HORIZONTAL_ALIGNMENT_LEFT, pw, 30, 2, Color(WHITE, fa))
+	y += ts.y + 18.0
+	var bx := x0
+	if f.get("nota") != null and int(f["nota"]) > 0:
+		var nr := Rect2(bx, y, 52, 34)
+		_rrect(nr, Color(Color("ffcd46"), fa), 9)
+		_text(str(int(f["nota"])), Vector2(nr.position.x, nr.position.y + 24), 19, Color(Color("1a1300"), fa), true, 52,
+			HORIZONTAL_ALIGNMENT_CENTER)
+		bx += 64.0
+	var sit := _nulo(f.get("situacao"))
+	if sit != "":
+		var cores := {"perfeito": Color("54f0b8"), "jogavel": Color("4fd1ff"), "com-falhas": Color("ffcd46")}
+		var nomes := {"perfeito": "Perfeito", "jogavel": "Jogável", "com-falhas": "Com falhas"}
+		var c: Color = cores.get(sit, accent)
+		var txt := "Testado no SkyStation: " + str(nomes.get(sit, sit))
+		var tw := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x + 40.0
+		_rrect(Rect2(bx, y, tw, 34), Color(0, 0, 0, 0.45 * fa), 17, Color(c, 0.7 * fa), 1)
+		draw_circle(Vector2(bx + 17, y + 17), 5.0, Color(c, fa))
+		_text(txt, Vector2(bx + 30, y + 23), 15, Color(WHITE, fa))
+	var generos: Array = f.get("generos", []) if typeof(f.get("generos")) == TYPE_ARRAY else []
+	y += 34.0 + 14.0
+	if not generos.is_empty():
+		_text("  ·  ".join(PackedStringArray(generos.map(func(x): return str(x)))), Vector2(x0, y + 14), 15,
+			Color(accent.lightened(0.3), fa), false, pw)
+		y += 24.0
+	draw_multiline_string(font, Vector2(x0, y + 18), resumo, HORIZONTAL_ALIGNMENT_LEFT, pw, 17, linhas_max, Color(WHITE, 0.88 * fa))
+	y += rs.y + 14.0
+	var modos: Array = f.get("modos", []) if typeof(f.get("modos")) == TYPE_ARRAY else []
+	var rodape: PackedStringArray = []
+	if not modos.is_empty():
+		rodape.append(" · ".join(PackedStringArray(modos.map(func(x): return str(x)))))
+	if _nulo(f.get("nota_skystation")) != "":
+		rodape.append(_nulo(f.get("nota_skystation")))
+	if not rodape.is_empty():
+		draw_multiline_string(font, Vector2(x0, y + 14), "   |   ".join(rodape), HORIZONTAL_ALIGNMENT_LEFT, pw, 14, 2,
+			Color(DIM.lightened(0.25), fa))
 
 
 func _game_less(a: Dictionary, b: Dictionary) -> bool:
@@ -824,10 +1024,23 @@ func _net_load() -> bool:
 
 
 func _build_net_cat() -> Dictionary:
-	var c_net := {"id": "amigos", "title": "Amigos", "icon": "friends", "items": []}
+	# Fase 10.7: a categoria SkyNetwork (antes "Amigos") concentra a rede: conta, amigos e opções,
+	# como a PSN no PS3/PS4. As telas de conta e opções ficam no painel da SkyNetwork (settings, seção 4).
+	var c_net := {"id": "skynetwork", "title": "SkyNetwork", "icon": "friends", "items": []}
 	if not net.get("na_rede", false):
-		c_net["items"].append(_act("Entrar na SkyNetwork", "Veja o que os amigos jogam, troque mensagens e guarde os saves na nuvem", "settings:4", "wifi"))
+		c_net["items"].append(_act("Entrar na SkyNetwork", "Digite o código de convite: amigos, mensagens, troféus e saves na nuvem", "net:net_entrar", "wifi"))
+		c_net["items"].append(_act("Já tenho um ID SkyNetwork", "Primeiro entre na rede com o convite; depois use o seu ID e a senha", "settings:4", "search"))
 		return c_net
+	var eu: Dictionary = net.get("eu", {}) if typeof(net.get("eu")) == TYPE_DICTIONARY else {}
+	var conta: String = _nulo(eu.get("usuario"))
+	var glifo_eu: String = ("avatar:" + _nulo(eu.get("avatar"))) if _nulo(eu.get("avatar")) != "" else "friends"
+	if conta != "":
+		c_net["items"].append(_act(_nulo(eu.get("apelido")) if _nulo(eu.get("apelido")) != "" else profile_name,
+			"ID SkyNetwork: " + conta + "  ·  A: conta e opções", "settings:4", glifo_eu))
+	else:
+		c_net["items"].append(_act(profile_name, "Sem ID SkyNetwork ainda  ·  Código de amigo: " + _nulo(eu.get("codigo")), "settings:4", glifo_eu))
+		c_net["items"].append(_act("Criar ID SkyNetwork", "Um nome único (ex.: sky) e senha: os amigos acham você pelo ID e você entra em qualquer console ou no site", "net:net_conta_criar", "friends", accent))
+		c_net["items"].append(_act("Já tenho ID: entrar", "Este perfil passa a ser a sua conta (amigos, troféus e saves vêm junto)", "net:net_conta_entrar", "search"))
 	if not net.get("online", false):
 		c_net["items"].append(_act("Sem conexão com a SkyNetwork", "Os amigos voltam a aparecer quando a internet voltar", "settings:4", "wifi"))
 	for p in net.get("pedidosRecebidos", []):
@@ -864,7 +1077,9 @@ func _build_net_cat() -> Dictionary:
 		if sit == "offline" or sit == "":
 			cor = Color(1, 1, 1, 0.45)   # o ícone do amigo offline fica apagado
 		c_net["items"].append(_act(_nulo(a.get("apelido")), sub, "friend:" + _nulo(a.get("id")), glifo, cor))
-	c_net["items"].append(_act("Adicionar amigo", "Meu código de amigo: " + _nulo(net.get("eu", {}).get("codigo")), "settings:4", "search"))
+	c_net["items"].append(_act("Adicionar amigo", "Pelo ID SkyNetwork dele (ou o código de amigo)", "net:net_add", "search"))
+	c_net["items"].append(_act("Ícone do perfil", "Escolha numa grade, como no site", "net:net_icones", glifo_eu))
+	c_net["items"].append(_act("Opções da SkyNetwork", "Saves na nuvem, invisível, senha, usar o perfil em outro console, sair", "settings:4", "gear"))
 	return c_net
 
 
@@ -1011,6 +1226,8 @@ func _build_cats() -> void:
 	if not c_shots["items"].is_empty():
 		cats.append(c_shots)
 	cats.append(c_power)
+	if c_apps["items"].is_empty():
+		cats.erase(c_apps)   # antes de achar a categoria: apagar depois deslocava o índice das seguintes
 	cat = 1
 	for i in cats.size():
 		if cats[i]["id"] == "jogos":
@@ -1018,9 +1235,6 @@ func _build_cats() -> void:
 	for i in cats.size():
 		if cats[i]["id"] == old_id:
 			cat = i
-	if c_apps["items"].is_empty():
-		cats.erase(c_apps)
-		cat = min(cat, cats.size() - 1)
 	cat_smooth = float(cat)
 	item_smooth = float(_cur_item())
 
@@ -1087,6 +1301,11 @@ func _activate() -> void:
 		_open_settings(4)
 		if settings != null:
 			settings.call("abrir_amigo", action.substr(7))
+		return
+	if action.begins_with("net:"):
+		_open_settings(4)
+		if settings != null:
+			settings.call("abrir_acao", action.substr(4))
 		return
 	if action.begins_with("settings:"):
 		_open_settings(int(action.split(":")[1]))
@@ -2512,6 +2731,23 @@ func _make_glow() -> void:
 	side_tex.gradient = g2
 	side_tex.width = 256
 	side_tex.height = 4
+	# Fase 9.1: véus sobre a arte do jogo (esquerda escura para o menu, faixas em cima e embaixo)
+	var g3 := Gradient.new()
+	g3.offsets = PackedFloat32Array([0.0, 0.45, 0.62, 1.0])
+	g3.colors = PackedColorArray([Color(0, 0, 0, 0.86), Color(0, 0, 0, 0.6), Color(0, 0, 0, 0.42), Color(0, 0, 0, 0.5)])
+	shade_h = GradientTexture2D.new()
+	shade_h.gradient = g3
+	shade_h.width = 256
+	shade_h.height = 4
+	var g4 := Gradient.new()
+	g4.offsets = PackedFloat32Array([0.0, 0.2, 0.75, 1.0])
+	g4.colors = PackedColorArray([Color(0, 0, 0, 0.55), Color(0, 0, 0, 0.0), Color(0, 0, 0, 0.0), Color(0, 0, 0, 0.7)])
+	shade_v = GradientTexture2D.new()
+	shade_v.gradient = g4
+	shade_v.fill_from = Vector2(0, 0)
+	shade_v.fill_to = Vector2(0, 1)
+	shade_v.width = 4
+	shade_v.height = 256
 
 
 func _glow(c: Vector2, radius: float, col: Color) -> void:
@@ -2574,8 +2810,10 @@ func _draw() -> void:
 	elif not storage_data.is_empty():
 		_draw_storage(w, h)
 	else:
+		_draw_game_art(w, h, a)
 		_draw_header(w, h, a)
 		_draw_xmb(w, h, a)
+		_draw_ficha(w, h, a)
 		_draw_footer(w, h, a)
 		if panel_t > 0.0:
 			_draw_panel(w, h)
@@ -2787,12 +3025,15 @@ func _draw_item(it: Dictionary, c: Vector2, sel: float, a: float, is_cur: bool) 
 
 	var tx := c.x + maxf(iw, 66.0) / 2.0 + 26.0
 	var ts := int(20 + 8 * sel)
+	var maxw: float = size.x - tx - 60
+	if ficha_a > 0.02:   # a ficha ocupa a direita: o texto do item não passa por baixo dela
+		maxw = lerpf(maxw, size.x * 0.60 - 50.0 - tx, ficha_a)
 	_text_shadow(str(it["title"]), Vector2(tx, c.y + (ts * 0.35 if sel < 0.5 else -4.0)), ts,
-		Color(WHITE, a), sel > 0.5, size.x - tx - 60)
+		Color(WHITE, a), sel > 0.5, maxw)
 	if sel > 0.5 and str(it["sub"]) != "":
 		_text(str(it["sub"]), Vector2(tx, c.y + 24), 16, Color(accent.lightened(0.25), a * sel))
 	if is_cur and sel > 0.8 and str(it.get("desc", "")) != "" and it["kind"] == "game":
-		draw_multiline_string(font, Vector2(tx, c.y + 50), str(it["desc"]), HORIZONTAL_ALIGNMENT_LEFT, size.x - tx - 80, 15, 2,
+		draw_multiline_string(font, Vector2(tx, c.y + 50), str(it["desc"]), HORIZONTAL_ALIGNMENT_LEFT, maxw - 20, 15, 2,
 			Color(MUTED, a * sel))
 
 

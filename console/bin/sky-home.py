@@ -492,23 +492,21 @@ class Home:
             t.mover(-1, 0)
         elif code in KB_RIGHT:
             t.mover(1, 0)
+        # como no PS4/PS5: ✕ digita, □ apaga, △ símbolos, ○ cancela, R2 (ou Options) envia,
+        # L2 maiúsculas, R1 espaço
         elif code == E.BTN_SOUTH:
             t.apertar()
-        elif code == E.BTN_EAST:
-            if not t.apagar():
-                self.kb_fechar()            # B com o texto vazio: desiste
-                return
-        elif code == E.KEY_BACKSPACE:
+        elif code in (E.BTN_WEST, E.BTN_TL, E.KEY_BACKSPACE):
             t.apagar()
-        elif code in (E.BTN_NORTH, E.KEY_SPACE):
-            t.espaco()
-        elif code == E.BTN_WEST:
-            t.maiuscula()
-        elif code == E.BTN_SELECT:
+        elif code in (E.BTN_NORTH, E.BTN_SELECT):
             t.pagina()
-        elif code in (E.BTN_START, E.KEY_ENTER, E.KEY_KPENTER):
+        elif code == E.BTN_TL2:
+            t.maiuscula()
+        elif code in (E.BTN_TR, E.KEY_SPACE):
+            t.espaco()
+        elif code in (E.BTN_TR2, E.BTN_START, E.KEY_ENTER, E.KEY_KPENTER):
             t.enviar()
-        elif code in (E.BTN_MODE, E.KEY_ESC, E.KEY_F12):
+        elif code in (E.BTN_EAST, E.BTN_MODE, E.KEY_ESC, E.KEY_F12):
             self.kb_fechar()
             return
         else:

@@ -47,6 +47,14 @@ var net_msg: String = ""       # resultado da última ação: continua na tela d
 var net_conta_id: String = ""  # Fase 10.5: ID digitado, esperando a senha (criar/entrar na conta)
 var kb_mascara: bool = false   # teclado mostra • no lugar do texto (senhas)
 
+# Grade de ícones de perfil (como no site): 16 ícones, A escolhe, B volta
+var grade_open: bool = false
+var grade_sel: int = 0
+var grade_lista: Array = []    # [{"id", "nome", "cor"}]
+var grade_tex: Dictionary = {}
+var grade_atual: String = ""
+var acao_pendente: String = ""  # o launcher pediu para abrir direto numa ação (ex.: adicionar amigo)
+
 var cmd_queue: Array = []
 var joy_prev: Dictionary = {}
 var joy_hold: Dictionary = {}
@@ -73,6 +81,18 @@ func open(start_section: int = -1) -> void:
 	_load_section()
 
 
+func abrir_acao(acao: String) -> void:
+	# chamado pelo launcher logo depois de open(4): vai direto ao que o jogador escolheu na
+	# categoria SkyNetwork do menu (adicionar amigo, criar/entrar na conta, trocar o ícone…)
+	column = 1
+	acao_pendente = ""
+	match acao:
+		"net_add", "net_conta_criar", "net_conta_entrar", "net_entrar", "net_conta_senha":
+			_activate_acao({"action": acao})
+		"net_icones":
+			acao_pendente = acao   # a grade precisa do ícone atual: abre quando o estado chegar
+
+
 func abrir_amigo(id: String) -> void:
 	# chamado pelo launcher logo depois de open(4): abre direto as mensagens daquele amigo
 	net_amigo = id
@@ -88,7 +108,8 @@ func _close() -> void:
 
 func _joy_buttons() -> Dictionary:
 	var st := {"up": false, "down": false, "left": false, "right": false,
-		"a": false, "b": false, "x": false, "y": false, "start": false}
+		"a": false, "b": false, "x": false, "y": false, "start": false,
+		"l1": false, "r1": false, "l2": false, "r2": false}
 	for dev in Input.get_connected_joypads():
 		var ax := Input.get_joy_axis(dev, JOY_AXIS_LEFT_X)
 		var ay := Input.get_joy_axis(dev, JOY_AXIS_LEFT_Y)
@@ -101,6 +122,10 @@ func _joy_buttons() -> Dictionary:
 		st["x"] = st["x"] or Input.is_joy_button_pressed(dev, JOY_BUTTON_X)
 		st["y"] = st["y"] or Input.is_joy_button_pressed(dev, JOY_BUTTON_Y)
 		st["start"] = st["start"] or Input.is_joy_button_pressed(dev, JOY_BUTTON_START)
+		st["l1"] = st["l1"] or Input.is_joy_button_pressed(dev, JOY_BUTTON_LEFT_SHOULDER)
+		st["r1"] = st["r1"] or Input.is_joy_button_pressed(dev, JOY_BUTTON_RIGHT_SHOULDER)
+		st["l2"] = st["l2"] or Input.get_joy_axis(dev, JOY_AXIS_TRIGGER_LEFT) > 0.5
+		st["r2"] = st["r2"] or Input.get_joy_axis(dev, JOY_AXIS_TRIGGER_RIGHT) > 0.5
 	return st
 
 
@@ -139,9 +164,9 @@ func _input(event: InputEvent) -> void:
 		KEY_ENTER, KEY_KP_ENTER:
 			c = "start" if kb_open else "a"
 		KEY_ESCAPE:
-			c = "y" if kb_open else "b"
-		KEY_BACKSPACE:
 			c = "b"
+		KEY_BACKSPACE:
+			c = "x" if kb_open else "b"
 		KEY_Y:
 			if not kb_open:
 				c = "y"
@@ -163,6 +188,8 @@ func _process(delta: float) -> void:
 		var c: String = cmd_queue.pop_front()
 		if kb_open:
 			_kb_command(c)
+		elif grade_open:
+			_grade_command(c)
 		else:
 			_command(c)
 	queue_redraw()
@@ -229,7 +256,10 @@ func _load_section() -> void:
 func _activate() -> void:
 	if items.is_empty():
 		return
-	var it: Dictionary = items[item]
+	_activate_acao(items[item])
+
+
+func _activate_acao(it: Dictionary) -> void:
 	match it["action"]:
 		"wifi_scan":
 			status = "Procurando redes…"
@@ -285,11 +315,13 @@ func _activate() -> void:
 			kb_mode = "net_entrar"
 			kb_shift = true
 		"net_add":
-			_kb_start("Código de amigo (6 letras ou números)", "")
+			_kb_start("ID SkyNetwork do amigo (ou o código de amigo dele)", "")
 			kb_mode = "net_amigo"
-			kb_shift = true
+		"net_icones":
+			_grade_abrir()
 		"net_conta_criar", "net_conta_entrar":
-			_kb_start("ID SkyNetwork: 3 a 16 letras minúsculas, números ou _", "")
+			_kb_start(("Escolha o seu ID SkyNetwork: 3 a 16 letras minúsculas, números ou _" if it["action"] == "net_conta_criar"
+				else "O seu ID SkyNetwork"), "")
 			kb_mode = "net_conta_id_criar" if it["action"] == "net_conta_criar" else "net_conta_id_entrar"
 		"net_conta_senha":
 			_kb_start("Senha nova da conta (mínimo 6 caracteres)", "")
@@ -442,10 +474,13 @@ func _on_net(data: Dictionary, sec: int) -> void:
 		items.append({"text": "Sem conexão com a SkyNetwork agora", "action": "info"})
 	else:
 		var conta: String = _nulo(eu.get("usuario"))
-		items.append({"text": "%s%s   ·   Meu código de amigo:  %s" % [_nulo(eu.get("apelido")),
-			("  (@" + conta + ")") if conta != "" else "", _nulo(eu.get("codigo"))], "action": "info"})
-		items.append({"text": "Ícone do perfil: %s   (A troca)" % _nome_avatar(_nulo(eu.get("avatar"))),
-			"action": "net_cmd", "arg": ["icone", "proximo"]})
+		if conta != "":
+			items.append({"text": "%s   ·   Meu ID SkyNetwork:  %s" % [_nulo(eu.get("apelido")), conta], "action": "info"})
+		else:
+			items.append({"text": "%s   ·   Meu código de amigo:  %s   (crie um ID para ser achado pelo nome)" % [
+				_nulo(eu.get("apelido")), _nulo(eu.get("codigo"))], "action": "info"})
+		grade_atual = _nulo(eu.get("avatar"))
+		items.append({"text": "Ícone do perfil: %s   (A abre a grade)" % _nome_avatar(grade_atual), "action": "net_icones"})
 		if conta == "":
 			items.append({"text": "Criar conta SkyNetwork  (ID e senha para o site e outros consoles)", "action": "net_conta_criar"})
 			items.append({"text": "Já tenho conta: entrar com ID e senha", "action": "net_conta_entrar"})
@@ -462,7 +497,7 @@ func _on_net(data: Dictionary, sec: int) -> void:
 		var quem: String = _nulo(p.get("de", {}).get("apelido"))
 		items.append({"text": "Aceitar o pedido de amizade de " + quem, "action": "net_cmd", "arg": ["aceitar", str(p.get("amizadeId", ""))]})
 		items.append({"text": "Recusar o pedido de " + quem, "action": "net_cmd", "arg": ["recusar", str(p.get("amizadeId", ""))]})
-	items.append({"text": "Adicionar amigo  (digitar o código dele)", "action": "net_add"})
+	items.append({"text": "Adicionar amigo  (pelo ID SkyNetwork ou código dele)", "action": "net_add"})
 	for a in amigos:
 		var sit: String = _nulo(a.get("status"))
 		var txt: String = "Offline"
@@ -491,6 +526,9 @@ func _on_net(data: Dictionary, sec: int) -> void:
 		items.append({"text": "Já tenho perfil em outro console  (digitar o código)", "action": "net_vincular"})
 	items.append({"text": "Sair da SkyNetwork neste console", "action": "net_confirmar", "arg": ["sair"]})
 	item = clamp(item, 0, items.size() - 1)
+	if acao_pendente == "net_icones":
+		acao_pendente = ""
+		_grade_abrir()
 
 
 func _net_itens_amigo(a: Dictionary) -> void:
@@ -604,6 +642,91 @@ func _finish(th: Thread, cb: Callable, data: Dictionary) -> void:
 	cb.call(data)
 
 
+# ---------------------------------------------------------------- grade de ícones de perfil
+
+func _grade_abrir() -> void:
+	var lista = JSON.parse_string(FileAccess.get_file_as_string("/opt/skystation/avatares/avatares.json")) \
+		if FileAccess.file_exists("/opt/skystation/avatares/avatares.json") else null
+	grade_lista = lista if typeof(lista) == TYPE_ARRAY else []
+	if grade_lista.is_empty():
+		status = "Não achei os ícones de perfil (atualize o SkyStation)"
+		return
+	grade_sel = 0
+	for i in grade_lista.size():
+		if str(grade_lista[i].get("id", "")) == grade_atual:
+			grade_sel = i
+	grade_open = true
+
+
+func _grade_tex(id: String) -> Texture2D:
+	if not grade_tex.has(id):
+		var tex: Texture2D = null
+		var path := "/opt/skystation/avatares/%s.png" % id
+		if id.is_valid_identifier() and FileAccess.file_exists(path):
+			var img := Image.load_from_file(path)
+			if img != null and not img.is_empty():
+				img.generate_mipmaps()
+				tex = ImageTexture.create_from_image(img)
+		grade_tex[id] = tex
+	return grade_tex[id]
+
+
+const GRADE_COLS := 8
+
+
+func _grade_command(c: String) -> void:
+	var n := grade_lista.size()
+	match c:
+		"left":
+			grade_sel = max(0, grade_sel - 1)
+		"right":
+			grade_sel = min(n - 1, grade_sel + 1)
+		"up":
+			if grade_sel >= GRADE_COLS:
+				grade_sel -= GRADE_COLS
+		"down":
+			grade_sel = min(n - 1, grade_sel + GRADE_COLS)
+		"a", "start":
+			var id := str(grade_lista[grade_sel].get("id", ""))
+			grade_open = false
+			if id != "" and id != grade_atual:
+				grade_atual = id
+				status = "Trocando o ícone…"
+				_async_net(["icone", id], _on_net_result.bind(section))
+		"b", "y":
+			grade_open = false
+
+
+func _draw_grade() -> void:
+	var w := size.x
+	var h := size.y
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.65))
+	var cel := 116.0
+	var gap := 18.0
+	var cols := GRADE_COLS
+	var rows := int(ceil(grade_lista.size() / float(cols)))
+	var gw := cols * cel + (cols - 1) * gap
+	var x0 := (w - gw) / 2.0
+	var y0 := (h - rows * (cel + gap)) / 2.0 + 10.0
+	_text("Ícone do perfil", Vector2(x0, y0 - 64), 30, WHITE)
+	var nome := str(grade_lista[grade_sel].get("nome", "")) if grade_sel < grade_lista.size() else ""
+	_text(nome, Vector2(x0, y0 - 26), 20, CYAN, gw)
+	for i in grade_lista.size():
+		var r := Rect2(x0 + (i % cols) * (cel + gap), y0 + int(i / cols) * (cel + gap), cel, cel)
+		var id := str(grade_lista[i].get("id", ""))
+		var on := i == grade_sel
+		if on:
+			draw_rect(r.grow(7), Color(CYAN, 0.9))
+		elif id == grade_atual:
+			draw_rect(r.grow(4), Color(WHITE, 0.35))
+		var tex := _grade_tex(id)
+		if tex != null:
+			draw_texture_rect(tex, r, false)
+		else:
+			draw_rect(r, Color.from_string(str(grade_lista[i].get("cor", "#4fd1ff")), CYAN))
+	_text("Direcional  escolher      ✕  usar este ícone      ○  voltar", Vector2(x0, y0 + rows * (cel + gap) + 30), 16, DIM)
+
+
 # ---------------------------------------------------------------- teclado virtual
 
 func _kb_start(title: String, ssid: String) -> void:
@@ -644,15 +767,21 @@ func _kb_command(c: String) -> void:
 			kb_col = max(0, kb_col - 1)
 		"right":
 			kb_col = min(9 if kb_row < 4 else 4, kb_col + 1)
+		# como no PS4/PS5: ✕ digita, □ apaga, △ símbolos, ○ cancela, R2 (ou Options) conclui,
+		# L2 maiúsculas, R1 espaço
 		"a":
 			_kb_press()
-		"b":
+		"x", "l1":
 			kb_text = kb_text.substr(0, max(0, kb_text.length() - 1))
-		"x":
-			kb_shift = not kb_shift
-		"start":
-			_kb_ok()
 		"y":
+			kb_symbols = not kb_symbols
+		"l2":
+			kb_shift = not kb_shift
+		"r1":
+			kb_text += " "
+		"start", "r2":
+			_kb_ok()
+		"b":
 			kb_open = false
 			status = "Cancelado"
 
@@ -764,6 +893,8 @@ func _draw() -> void:
 
 	if kb_open:
 		_draw_keyboard()
+	elif grade_open:
+		_draw_grade()
 
 
 func _draw_keyboard() -> void:
@@ -802,5 +933,5 @@ func _draw_keyboard() -> void:
 		draw_rect(rect, CYAN if on else PANEL.lightened(0.08))
 		_text(label, rect.position + Vector2(0, kh * 0.66), 18, INK if on else WHITE, rect.size.x,
 			HORIZONTAL_ALIGNMENT_CENTER)
-	_text("A digitar    B apagar    X maiúsculas    Start OK    Y cancelar    (ou use o teclado)",
+	_text("✕ digitar    □ apagar    △ símbolos    L2 maiúsculas    R1 espaço    R2 concluir    ○ cancelar",
 		Vector2(x0, y0 + 5 * (kh + gap) + 22), 15, MUTED, total_w)

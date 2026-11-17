@@ -51,7 +51,7 @@ export default async function Jogo(props: Props) {
         baixo
         info={info}
         sistema={j.sistema}
-        selo={[nomeSistema(j.sistema), info.ano, ...info.generos].filter(Boolean).join(" · ")}
+        selo={[nomeSistema(j.sistema), info.ano, info.desenvolvedora, ...info.generos].filter(Boolean).join(" · ")}
         texto={info.resumo ? <p>{info.resumo}</p> : <p>Ainda não achamos a ficha deste jogo na internet.</p>}
         acoes={
           <>
@@ -60,6 +60,7 @@ export default async function Jogo(props: Props) {
                 <span className="bolinha" /> Testado no SkyStation · {SITUACOES[j.catalogo.situacao].rotulo}
               </span>
             )}
+            {info.nota && <span className="selo-nota" title="Nota da crítica">{info.nota}</span>}
             {fonte && <span className="apagado">Fonte: {fonte}</span>}
           </>
         }
