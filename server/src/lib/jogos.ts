@@ -79,9 +79,18 @@ async function json(url: string, init: RequestInit = {}) {
 
 let tokenIgdb: { valor: string; expira: number } | null = null;
 
+let avisado = false;
+function avisarUmaVez(msg: string) {
+  if (!avisado) console.warn(msg);
+  avisado = true;
+}
+
 async function tokenTwitch() {
-  const id = process.env.IGDB_CLIENT_ID, segredo = process.env.IGDB_CLIENT_SECRET;
-  if (!id || !segredo) return null;
+  const id = process.env.IGDB_CLIENT_ID?.trim(), segredo = process.env.IGDB_CLIENT_SECRET?.trim();
+  if (!id || !segredo) {
+    avisarUmaVez(`[jogos] IGDB desligada: falta ${!id ? "IGDB_CLIENT_ID" : "IGDB_CLIENT_SECRET"} neste ambiente`);
+    return null;
+  }
   if (tokenIgdb && tokenIgdb.expira > Date.now() + 60_000) return { id, token: tokenIgdb.valor };
   const q = new URLSearchParams({ client_id: id, client_secret: segredo, grant_type: "client_credentials" });
   const d = await json(`https://id.twitch.tv/oauth2/token?${q}`, { method: "POST" });
@@ -131,8 +140,11 @@ async function buscarIgdb(nome: string, sistema: string): Promise<Partial<InfoJo
 type JogoRawg = { id: number; slug: string; name: string; released?: string | null; background_image?: string | null; genres?: { name: string }[] };
 
 async function buscarRawg(nome: string, sistema: string): Promise<Partial<InfoJogo> | null> {
-  const chave = process.env.RAWG_API_KEY;
-  if (!chave) return null;
+  const chave = process.env.RAWG_API_KEY?.trim();
+  if (!chave) {
+    console.warn("[jogos] RAWG desligada: falta RAWG_API_KEY neste ambiente");
+    return null;
+  }
   const plat = PLATAFORMA[sistema]?.rawg;
   const pedir = (comPlataforma: boolean) => {
     const q = new URLSearchParams({ key: chave, search: nome, page_size: "5", search_precise: "true" });
@@ -218,14 +230,20 @@ function parecenca(titulo: string, alvo: string) {
 
 async function montar(nome: string, sistema: string): Promise<InfoJogo> {
   let falhas = 0;
-  const seguro = <T,>(p: Promise<T>) => p.catch(() => { falhas++; return null; });
+  // o log da Vercel mostra qual fonte falhou (nunca as chaves: só o nome da fonte e a mensagem)
+  const seguro = <T,>(fonte: string, p: Promise<T>) =>
+    p.catch((e: unknown) => {
+      falhas++;
+      console.warn(`[jogos] ${fonte} falhou para "${nome}": ${e instanceof Error ? e.message.replace(/key=[^&\s]+/g, "key=…") : e}`);
+      return null;
+    });
   const [igdb, rawg, pt] = await Promise.all([
-    seguro(buscarIgdb(nome, sistema)),
-    seguro(buscarRawg(nome, sistema)),
-    seguro(buscarWikipedia(nome, sistema, "pt")),
+    seguro("IGDB", buscarIgdb(nome, sistema)),
+    seguro("RAWG", buscarRawg(nome, sistema)),
+    seguro("Wikipédia pt", buscarWikipedia(nome, sistema, "pt")),
   ]);
   const precisaEn = !pt && !igdb?.resumo && !rawg?.resumo;
-  const en = precisaEn || (!igdb?.capa && !pt?.capa) ? await seguro(buscarWikipedia(nome, sistema, "en")) : null;
+  const en = precisaEn || (!igdb?.capa && !pt?.capa) ? await seguro("Wikipédia en", buscarWikipedia(nome, sistema, "en")) : null;
   // tudo deu erro de rede: não guarda o "nada" no cache por 7 dias (tenta de novo na próxima visita)
   if (!igdb && !rawg && !pt && !en && falhas >= 2) throw new Error("sem acesso às fontes de jogos");
   const base = igdb ?? rawg; // as bases de jogos acertam melhor o nome, o ano e os gêneros
@@ -243,7 +261,7 @@ async function montar(nome: string, sistema: string): Promise<InfoJogo> {
   };
 }
 
-const emCache = unstable_cache(montar, ["sky-jogo-v2"], { revalidate: 7 * 24 * 60 * 60, tags: ["jogos"] });
+const emCache = unstable_cache(montar, ["sky-jogo-v3"], { revalidate: 7 * 24 * 60 * 60, tags: ["jogos"] });
 
 const VAZIO = (nome: string): InfoJogo => ({
   nome, capa: null, arte: null, resumo: null, ano: null, generos: [], fonte: null, link: null,
