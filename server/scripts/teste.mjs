@@ -261,7 +261,7 @@ try {
   // perfil no site: público, só amigos, privado, invisível
   await api("POST", "/api/presenca", { ...A, corpo: { status: "jogando", jogoId: "ps2-gow2", jogo: "God of War II", sistema: "ps2" } });
   let vp = await anonimo("GET", `/api/web/perfil/${uA}`);
-  ok(vp.status === 200 && vp.dados.completo && vp.dados.jogo === "God of War II" && vp.dados.trofeus.total === 0 && vp.dados.amigos.length === 1,
+  ok(vp.status === 200 && vp.dados.completo && vp.dados.jogo === "God of War II" && vp.dados.trofeus.total === 2 && vp.dados.trofeus.porTipo.ouro === 1 && vp.dados.amigos.length === 1,
      "público: qualquer um vê status, jogo, troféus e amigos");
   let html = await anonimo("GET", `/u/${uA}`);
   ok(html.status === 200 && html.texto.includes("Sky da Web") && html.texto.includes("God of War II") && html.texto.includes("/avatares/robo.svg"),
