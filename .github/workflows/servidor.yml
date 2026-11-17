@@ -40,17 +40,18 @@ jobs:
       AWS_SECRET_ACCESS_KEY: teste
       AWS_DEFAULT_REGION: us-east-1
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm ci
-      - name: SQL do esquema (provisório)
-        run: npx prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script
-      - name: Banco
-        run: npx prisma db push
+      - name: Banco (migrações)
+        run: npx prisma migrate deploy
+      - name: Esquema e migrações batem
+        # Falha se alguém mudar o schema.prisma e esquecer de criar a migração.
+        run: npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
       - name: Tipos
         run: npm run tipos
       - name: Build
