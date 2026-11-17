@@ -1,0 +1,82 @@
+[
+ {
+  "id": "estrela",
+  "nome": "Estrela cadente",
+  "cor": "#4fd1ff"
+ },
+ {
+  "id": "cometa",
+  "nome": "Cometa",
+  "cor": "#ff9a52"
+ },
+ {
+  "id": "planeta",
+  "nome": "Planeta",
+  "cor": "#54f0b8"
+ },
+ {
+  "id": "lua",
+  "nome": "Lua",
+  "cor": "#a9b6ff"
+ },
+ {
+  "id": "foguete",
+  "nome": "Foguete",
+  "cor": "#ff7ad0"
+ },
+ {
+  "id": "controle",
+  "nome": "Controle",
+  "cor": "#4fd1ff"
+ },
+ {
+  "id": "raio",
+  "nome": "Raio",
+  "cor": "#ffd166"
+ },
+ {
+  "id": "onda",
+  "nome": "Onda",
+  "cor": "#5fdcff"
+ },
+ {
+  "id": "montanha",
+  "nome": "Montanha",
+  "cor": "#8fd14f"
+ },
+ {
+  "id": "chama",
+  "nome": "Chama",
+  "cor": "#ff9a52"
+ },
+ {
+  "id": "cristal",
+  "nome": "Cristal",
+  "cor": "#c58bff"
+ },
+ {
+  "id": "gato",
+  "nome": "Gato",
+  "cor": "#ffb36b"
+ },
+ {
+  "id": "raposa",
+  "nome": "Raposa",
+  "cor": "#ff8a3d"
+ },
+ {
+  "id": "coruja",
+  "nome": "Coruja",
+  "cor": "#9ad0ff"
+ },
+ {
+  "id": "robo",
+  "nome": "Robô",
+  "cor": "#cfd8ea"
+ },
+ {
+  "id": "fantasma",
+  "nome": "Fantasma",
+  "cor": "#b9a6ff"
+ }
+]

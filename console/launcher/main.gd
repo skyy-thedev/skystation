@@ -154,6 +154,7 @@ var conf_dir: String = home_dir + "/.config/skystation"
 var run_dir: String = OS.get_environment("XDG_RUNTIME_DIR") + "/skystation"
 var net: Dictionary = {}        # Fase 10: o que o sky-net sabe da SkyNetwork (net.json)
 var net_sig: String = ""        # para só refazer o menu quando algo mudou de verdade
+var avatar_cache: Dictionary = {}   # Fase 10.5: id do ícone de perfil -> textura (ou null se não existe)
 
 var t: float = 0.0
 var intro_t: float = 0.0
@@ -859,7 +860,10 @@ func _build_net_cat() -> Dictionary:
 		var cor: Color = Color(1, 1, 1, 0.25)
 		if sit != "offline" and sit != "":
 			cor = Color.from_string(_nulo(a.get("cor")), Color("4fd1ff"))
-		c_net["items"].append(_act(_nulo(a.get("apelido")), sub, "friend:" + _nulo(a.get("id")), "friends", cor))
+		var glifo: String = "avatar:" + _nulo(a.get("avatar")) if _nulo(a.get("avatar")) != "" else "friends"
+		if sit == "offline" or sit == "":
+			cor = Color(1, 1, 1, 0.45)   # o ícone do amigo offline fica apagado
+		c_net["items"].append(_act(_nulo(a.get("apelido")), sub, "friend:" + _nulo(a.get("id")), glifo, cor))
 	c_net["items"].append(_act("Adicionar amigo", "Meu código de amigo: " + _nulo(net.get("eu", {}).get("codigo")), "settings:4", "search"))
 	return c_net
 
@@ -3137,7 +3141,28 @@ func _draw_busy(w: float, h: float) -> void:
 
 # ---------------------------------------------------------------- ícones vetoriais (originais)
 
+func _avatar_tex(id: String) -> Texture2D:
+	# ícones de perfil da SkyNetwork: PNG em /opt/skystation/avatares (gerados por tools/avatares.py)
+	if not avatar_cache.has(id):
+		var tex: Texture2D = null
+		var path := "/opt/skystation/avatares/%s.png" % id
+		if id.is_valid_identifier() and FileAccess.file_exists(path):
+			var img := Image.load_from_file(path)
+			if img != null and not img.is_empty():
+				img.generate_mipmaps()
+				tex = ImageTexture.create_from_image(img)
+		avatar_cache[id] = tex
+	return avatar_cache[id]
+
+
 func _icon(kind: String, c: Vector2, s: float, col: Color) -> void:
+	if kind.begins_with("avatar:"):
+		var tex := _avatar_tex(kind.substr(7))
+		if tex != null:
+			var lado := s * 1.05
+			draw_texture_rect(tex, Rect2(c - Vector2(lado, lado) / 2.0, Vector2(lado, lado)), false, Color(1, 1, 1, col.a))
+			return
+		kind = "friends"
 	var lw: float = max(2.0, s * 0.07)
 	match kind:
 		"gear":

@@ -105,6 +105,27 @@ def mensagem(dados, padrao="Não deu certo."):
     return str(dados.get("mensagem") or padrao)
 
 
+# ---------------------------------------------------------------- ícones de perfil
+
+def avatares():
+    """[{"id", "nome", "cor"}] dos ícones do SkyStation (console/avatares/avatares.json)."""
+    for base in (os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "avatares"),
+                 "/opt/skystation/avatares"):
+        lst = ler_json(os.path.join(base, "avatares.json"))
+        if lst:
+            return lst
+    return [{"id": "estrela", "nome": "Estrela cadente", "cor": "#4fd1ff"}]
+
+
+def avatar_png(id_):
+    for base in (os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "avatares"),
+                 "/opt/skystation/avatares"):
+        p = os.path.join(base, f"{id_}.png")
+        if os.path.exists(p):
+            return p
+    return ""
+
+
 # ---------------------------------------------------------------- perfis
 
 def perfis():

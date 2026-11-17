@@ -81,7 +81,9 @@ export function novoCodigoVinculo() {
   return novoCodigo() + novoCodigo().slice(0, 2);
 }
 
-const campos = { id: true, localId: true, apelido: true, cor: true, invisivel: true, codigo: true } as const;
+const campos = {
+  id: true, localId: true, apelido: true, cor: true, invisivel: true, codigo: true, usuario: true, avatar: true,
+} as const;
 
 /** Os perfis que este console usa: os que nasceram nele e os vinculados de outros consoles. */
 export async function perfisDoConsole(consoleId: string) {
@@ -91,7 +93,9 @@ export async function perfisDoConsole(consoleId: string) {
   ]);
   const vinculados = new Set(vinculos.map((v) => v.localId));
   return [
-    ...proprios.filter((p) => !vinculados.has(p.localId)).map((p) => ({ ...p, vinculado: false })),
+    ...proprios
+      .filter((p) => p.localId !== null && !vinculados.has(p.localId))
+      .map((p) => ({ ...p, localId: p.localId as string, vinculado: false })),
     ...vinculos.map((v) => ({ ...v.perfil, localId: v.localId, vinculado: true })),
   ].sort((a, b) => a.localId.localeCompare(b.localId));
 }

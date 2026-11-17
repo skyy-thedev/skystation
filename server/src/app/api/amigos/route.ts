@@ -18,7 +18,7 @@ export const POST = rota(async (req) => {
 
   const outro = await db.perfil.findUnique({
     where: { codigo },
-    select: { id: true, apelido: true, cor: true },
+    select: { id: true, apelido: true, cor: true, avatar: true },
   });
   if (!outro) throw new Erro(404, "codigo_desconhecido", "Nenhum jogador com este código.");
   if (outro.id === perfil.id) throw new Erro(400, "voce_mesmo", "Este é o seu próprio código.");

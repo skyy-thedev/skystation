@@ -44,6 +44,8 @@ var kb_mode: String = "wifi"   # o que o OK do teclado faz: wifi | net_entrar | 
 # Fase 10: SkyNetwork
 var net_amigo: String = ""     # id do amigo aberto (submenu de mensagens); "" = tela principal
 var net_msg: String = ""       # resultado da última ação: continua na tela depois de recarregar a lista
+var net_conta_id: String = ""  # Fase 10.5: ID digitado, esperando a senha (criar/entrar na conta)
+var kb_mascara: bool = false   # teclado mostra • no lugar do texto (senhas)
 
 var cmd_queue: Array = []
 var joy_prev: Dictionary = {}
@@ -286,6 +288,13 @@ func _activate() -> void:
 			_kb_start("Código de amigo (6 letras ou números)", "")
 			kb_mode = "net_amigo"
 			kb_shift = true
+		"net_conta_criar", "net_conta_entrar":
+			_kb_start("ID SkyNetwork: 3 a 16 letras minúsculas, números ou _", "")
+			kb_mode = "net_conta_id_criar" if it["action"] == "net_conta_criar" else "net_conta_id_entrar"
+		"net_conta_senha":
+			_kb_start("Senha nova da conta (mínimo 6 caracteres)", "")
+			kb_mode = "net_conta_senha"
+			kb_mascara = true
 		"net_vincular":
 			_kb_start("Código gerado no outro console (8 letras ou números)", "")
 			kb_mode = "net_vincular"
@@ -432,7 +441,17 @@ func _on_net(data: Dictionary, sec: int) -> void:
 	if not data.get("online", false):
 		items.append({"text": "Sem conexão com a SkyNetwork agora", "action": "info"})
 	else:
-		items.append({"text": "%s   ·   Meu código de amigo:  %s" % [_nulo(eu.get("apelido")), _nulo(eu.get("codigo"))], "action": "info"})
+		var conta: String = _nulo(eu.get("usuario"))
+		items.append({"text": "%s%s   ·   Meu código de amigo:  %s" % [_nulo(eu.get("apelido")),
+			("  (@" + conta + ")") if conta != "" else "", _nulo(eu.get("codigo"))], "action": "info"})
+		items.append({"text": "Ícone do perfil: %s   (A troca)" % _nome_avatar(_nulo(eu.get("avatar"))),
+			"action": "net_cmd", "arg": ["icone", "proximo"]})
+		if conta == "":
+			items.append({"text": "Criar conta SkyNetwork  (ID e senha para o site e outros consoles)", "action": "net_conta_criar"})
+			items.append({"text": "Já tenho conta: entrar com ID e senha", "action": "net_conta_entrar"})
+		else:
+			items.append({"text": "Perfil no site:  %s/u/%s" % [str(data.get("url", "")).replace("https://", ""), conta], "action": "info"})
+			items.append({"text": "Trocar a senha da conta", "action": "net_conta_senha"})
 	for c in data.get("conflitos", []):
 		var chave: String = str(c.get("chave", ""))
 		items.append({"text": "Conflito em %s: ficar com o save da nuvem (de %s)" % [_nulo(c.get("titulo")), _nulo(c.get("console"))],
@@ -500,6 +519,16 @@ func _net_itens_amigo(a: Dictionary) -> void:
 			_async_net(["lidas", id], _on_net_quieto)
 
 
+func _nome_avatar(id: String) -> String:
+	var lista = JSON.parse_string(FileAccess.get_file_as_string("/opt/skystation/avatares/avatares.json")) \
+		if FileAccess.file_exists("/opt/skystation/avatares/avatares.json") else null
+	if typeof(lista) == TYPE_ARRAY:
+		for a in lista:
+			if typeof(a) == TYPE_DICTIONARY and str(a.get("id", "")) == id:
+				return str(a.get("nome", id))
+	return id if id != "" else "Estrela cadente"
+
+
 func _on_net_quieto(_data: Dictionary) -> void:
 	pass
 
@@ -514,15 +543,20 @@ func _on_net_result(data: Dictionary, sec: int) -> void:
 		status = net_msg
 
 
-func _async_net(args: Array, cb: Callable) -> void:
+func _async_net(args: Array, cb: Callable, senha: String = "") -> void:
 	var th := Thread.new()
 	threads.append(th)
-	th.start(_worker_net.bind(args, cb, th))
+	th.start(_worker_net.bind(args, cb, th, senha))
 
 
-func _worker_net(args: Array, cb: Callable, th: Thread) -> void:
+func _worker_net(args: Array, cb: Callable, th: Thread, senha: String = "") -> void:
 	var output := []
-	var code := OS.execute(SKY_CLOUD, PackedStringArray(args), output, false)
+	var code: int
+	if senha != "":
+		# a senha vai por variável de ambiente (na linha de comando qualquer programa a veria)
+		code = OS.execute("/usr/bin/env", PackedStringArray(["SKY_SENHA=" + senha, SKY_CLOUD] + args), output, false)
+	else:
+		code = OS.execute(SKY_CLOUD, PackedStringArray(args), output, false)
 	var data = null
 	if output.size() > 0:
 		var linhas: PackedStringArray = str(output[0]).strip_edges().split("\n")
@@ -578,6 +612,7 @@ func _kb_start(title: String, ssid: String) -> void:
 	kb_title = title
 	kb_ssid = ssid
 	kb_mode = "wifi"
+	kb_mascara = false
 	kb_row = 1
 	kb_col = 0
 	kb_shift = false
@@ -660,6 +695,21 @@ func _kb_ok() -> void:
 			if texto != "":
 				status = "Enviando…"
 				_async_net(["mensagem", kb_ssid, texto], _on_net_result.bind(section))
+		"net_conta_id_criar", "net_conta_id_entrar":
+			if texto == "":
+				return
+			net_conta_id = texto.to_lower()
+			var criar: bool = modo == "net_conta_id_criar"
+			_kb_start(("Crie uma senha para @%s (mínimo 6 caracteres)" if criar else "Senha da conta @%s") % net_conta_id, "")
+			kb_mode = "net_conta_criar" if criar else "net_conta_entrar"
+			kb_mascara = true
+		"net_conta_criar", "net_conta_entrar":
+			status = "Criando a conta…" if modo == "net_conta_criar" else "Entrando na conta…"
+			_async_net(["conta-criar" if modo == "net_conta_criar" else "conta-entrar", net_conta_id],
+				_on_net_result.bind(section), kb_text)
+		"net_conta_senha":
+			status = "Trocando a senha…"
+			_async_net(["conta-senha"], _on_net_result.bind(section), kb_text)
 		_:
 			_wifi_connect(kb_ssid, kb_text)
 
@@ -728,7 +778,7 @@ func _draw_keyboard() -> void:
 	var y0 := h - (5 * kh + 4 * gap) - 80
 	draw_rect(Rect2(x0, y0 - 124, total_w, 104), PANEL)
 	_text(kb_title, Vector2(x0 + 20, y0 - 88), 18, MUTED, total_w - 40)
-	_text(kb_text + "_", Vector2(x0 + 20, y0 - 44), 28, WHITE, total_w - 40)
+	_text(("•".repeat(kb_text.length()) if kb_mascara else kb_text) + "_", Vector2(x0 + 20, y0 - 44), 28, WHITE, total_w - 40)
 
 	var rows := _kb_rows()
 	for r in 4:

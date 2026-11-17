@@ -33,6 +33,17 @@ jobs:
             esac
           done
           for f in console/bin/*.py; do /usr/bin/python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$f"; done
+      - name: Ícones de perfil (site e console com a mesma lista)
+        run: |
+          /usr/bin/python3 - <<'PY'
+          import json, os
+          lista = json.load(open("console/avatares/avatares.json"))
+          assert lista == json.load(open("server/src/lib/avatares.json")), "listas de ícones diferentes"
+          for a in lista:
+              assert os.path.getsize(f"console/avatares/{a['id']}.png") > 2000, a
+              assert os.path.exists(f"server/public/avatares/{a['id']}.svg"), a
+          print(len(lista), "ícones ok")
+          PY
       - name: Menu Home e teclado (controle simulado)
         run: /usr/bin/python3 console/tests/teste-home.py
       - name: Desenho do menu (conversa e teclado)

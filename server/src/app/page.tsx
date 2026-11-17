@@ -1,11 +1,34 @@
-export default function Inicio() {
+import Link from "next/link";
+import { Avatar } from "@/components/Avatar";
+import avatares from "@/lib/avatares.json";
+import { quemEstaLogado } from "@/lib/sessao-pagina";
+
+export default async function Inicio() {
+  const eu = await quemEstaLogado();
   return (
-    <main style={{ textAlign: "center", padding: 24 }}>
-      <h1 style={{ fontSize: 40, margin: 0, color: "#4fd1ff" }}>SkyNetwork</h1>
-      <p style={{ opacity: 0.75 }}>O servidor do SkyStation está no ar.</p>
-      <p style={{ opacity: 0.5, fontSize: 14 }}>
-        Esta página é só um sinal de vida: quem conversa com o servidor são os consoles.
-      </p>
-    </main>
+    <section className="heroi">
+      <h1>
+        A rede do <span style={{ color: "var(--destaque)" }}>SkyStation</span>
+      </h1>
+      <p>Seu perfil, seus amigos, seus troféus e seus saves, em qualquer console e aqui no site.</p>
+      <div className="linha" style={{ justifyContent: "center" }}>
+        {eu ? (
+          <>
+            <Link href={`/u/${eu.usuario}`} className="botao">Ver meu perfil</Link>
+            <Link href="/conta" className="botao secundario">Minha conta</Link>
+          </>
+        ) : (
+          <>
+            <Link href="/entrar" className="botao">Entrar</Link>
+            <Link href="/criar-conta" className="botao secundario">Criar conta</Link>
+          </>
+        )}
+      </div>
+      <div className="vitrine">
+        {avatares.map((a) => (
+          <Avatar key={a.id} id={a.id} tamanho={52} titulo={a.nome} />
+        ))}
+      </div>
+    </section>
   );
 }

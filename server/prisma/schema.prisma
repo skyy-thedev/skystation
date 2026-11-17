@@ -26,12 +26,14 @@ model Console {
   vinculos Vinculo[]
 }
 
-/// Um jogador. Cada console tem até 4 perfis locais (p1..p4, do sky-perfis).
+/// Um jogador. Nasce num console (p1..p4, do sky-perfis) ou no site (sem console).
+/// Com `usuario` e senha vira uma CONTA: entra no site e em qualquer console, e sobrevive à troca
+/// ou perda do pendrive (o console some, a conta e os saves ficam).
 model Perfil {
   id        String   @id @default(cuid())
-  consoleId String
-  console   Console  @relation(fields: [consoleId], references: [id], onDelete: Cascade)
-  localId   String   // "p1", "p2"… o id do perfil dentro do console
+  consoleId String?
+  console   Console? @relation(fields: [consoleId], references: [id], onDelete: SetNull)
+  localId   String?  // "p1", "p2"… o id do perfil dentro do console de origem
   apelido   String
   cor       String   @default("#4fd1ff")
   invisivel Boolean  @default(false)
@@ -40,6 +42,14 @@ model Perfil {
   // código temporário (15 min) para usar este perfil em outro console; aqui só o hash
   vinculoHash   String?   @unique
   vinculoExpira DateTime?
+  // conta pessoal (Fase 10.5)
+  usuario       String?   @unique // ID SkyNetwork: 3 a 16 letras minúsculas, números ou _
+  senhaHash     String?   // scrypt
+  avatar        String    @default("estrela") // um dos ícones do SkyStation (avatares.json)
+  bio           String    @default("")
+  visibilidade  String    @default("amigos") // publico | amigos | privado (perfil no site)
+  falhasLogin   Int       @default(0)
+  bloqueadoAte  DateTime?
 
   saves     Save[]
   presenca  Presenca?
@@ -49,8 +59,21 @@ model Perfil {
   amizadesB Amizade[]     @relation("b")
   trofeus   TrofeuGanho[]
   vinculos  Vinculo[]
+  sessoes   Sessao[]
 
   @@unique([consoleId, localId])
+}
+
+/// Sessão do site (cookie). O banco guarda só o hash do token.
+model Sessao {
+  id        String   @id @default(cuid())
+  perfilId  String
+  perfil    Perfil   @relation(fields: [perfilId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  criadaEm  DateTime @default(now())
+  expira    DateTime
+
+  @@index([perfilId])
 }
 
 /// "Neste console, o perfil local p2 é o jogador X (que nasceu em outro console)."

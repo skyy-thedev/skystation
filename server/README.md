@@ -81,6 +81,28 @@ curl -X PUT $URL/api/perfis -H "Authorization: Bearer $TOKEN" -H 'Content-Type: 
 | `POST /api/mensagens` · `GET /api/mensagens?com=` | envia mensagem ou convite · histórico da conversa |
 | `POST /api/mensagens/lidas` | marca como lidas |
 | `POST /api/trofeus` · `GET /api/trofeus[?perfil=]` | registra troféus · lista os meus ou os de um amigo |
+| **Contas (Fase 10.5)** | |
+| `GET /api/conta` · `POST /api/conta` · `PATCH /api/conta` | (console) a conta do perfil · cria (ID + senha) · muda ícone, nome, bio, visibilidade |
+| `POST /api/conta/senha` | (console) senha nova: é o "esqueci a senha" (não há e-mail) |
+| `POST /api/perfis/entrar` | (console) entra com ID + senha num perfil deste console |
+| `POST /api/web/registrar` · `POST /api/web/entrar` · `POST /api/web/sair` | (site) criar conta (com convite) · login · logout |
+| `GET`/`PATCH`/`DELETE /api/web/eu` | (site) minha conta · editar · excluir (pede a senha) |
+| `POST /api/web/senha` | (site) trocar a senha (pede a atual) |
+| `POST /api/web/amigos` · `…/:id/aceitar` · `DELETE …/:id` | (site) amigos pelo ID ou código |
+| `GET /api/web/perfil/:id` | o perfil como quem pede pode vê-lo |
+
+### Páginas do site
+
+`/` início · `/entrar` · `/criar-conta` · `/u/<ID>` perfil · `/conta` editar perfil, amigos, senha e excluir.
+
+Visibilidade do perfil: **público** (qualquer pessoa com o link), **amigos** (visitante vê só nome e
+ícone) ou **privado** (só o dono). "Invisível" esconde online e jogo atual de todos. O login é por
+ID SkyNetwork + senha (scrypt); 5 erros seguidos bloqueiam a conta por 15 minutos; a sessão do site é
+um cookie `HttpOnly` de 30 dias. Contas sobrevivem ao console: apagar ou perder o pendrive não apaga
+a conta, os amigos nem os saves na nuvem.
+
+Ícones de perfil: desenhos próprios do SkyStation, gerados por `tools/avatares.py` (SVG para o site em
+`public/avatares`, PNG para o console em `console/avatares`).
 
 ### O sync
 

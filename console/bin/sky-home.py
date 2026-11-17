@@ -358,7 +358,7 @@ class Home:
                 de = m.get("de", {})
                 items.append(("amigo", {"t": str(de.get("apelido", "?")) + ": " + str(m.get("texto", "")),
                                         "sub": "A para responder", "fid": str(de.get("id", "")),
-                                        "nome": str(de.get("apelido", "?"))}))
+                                        "nome": str(de.get("apelido", "?")), "avatar": str(de.get("avatar", ""))}))
         for a in sorted(net.get("amigos", []), key=lambda a: (ordem.get(a.get("status"), 9), a.get("apelido", ""))):
             if a.get("status") == "jogando":
                 sub = "Jogando " + str(a.get("jogo") or "") + (("  ·  " + str(a["sistema"]).upper()) if a.get("sistema") else "")
@@ -368,7 +368,8 @@ class Home:
             if n:
                 sub += f"  ·  {n} nova(s)"
             items.append(("amigo", {"t": str(a.get("apelido", "?")), "sub": sub + "  ·  A para conversar",
-                                    "fid": str(a.get("id", "")), "nome": str(a.get("apelido", "?"))}))
+                                    "fid": str(a.get("id", "")), "nome": str(a.get("apelido", "?")),
+                                    "avatar": str(a.get("avatar", "")), "apagado": a.get("status") == "offline"}))
         if not items:
             items = [info("Nenhum amigo ainda", "Adicione pelo código em Sistema → SkyNetwork")]
         return items

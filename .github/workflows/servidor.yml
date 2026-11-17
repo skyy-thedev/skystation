@@ -84,6 +84,13 @@ jobs:
       - name: Lado do console (sky-cloud e sky-net contra este servidor)
         working-directory: .
         run: SKY_REDE_URL=http://localhost:3000 python3 console/tests/teste-rede.py
+      - name: Fotos do site (Chromium)
+        run: |
+          npm i --no-save playwright@1 >/dev/null
+          npx playwright install --with-deps chromium >/dev/null
+          node scripts/fotos.mjs > /tmp/fotos.txt
+          grep "=== FOTO" /tmp/fotos.txt
+          cat /tmp/fotos.txt
       - name: Limpeza diária
         run: |
           test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/cron/limpeza)" = 401

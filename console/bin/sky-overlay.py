@@ -334,6 +334,24 @@ def shadow_text(screen, font, txt, color, pos, alpha=255):
     return sf.get_width()
 
 
+_AVATARES = {}
+
+
+def avatar_img(id_, tamanho):
+    """Ícone de perfil da SkyNetwork (PNG em ../avatares), já no tamanho; None se não existe."""
+    chave = (id_, tamanho)
+    if chave not in _AVATARES:
+        img = None
+        if id_.isidentifier():
+            p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "avatares", id_ + ".png")
+            try:
+                img = pygame.transform.smoothscale(pygame.image.load(p).convert_alpha(), (tamanho, tamanho))
+            except (pygame.error, FileNotFoundError, OSError):
+                img = None
+        _AVATARES[chave] = img
+    return _AVATARES[chave]
+
+
 def quebrar(font, texto, largura):
     """Quebra o texto em linhas que cabem na largura (por palavra; palavra enorme é cortada)."""
     linhas, atual = [], ""
@@ -663,6 +681,11 @@ def main():
                 ic = icon(it.get("icone", "info"), int(28 * s), accent if on else MUTED)
             elif kind == "info":
                 ic = icon("info", int(24 * s), DIM)
+            elif it.get("avatar") and avatar_img(it["avatar"], int(40 * s)) is not None:
+                ic = avatar_img(it["avatar"], int(40 * s))
+                if it.get("apagado"):
+                    ic = ic.copy()
+                    ic.set_alpha(120)
             else:
                 ic = icon(ACOES_ICONE.get(it.get("acao", ""), "play"), int(24 * s), accent if on else MUTED)
             ic = ic.copy()
