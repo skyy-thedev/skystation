@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+"""SkyStation: SkyNetwork em segundo plano (Fase 10).
+
+Roda a sessão inteira (iniciado pelo sky-shell). A cada 30 s faz UMA chamada ao servidor: envia a
+presença ("online" ou "jogando X") e recebe amigos, pedidos de amizade, mensagens e troféus.
+Abriu ou fechou um jogo: sincroniza na hora, sem esperar.
+
+    sky-net            fica rodando
+    sky-net uma-vez    uma sincronização só (para testes); imprime o resultado em JSON
+
+O que ele escreve:
+    $XDG_RUNTIME_DIR/skystation/net.json   amigos, pedidos e mensagens: o launcher e o menu Home leem
+    avisos na tela (com som): amigo online, amigo começou a jogar, mensagem, convite, pedido, troféu
+
+Sem internet ou antes de entrar na rede ele só espera; nunca atrapalha o jogo.
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import skynet  # noqa: E402
+from skynet import api, aviso  # noqa: E402
+
+INTERVALO = 30          # segundos entre sincronizações
+PASSO = 3               # de quanto em quanto olha se um jogo abriu/fechou
+PENDENTES_A_CADA = 600  # tenta de novo os saves que ficaram sem enviar
+GUARDAR_MSGS = 40
+NIVEL = {"bronze": "bronze", "prata": "prata", "ouro": "ouro", "platina": "platina"}
+
+
+def log(*a):
+    print(time.strftime("%H:%M:%S"), "sky-net:", *a, flush=True)
+
+
+def ler(nome):
+    try:
+        with open(os.path.join(skynet.RUN, nome), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def jogo_aberto():
+    """(id, título, sistema) do jogo aberto agora, ou None."""
+    try:
+        os.kill(int(ler("game.pid")), 0)
+    except (ValueError, OSError):
+        return None
+    gid = ler("game.id")
+    if not gid or gid == "terminal":
+        return None
+    return gid, ler("game.title") or gid, ler("game.sys")
+
+
+def presenca():
+    j = jogo_aberto()
+    if not j:
+        return {"status": "online"}
+    p = {"status": "jogando", "jogoId": j[0][:200], "jogo": j[1][:200]}
+    if j[2].isalnum() and j[2].islower() and len(j[2]) <= 12:
+        p["sistema"] = j[2]
+    return p
+
+
+def meus_trofeus():
+    """Os troféus já ganhos pelo perfil, no formato do servidor."""
+    ganhos = skynet.ler_json(os.path.join(skynet.SKY, "saves/trofeus.json"), {}) or {}
+    if not ganhos:
+        return []
+    try:
+        out = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "sky-trofeus"),
+                              "listar"], capture_output=True, text=True, timeout=10).stdout
+        lista = json.loads(out.strip().splitlines()[-1]).get("trofeus", [])
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return []
+    res = []
+    for t in lista:
+        quando = int(t.get("ganho", 0))
+        if quando > 0 and t.get("nivel") in NIVEL:
+            res.append({"trofeu": str(t["id"])[:80], "nome": str(t.get("nome", ""))[:120], "tipo": t["nivel"],
+                        "ganhoEm": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(quando))})
+    return res
+
+
+class Rede:
+    def __init__(self):
+        self.desde = None
+        self.perfil = None
+        self.perfis_mtime = None
+        self.amigos = {}          # id -> (status, jogoId) da última sincronização
+        self.vistos = set()       # ids de mensagens e troféus já avisados
+        self.pedidos = set()
+        self.mensagens = []       # as mais recentes recebidas, para as telas
+        self.feed = []            # últimos troféus dos amigos
+        self.trofeus_enviados = None
+        self.primeira = True
+        self.falhas = 0
+
+    def trocar_perfil(self, perfil):
+        self.__init__()
+        self.perfil = perfil
+
+    def perfis_em_dia(self, cfg):
+        """Reenvia os perfis quando o perfis.json muda (perfil novo, nome trocado na Central web)."""
+        try:
+            m = os.path.getmtime(os.path.join(skynet.SKY, "perfis/perfis.json"))
+        except OSError:
+            m = 0
+        if m != self.perfis_mtime:
+            st, _ = skynet.enviar_perfis(cfg)
+            if st == 200:
+                self.perfis_mtime = m
+
+    def sincronizar(self, cfg):
+        perfil, _ = skynet.perfis()
+        if perfil != self.perfil:
+            self.trocar_perfil(perfil)
+        self.perfis_em_dia(cfg)
+        corpo = {"presenca": presenca()}
+        if self.desde:
+            corpo["desde"] = self.desde
+        st, r = api("POST", "/api/sync", corpo, perfil=perfil, cfg=cfg)
+        if st == 404 and r.get("erro") == "perfil_desconhecido":
+            self.perfis_mtime = None
+            self.perfis_em_dia(cfg)
+            st, r = api("POST", "/api/sync", corpo, perfil=perfil, cfg=cfg)
+        if st != 200:
+            self.falhas += 1
+            if self.falhas == 3:      # depois de ~1,5 min sem resposta, as telas mostram "sem conexão"
+                self.gravar({"online": False, "erro": skynet.mensagem(r)})
+            return False, r
+        self.falhas = 0
+        self.desde = r.get("agora")
+        self.avisar(r)
+        self.gravar({"online": True, "eu": r.get("eu", {}), "amigos": r.get("amigos", []),
+                     "pedidosRecebidos": r.get("pedidosRecebidos", []),
+                     "pedidosEnviados": r.get("pedidosEnviados", []), "naoLidas": r.get("naoLidas", 0),
+                     "mensagens": self.mensagens, "trofeus": self.feed})
+        self.primeira = False
+        self.enviar_trofeus(cfg, perfil)
+        return True, r
+
+    def avisar(self, r):
+        quieto = self.primeira      # ao ligar o console não despeja tudo de uma vez
+        # amigos: entrou online / começou a jogar
+        agora = {}
+        for a in r.get("amigos", []):
+            agora[a["id"]] = (a.get("status"), a.get("jogoId"))
+            antes = self.amigos.get(a["id"])
+            if quieto or antes == agora[a["id"]]:
+                continue
+            if a.get("status") == "jogando" and a.get("jogo"):
+                aviso("amigo", f"{a['apelido']} está jogando {a['jogo']}", "controle-on")
+            elif a.get("status") in ("online", "ausente") and (antes is None or antes[0] == "offline"):
+                aviso("amigo", f"{a['apelido']} entrou online", "controle-on")
+        self.amigos = agora
+        # pedidos de amizade
+        for p in r.get("pedidosRecebidos", []):
+            if p["amizadeId"] not in self.pedidos:
+                self.pedidos.add(p["amizadeId"])
+                aviso("amigo", f"{p['de']['apelido']} quer ser seu amigo: veja em Amigos", "jogo-novo")
+        # mensagens e convites
+        novas = [m for m in r.get("mensagens", []) if m["id"] not in self.vistos]
+        for m in novas:
+            self.vistos.add(m["id"])
+            self.mensagens.append({"id": m["id"], "de": m["de"], "tipo": m.get("tipo", "texto"),
+                                   "texto": m.get("texto", ""), "jogo": m.get("jogo"), "jogoId": m.get("jogoId"),
+                                   "enviadaEm": m.get("enviadaEm"), "lida": bool(m.get("lida"))})
+            if m.get("lida"):
+                continue
+            if m.get("tipo") == "convite":
+                aviso("mensagem", f"{m['de']['apelido']} chamou você para jogar {m.get('jogo') or ''}".strip(), "jogo-novo")
+            else:
+                aviso("mensagem", f"{m['de']['apelido']}: {m.get('texto', '')}", "jogo-novo")
+        self.mensagens = self.mensagens[-GUARDAR_MSGS:]
+        # troféus dos amigos (na primeira vez só anota, para não repetir avisos antigos)
+        for t in r.get("trofeus", []):
+            if t["id"] in self.vistos:
+                continue
+            self.vistos.add(t["id"])
+            self.feed.append({"de": t["de"], "nome": t.get("nome") or t.get("trofeu"), "tipo": t.get("tipo"),
+                              "ganhoEm": t.get("ganhoEm")})
+            if not quieto:
+                aviso("trofeu-amigo", f"{t['de']['apelido']} ganhou o troféu de {t.get('tipo', '')}: {t.get('nome') or t.get('trofeu')}")
+        self.feed = self.feed[-10:]
+
+    def gravar(self, dados):
+        dados["t"] = time.time()
+        try:
+            skynet.gravar_json(skynet.NET_JSON, dados)
+        except OSError:
+            pass
+
+    def enviar_trofeus(self, cfg, perfil):
+        lista = meus_trofeus()
+        chave = json.dumps(sorted(t["trofeu"] for t in lista))
+        if not lista or chave == self.trofeus_enviados:
+            return
+        st, _ = api("POST", "/api/trofeus", {"trofeus": lista[:100]}, perfil=perfil, cfg=cfg)
+        if st == 200:
+            self.trofeus_enviados = chave
+
+
+def pedido_imediato():
+    """O sky-cloud deixa um arquivo quando algo mudou (amigo aceito, mensagem enviada…)."""
+    p = os.path.join(skynet.RUN, "net.agora")
+    if os.path.exists(p):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+        return True
+    return False
+
+
+def main():
+    rede = Rede()
+    if sys.argv[1:2] == ["uma-vez"]:
+        cfg = skynet.config()
+        if not skynet.conectado(cfg):
+            return skynet.saida({"ok": False, "error": "Este console ainda não entrou na SkyNetwork."})
+        ok, r = rede.sincronizar(cfg)
+        return skynet.saida({"ok": ok, "amigos": len(r.get("amigos", [])) if ok else 0,
+                             "error": "" if ok else skynet.mensagem(r)})
+    log("iniciado")
+    ultimo = 0.0
+    pendentes = time.time() + 60
+    jogo = jogo_aberto()
+    while True:
+        time.sleep(PASSO)
+        cfg = skynet.config()
+        if not skynet.conectado(cfg):
+            ultimo = 0.0
+            continue
+        agora_jogo = jogo_aberto()
+        mudou = (agora_jogo or (None,))[0] != (jogo or (None,))[0]
+        jogo = agora_jogo
+        if mudou or pedido_imediato() or time.time() - ultimo >= INTERVALO:
+            ultimo = time.time()
+            try:
+                ok, r = rede.sincronizar(cfg)
+                if not ok and r.get("erro") not in ("sem_rede",):
+                    log("sync:", r.get("erro"), skynet.mensagem(r))
+            except Exception as e:      # um erro inesperado nunca derruba o serviço
+                log("erro:", repr(e))
+        if time.time() >= pendentes and not jogo:
+            pendentes = time.time() + PENDENTES_A_CADA
+            try:
+                subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "sky-cloud"),
+                                "pendentes"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
+            except (OSError, subprocess.SubprocessError):
+                pass
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)

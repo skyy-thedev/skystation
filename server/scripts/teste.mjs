@@ -108,6 +108,23 @@ try {
   ok(sb.dados.trofeus.length === 2 && sb.dados.trofeus[0].de.apelido === "Sky 2", "B vê os troféus de A");
   ok((await api("GET", `/api/trofeus?perfil=${idA}`, { ...B })).dados.trofeus.length === 2, "B compara troféus com A");
 
+  // ---------------------------------------------------------------- mesmo perfil em dois consoles
+  const cod = await api("POST", "/api/perfis/codigo", { ...A });
+  ok(cod.status === 200 && /^[A-Z0-9]{8}$/.test(cod.dados.codigo), "A gera o código para usar o perfil em outro console");
+  ok((await api("POST", "/api/perfis/vincular", { token: B.token, corpo: { localId: "p2", codigo: "ZZZZZZZZ" } })).status === 404, "código de vínculo errado = 404");
+  ok((await api("POST", "/api/perfis/vincular", { token: A.token, corpo: { localId: "p3", codigo: cod.dados.codigo } })).status === 400, "não dá para vincular no próprio console");
+  const vinc = await api("POST", "/api/perfis/vincular", { token: B.token, corpo: { localId: "p2", codigo: cod.dados.codigo.toLowerCase() } });
+  ok(vinc.status === 200 && vinc.dados.perfil.id === idA, "B vincula o perfil de A como seu p2");
+  ok((await api("POST", "/api/perfis/vincular", { token: B.token, corpo: { localId: "p3", codigo: cod.dados.codigo } })).status === 404, "o código de vínculo só vale uma vez");
+  const euB = await api("GET", "/api/eu", { token: B.token });
+  const p2 = euB.dados.perfis.find((x) => x.localId === "p2");
+  ok(euB.dados.perfis.length === 2 && p2.vinculado === true && p2.codigo === codA, "B agora tem dois perfis: o dele e o vinculado");
+  const A2 = { token: B.token, perfil: "p2" }; // o jogador A, sentado no console B
+  const sA2 = await api("POST", "/api/sync", { ...A2, corpo: {} });
+  ok(sA2.dados.eu.id === idA && sA2.dados.amigos.length === 1 && sA2.dados.amigos[0].id === idB, "no console B, o perfil vinculado vê os amigos de A");
+  const pv = await api("PUT", "/api/perfis", { token: B.token, corpo: { perfis: [{ localId: "p1", apelido: "Bart" }, { localId: "p2", apelido: "Outro nome" }] } });
+  ok(pv.dados.perfis.find((x) => x.localId === "p2").apelido === "Sky 2", "o console B não renomeia o perfil vinculado");
+
   // ---------------------------------------------------------------- saves na nuvem
   if (!saude.dados.saves) {
     console.log("  --  armazenamento não configurado: testes de save pulados");
@@ -152,11 +169,18 @@ try {
     ok((await api("POST", "/api/saves/confirmar", { ...A, corpo: { versaoId: errado.dados.versaoId } })).status === 400, "tamanho diferente do declarado = rejeitado");
     ok((await api("GET", `/api/saves/baixar?${q}`, { ...A })).dados.versao === 2, "a versão atual continua sendo a 2");
 
-    let ultima = 2;
+    const dB = await api("GET", `/api/saves/baixar?${q}`, { ...A2 });
+    ok(dB.status === 200 && dB.dados.versao === 2 && dB.dados.hash === f2.hash, "no console B, o perfil vinculado baixa o save de A");
+    const fB = arq(777);
+    ok((await api("POST", "/api/saves/enviar", { ...A2, corpo: { ...jogo, hash: fB.hash, tamanho: fB.tamanho, baseVersao: 0 } })).status === 409, "console B com save próprio e base 0 = conflito");
+    const eB = await enviar(A2, fB, 2);
+    ok(eB.dados.versao > 2 && (await api("GET", `/api/saves/baixar?${q}`, { ...A })).dados.console === "Teste B", "B envia uma versão nova e A vê que veio do console B");
+
+    let ultima = eB.dados.versao;
     for (let i = 0; i < 5; i++) ultima = (await enviar(A, arq(300 + i), ultima)).dados.versao;
     const vs = await api("GET", `/api/saves/versoes?${q}`, { ...A });
     ok(vs.dados.versoes.length === 5 && vs.dados.versaoAtual === ultima && vs.dados.versoes[0].versao === ultima, "só as 5 últimas versões ficam guardadas");
-    ok((await api("GET", `/api/saves/baixar?${q}&versao=1`, { ...A })).status === 404, "a versão 1 já foi descartada");
+    ok((await api("GET", `/api/saves/baixar?${q}&versao=2`, { ...A })).status === 404, "a versão 2 já foi descartada");
     const antiga = vs.dados.versoes[4].versao;
     ok((await api("GET", `/api/saves/baixar?${q}&versao=${antiga}`, { ...A })).status === 200, "dá para baixar uma versão antiga guardada");
 
@@ -168,6 +192,9 @@ try {
     ok((await api("DELETE", `/api/saves?${q}`, { ...A })).status === 200, "apagar o save da nuvem");
     ok((await api("GET", "/api/saves", { ...A })).dados.saves.length === 0, "lista vazia depois de apagar");
   }
+
+  ok((await api("DELETE", "/api/perfis/vincular?localId=p2", { token: B.token })).status === 200, "B desfaz o vínculo");
+  ok((await api("POST", "/api/sync", { ...A2, corpo: {} })).status === 404, "sem vínculo, o p2 de B não existe mais");
 
   // ---------------------------------------------------------------- desfazer amizade
   ok((await api("DELETE", `/api/amigos/${ped.dados.amizadeId}`, { ...B })).status === 200, "B desfaz a amizade");

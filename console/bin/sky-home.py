@@ -298,6 +298,35 @@ class Home:
     def cat_index(self, cid):
         return next((k for k, c in enumerate(self.cats) if c["id"] == cid), 0)
 
+    def amigos_items(self):
+        """Fase 10: amigos da SkyNetwork (o sky-net mantém o net.json em dia)."""
+        def info(t, sub=""):
+            return ("nada", {"t": t, "kind": "info", "sub": sub})
+        try:
+            with open(os.path.join(RUN, "net.json"), encoding="utf-8") as f:
+                net = json.load(f)
+        except (OSError, ValueError):
+            net = None
+        if not os.path.exists(os.path.expanduser("~/.config/skystation/rede.json")) or net is None:
+            return [info("SkyNetwork", "Entre na rede em Sistema → SkyNetwork, no menu principal")]
+        if not net.get("online"):
+            return [info("Sem conexão com a SkyNetwork", "Os amigos voltam a aparecer quando a internet voltar")]
+        ordem = {"jogando": 0, "online": 1, "ausente": 2, "offline": 3}
+        estado = {"online": "Online", "ausente": "Ausente", "offline": "Offline"}
+        items = []
+        for a in sorted(net.get("amigos", []), key=lambda a: (ordem.get(a.get("status"), 9), a.get("apelido", ""))):
+            if a.get("status") == "jogando":
+                sub = "Jogando " + str(a.get("jogo") or "") + (("  ·  " + str(a["sistema"]).upper()) if a.get("sistema") else "")
+            else:
+                sub = estado.get(a.get("status"), "Offline")
+            items.append(info(str(a.get("apelido", "?")), sub))
+        for m in reversed(net.get("mensagens", [])[-5:]):
+            if not m.get("lida"):
+                items.append(info(str(m.get("de", {}).get("apelido", "?")) + ": " + str(m.get("texto", "")), "Mensagem"))
+        if not items:
+            items = [info("Nenhum amigo ainda", "Adicione pelo código em Sistema → SkyNetwork")]
+        return items
+
     def notif_items(self):
         try:
             import skyhist
@@ -350,9 +379,7 @@ class Home:
             {"id": "jogo", "title": "Jogo", "icon": "pad", "items": jogo},
             {"id": "trofeus", "title": "Troféus", "icon": "trophy", "items": trof_items},
             {"id": "notificacoes", "title": "Notificações", "icon": "bell", "items": self.notif_items()},
-            {"id": "amigos", "title": "Amigos", "icon": "friends",
-             "items": [("nada", {"t": "SkyNetwork chega em breve", "kind": "info",
-                                 "sub": "Ver o que os amigos estão jogando e trocar mensagens"})]},
+            {"id": "amigos", "title": "Amigos", "icon": "friends", "items": self.amigos_items()},
             {"id": "ajustes", "title": "Ajustes", "icon": "gear",
              "items": [("volume", {"t": "Volume", "kind": "slider", "id": "volume"}),
                        ("brilho", {"t": "Brilho", "kind": "slider", "id": "brilho"})]},

@@ -52,6 +52,14 @@ LOG="$STATE/$ID.log"
     echo "perfil:  $SKY_PROFILE"
 } >"$LOG"
 
+# Fase 9.4: saves na nuvem. Antes de abrir, baixa o save se a nuvem tiver um mais novo (outro console
+# jogou depois). Espera no máximo 25 s; sem internet ou fora da rede, segue na hora com o save local.
+NUVEM=""
+if [ -f "$CONF/rede.json" ] && [ -x /opt/skystation/bin/sky-cloud ]; then
+    NUVEM=1
+    echo "nuvem:   $(timeout 25 /opt/skystation/bin/sky-cloud antes "$ID" "$TITLE" "$CMD" 2>&1 | tail -1)" >>"$LOG"
+fi
+
 # setsid: o jogo vira líder do próprio grupo de processos (PGID = PID).
 setsid bash -c 'cd -- "$1" || exit 97; eval "exec $2 $3"' sky-game "$DIR" "$PREFIX" "$CMD" >>"$LOG" 2>&1 &
 child=$!
@@ -101,6 +109,9 @@ potencia normal
 
 # Fase 6.3: troféus do perfil (avisa na tela se conquistou algum nesta partida).
 [ -x /opt/skystation/bin/sky-trofeus ] && /opt/skystation/bin/sky-trofeus conferir >/dev/null 2>&1
+
+# Fase 9.4: envia o save para a nuvem se mudou (em segundo plano: não segura a volta ao menu).
+[ -n "$NUVEM" ] && (timeout 300 /opt/skystation/bin/sky-cloud depois "$ID" "$TITLE" "$CMD" >/dev/null 2>&1 &)
 
 # Fase 6.1: se algum save mudou nesta partida, guarda uma cópia de segurança (em segundo plano).
 [ -x /opt/skystation/bin/sky-backup ] && (/opt/skystation/bin/sky-backup auto >/dev/null 2>&1 &)

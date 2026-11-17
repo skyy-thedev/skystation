@@ -15,7 +15,9 @@ const MUTED := Color("94a3c8")
 const DIM := Color("5a6891")
 const PANEL := Color("121a3a")
 const INK := Color("06091a")
-const SECTIONS := ["Wi-Fi", "Bluetooth", "Som", "Sistema"]
+const SECTIONS := ["Wi-Fi", "Bluetooth", "Som", "Sistema", "SkyNetwork"]
+const SKY_CLOUD := "/opt/skystation/bin/sky-cloud"
+const NET_RAPIDAS := ["Bora jogar?", "Entra aí!", "GG!", "Já volto", "Agora não dá"]
 
 const KB_LETTERS := ["1234567890", "qwertyuiop", "asdfghjkl@", "zxcvbnm.-_"]
 const KB_SYMBOLS := ["1234567890", "!#$%&*()+=", "[]{}<>/\\|~", ";:'\",.?`^-"]
@@ -37,6 +39,11 @@ var kb_row: int = 1
 var kb_col: int = 0
 var kb_shift: bool = false
 var kb_symbols: bool = false
+var kb_mode: String = "wifi"   # o que o OK do teclado faz: wifi | net_entrar | net_amigo | net_vincular | net_msg
+
+# Fase 10: SkyNetwork
+var net_amigo: String = ""     # id do amigo aberto (submenu de mensagens); "" = tela principal
+var net_msg: String = ""       # resultado da última ação: continua na tela depois de recarregar a lista
 
 var cmd_queue: Array = []
 var joy_prev: Dictionary = {}
@@ -57,9 +64,17 @@ func open(start_section: int = -1) -> void:
 	if start_section >= 0 and start_section < SECTIONS.size():
 		section = start_section
 	kb_open = false
+	net_amigo = ""
+	net_msg = ""
 	cmd_queue.clear()
 	joy_prev = _joy_buttons()  # o "A" que abriu esta tela não pode valer aqui
 	_load_section()
+
+
+func abrir_amigo(id: String) -> void:
+	# chamado pelo launcher logo depois de open(4): abre direto as mensagens daquele amigo
+	net_amigo = id
+	column = 1
 
 
 func _close() -> void:
@@ -204,6 +219,9 @@ func _load_section() -> void:
 		3:
 			status = "Lendo informações…"
 			_async(["info"], _on_info.bind(3))
+		4:
+			status = "Consultando a SkyNetwork…"
+			_async_net(["estado"], _on_net.bind(4))
 
 
 func _activate() -> void:
@@ -260,6 +278,44 @@ func _activate() -> void:
 			_set_volume(volume - 10)
 		"vol_mute":
 			_async(["volume", "mute"], _on_volume.bind(section))
+		"net_entrar":
+			_kb_start("Código de convite da SkyNetwork", "")
+			kb_mode = "net_entrar"
+			kb_shift = true
+		"net_add":
+			_kb_start("Código de amigo (6 letras ou números)", "")
+			kb_mode = "net_amigo"
+			kb_shift = true
+		"net_vincular":
+			_kb_start("Código gerado no outro console (8 letras ou números)", "")
+			kb_mode = "net_vincular"
+			kb_shift = true
+		"net_escrever":
+			_kb_start("Mensagem para " + str(it["name"]), str(it["arg"]))
+			kb_mode = "net_msg"
+		"net_amigo":
+			net_amigo = str(it["arg"])
+			net_msg = ""
+			_load_section()
+			column = 1
+		"net_voltar":
+			net_amigo = ""
+			net_msg = ""
+			_load_section()
+			column = 1
+		"net_cmd":
+			status = "Aguarde…"
+			_async_net(it["arg"], _on_net_result.bind(section))
+		"net_confirmar":
+			# ações sem volta pedem um segundo A no mesmo item
+			if it.get("confirm", false):
+				status = "Aguarde…"
+				if it.get("voltar", false):
+					net_amigo = ""
+				_async_net(it["arg"], _on_net_result.bind(section))
+			else:
+				it["confirm"] = true
+				it["text"] = "Confirmar: " + str(it["text"]) + "?  (aperte A de novo)"
 
 
 func _on_wifi(data: Dictionary, sec: int) -> void:
@@ -343,6 +399,139 @@ func _build_sound_items() -> void:
 	item = clamp(keep, 0, items.size() - 1)
 
 
+# ---------------------------------------------------------------- Fase 10: SkyNetwork
+
+func _nulo(v) -> String:
+	return "" if v == null else str(v)
+
+
+func _on_net(data: Dictionary, sec: int) -> void:
+	if sec != section:
+		return
+	items = []
+	status = net_msg
+	if not data.get("ok", false):
+		status = str(data.get("error", "Não consegui consultar a SkyNetwork"))
+		return
+	if not data.get("conectado", false):
+		net_amigo = ""
+		items.append({"text": "Entrar na SkyNetwork  (digitar o código de convite)", "action": "net_entrar"})
+		items.append({"text": "Com a rede você vê o que os amigos jogam, troca mensagens", "action": "info"})
+		items.append({"text": "e guarda os saves na nuvem.", "action": "info"})
+		if status == "":
+			status = str(data.get("error", "Peça o código de convite a quem cuida da rede"))
+		return
+	var eu: Dictionary = data.get("eu", {})
+	var amigos: Array = data.get("amigos", [])
+	if net_amigo != "":
+		for a in amigos:
+			if str(a.get("id", "")) == net_amigo:
+				_net_itens_amigo(a)
+				return
+		net_amigo = ""   # deixou de ser amigo: volta para a tela principal
+	if not data.get("online", false):
+		items.append({"text": "Sem conexão com a SkyNetwork agora", "action": "info"})
+	else:
+		items.append({"text": "%s   ·   Meu código de amigo:  %s" % [_nulo(eu.get("apelido")), _nulo(eu.get("codigo"))], "action": "info"})
+	for c in data.get("conflitos", []):
+		var chave: String = str(c.get("chave", ""))
+		items.append({"text": "Conflito em %s: ficar com o save da nuvem (de %s)" % [_nulo(c.get("titulo")), _nulo(c.get("console"))],
+			"action": "net_cmd", "arg": ["resolver", chave, "nuvem"]})
+		items.append({"text": "Conflito em %s: ficar com o save deste console" % _nulo(c.get("titulo")),
+			"action": "net_cmd", "arg": ["resolver", chave, "console"]})
+	for p in data.get("pedidos", []):
+		var quem: String = _nulo(p.get("de", {}).get("apelido"))
+		items.append({"text": "Aceitar o pedido de amizade de " + quem, "action": "net_cmd", "arg": ["aceitar", str(p.get("amizadeId", ""))]})
+		items.append({"text": "Recusar o pedido de " + quem, "action": "net_cmd", "arg": ["recusar", str(p.get("amizadeId", ""))]})
+	items.append({"text": "Adicionar amigo  (digitar o código dele)", "action": "net_add"})
+	for a in amigos:
+		var sit: String = _nulo(a.get("status"))
+		var txt: String = "Offline"
+		if sit == "jogando":
+			txt = "Jogando " + _nulo(a.get("jogo"))
+		elif sit == "online":
+			txt = "Online"
+		elif sit == "ausente":
+			txt = "Ausente"
+		items.append({"text": "%s   ·   %s" % [_nulo(a.get("apelido")), txt], "action": "net_amigo", "arg": str(a.get("id", ""))})
+	for p in data.get("enviados", []):
+		items.append({"text": "Pedido enviado para %s (aguardando)" % _nulo(p.get("para", {}).get("apelido")), "action": "info"})
+	var inv: bool = eu.get("invisivel", false)
+	items.append({"text": "Invisível: " + ("ligado  (os amigos veem você offline)" if inv else "desligado"),
+		"action": "net_cmd", "arg": ["invisivel", "off" if inv else "on"]})
+	var nuvem: bool = data.get("nuvem", true)
+	items.append({"text": "Saves na nuvem: " + ("ligados" if nuvem else "desligados"),
+		"action": "net_cmd", "arg": ["nuvem", "off" if nuvem else "on"]})
+	var pend: int = int(data.get("pendentes", 0))
+	if pend > 0:
+		items.append({"text": "%d save(s) esperando a internet para subir" % pend, "action": "info"})
+	if data.get("vinculado", false):
+		items.append({"text": "Desvincular: este perfil volta a ser só deste console", "action": "net_confirmar", "arg": ["desvincular"]})
+	else:
+		items.append({"text": "Usar este perfil em outro console  (gerar código)", "action": "net_cmd", "arg": ["codigo-vinculo"]})
+		items.append({"text": "Já tenho perfil em outro console  (digitar o código)", "action": "net_vincular"})
+	items.append({"text": "Sair da SkyNetwork neste console", "action": "net_confirmar", "arg": ["sair"]})
+	item = clamp(item, 0, items.size() - 1)
+
+
+func _net_itens_amigo(a: Dictionary) -> void:
+	var id: String = str(a.get("id", ""))
+	var nome: String = _nulo(a.get("apelido"))
+	items = [{"text": "← Voltar à SkyNetwork", "action": "net_voltar"}]
+	for m in NET_RAPIDAS:
+		items.append({"text": "Enviar:  " + m, "action": "net_cmd", "arg": ["mensagem", id, m]})
+	items.append({"text": "Escrever mensagem…", "action": "net_escrever", "arg": id, "name": nome})
+	items.append({"text": "Desfazer a amizade com " + nome, "action": "net_confirmar", "voltar": true,
+		"arg": ["recusar", str(a.get("amizadeId", ""))]})
+	item = clamp(item, 1, items.size() - 1)
+	# as mensagens que ele mandou (o sky-net guarda as recentes no net.json) aparecem na linha de baixo
+	var recebidas: PackedStringArray = PackedStringArray()
+	var arq: String = OS.get_environment("XDG_RUNTIME_DIR") + "/skystation/net.json"
+	var net = JSON.parse_string(FileAccess.get_file_as_string(arq)) if FileAccess.file_exists(arq) else null
+	if typeof(net) == TYPE_DICTIONARY:
+		for m in net.get("mensagens", []):
+			if typeof(m) == TYPE_DICTIONARY and str(m.get("de", {}).get("id", "")) == id:
+				recebidas.append(_nulo(m.get("texto")))
+	if status == "":
+		if recebidas.is_empty():
+			status = "Conversa com " + nome
+		else:
+			status = nome + ":  " + "   |   ".join(recebidas.slice(max(0, recebidas.size() - 3)))
+			_async_net(["lidas", id], _on_net_quieto)
+
+
+func _on_net_quieto(_data: Dictionary) -> void:
+	pass
+
+
+func _on_net_result(data: Dictionary, sec: int) -> void:
+	net_msg = str(data.get("message", "Pronto")) if data.get("ok", false) else str(data.get("error", "Falhou"))
+	status = net_msg
+	if sec == section:
+		var onde := item
+		_load_section()
+		item = onde
+		status = net_msg
+
+
+func _async_net(args: Array, cb: Callable) -> void:
+	var th := Thread.new()
+	threads.append(th)
+	th.start(_worker_net.bind(args, cb, th))
+
+
+func _worker_net(args: Array, cb: Callable, th: Thread) -> void:
+	var output := []
+	var code := OS.execute(SKY_CLOUD, PackedStringArray(args), output, false)
+	var data = null
+	if output.size() > 0:
+		var linhas: PackedStringArray = str(output[0]).strip_edges().split("\n")
+		data = JSON.parse_string(linhas[linhas.size() - 1])
+	if typeof(data) != TYPE_DICTIONARY:
+		data = {"ok": false, "error": "a SkyNetwork não respondeu (código %d)" % code}
+	call_deferred("_finish", th, cb, data)
+
+
 func _on_info(data: Dictionary, sec: int) -> void:
 	if sec != section:
 		return
@@ -388,6 +577,7 @@ func _kb_start(title: String, ssid: String) -> void:
 	kb_text = ""
 	kb_title = title
 	kb_ssid = ssid
+	kb_mode = "wifi"
 	kb_row = 1
 	kb_col = 0
 	kb_shift = false
@@ -454,7 +644,24 @@ func _kb_press() -> void:
 
 func _kb_ok() -> void:
 	kb_open = false
-	_wifi_connect(kb_ssid, kb_text)
+	var modo: String = kb_mode
+	var texto: String = kb_text.strip_edges()
+	match modo:
+		"net_entrar":
+			status = "Entrando na SkyNetwork…"
+			_async_net(["entrar", texto], _on_net_result.bind(section))
+		"net_amigo":
+			status = "Procurando o jogador…"
+			_async_net(["amigo", texto], _on_net_result.bind(section))
+		"net_vincular":
+			status = "Vinculando o perfil…"
+			_async_net(["vincular", texto], _on_net_result.bind(section))
+		"net_msg":
+			if texto != "":
+				status = "Enviando…"
+				_async_net(["mensagem", kb_ssid, texto], _on_net_result.bind(section))
+		_:
+			_wifi_connect(kb_ssid, kb_text)
 
 
 # ---------------------------------------------------------------- desenho
@@ -499,6 +706,8 @@ func _draw() -> void:
 		st = "…  " + st
 	_text(st, Vector2(x0, h - 120), 18, MUTED, w - x0 - 60)
 	var dica := "Direcional  navegar      A  escolher      B  voltar"
+	if section == 4 and column == 1 and net_amigo == "" and not items.is_empty() and items[item]["action"] == "net_amigo":
+		dica = "A  mensagens e opções deste amigo      B  voltar"
 	if section == 1 and column == 1 and not items.is_empty() and items[item]["action"] == "bt_dev":
 		dica = "A  conectar/desconectar      Triângulo (Y)  opções e esquecer      B  voltar"
 	_text(dica, Vector2(48, h - 44), 16, DIM)

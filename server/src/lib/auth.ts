@@ -66,11 +66,32 @@ export async function autenticarPerfil(req: NextRequest) {
   const console_ = await autenticar(req);
   const localId = (req.headers.get("x-perfil") ?? "").trim();
   if (!localId) throw new Erro(400, "sem_perfil", "Faltou o cabeçalho X-Perfil.");
-  const perfil = await db.perfil.findUnique({
-    where: { consoleId_localId: { consoleId: console_.id, localId } },
-  });
+  const chave = { consoleId_localId: { consoleId: console_.id, localId } };
+  // Um perfil vinculado (nascido em outro console) vale mais que o perfil local de mesmo número.
+  const vinculo = await db.vinculo.findUnique({ where: chave, include: { perfil: true } });
+  const perfil = vinculo?.perfil ?? (await db.perfil.findUnique({ where: chave }));
   if (!perfil) {
     throw new Erro(404, "perfil_desconhecido", "Este perfil ainda não foi enviado ao servidor (PUT /api/perfis).");
   }
   return { console: console_, perfil };
+}
+
+/** Código de 8 letras para levar um perfil a outro console (mais longo que o de amigo: dá acesso aos saves). */
+export function novoCodigoVinculo() {
+  return novoCodigo() + novoCodigo().slice(0, 2);
+}
+
+const campos = { id: true, localId: true, apelido: true, cor: true, invisivel: true, codigo: true } as const;
+
+/** Os perfis que este console usa: os que nasceram nele e os vinculados de outros consoles. */
+export async function perfisDoConsole(consoleId: string) {
+  const [proprios, vinculos] = await Promise.all([
+    db.perfil.findMany({ where: { consoleId }, select: campos }),
+    db.vinculo.findMany({ where: { consoleId }, include: { perfil: { select: campos } } }),
+  ]);
+  const vinculados = new Set(vinculos.map((v) => v.localId));
+  return [
+    ...proprios.filter((p) => !vinculados.has(p.localId)).map((p) => ({ ...p, vinculado: false })),
+    ...vinculos.map((v) => ({ ...v.perfil, localId: v.localId, vinculado: true })),
+  ].sort((a, b) => a.localId.localeCompare(b.localId));
 }

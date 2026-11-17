@@ -21,8 +21,9 @@ model Console {
   janelaInicio   DateTime @default(now())
   janelaContagem Int      @default(0)
 
-  perfis  Perfil[]
-  versoes SaveVersao[]
+  perfis   Perfil[]
+  versoes  SaveVersao[]
+  vinculos Vinculo[]
 }
 
 /// Um jogador. Cada console tem até 4 perfis locais (p1..p4, do sky-perfis).
@@ -36,6 +37,9 @@ model Perfil {
   invisivel Boolean  @default(false)
   codigo    String   @unique // 6 letras/números para adicionar como amigo
   criadoEm  DateTime @default(now())
+  // código temporário (15 min) para usar este perfil em outro console; aqui só o hash
+  vinculoHash   String?   @unique
+  vinculoExpira DateTime?
 
   saves     Save[]
   presenca  Presenca?
@@ -44,8 +48,24 @@ model Perfil {
   amizadesA Amizade[]     @relation("a")
   amizadesB Amizade[]     @relation("b")
   trofeus   TrofeuGanho[]
+  vinculos  Vinculo[]
 
   @@unique([consoleId, localId])
+}
+
+/// "Neste console, o perfil local p2 é o jogador X (que nasceu em outro console)."
+/// É o que permite continuar o mesmo save em dois consoles e recuperar tudo num pendrive novo.
+model Vinculo {
+  id        String   @id @default(cuid())
+  consoleId String
+  console   Console  @relation(fields: [consoleId], references: [id], onDelete: Cascade)
+  localId   String
+  perfilId  String
+  perfil    Perfil   @relation(fields: [perfilId], references: [id], onDelete: Cascade)
+  criadoEm  DateTime @default(now())
+
+  @@unique([consoleId, localId])
+  @@index([perfilId])
 }
 
 // ---------------------------------------------------------------- SkyCloud (Fase 9.4)

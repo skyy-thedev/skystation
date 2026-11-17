@@ -1,0 +1,42 @@
+name: Launcher (GDScript)
+
+# Um erro de sintaxe no main.gd deixaria o console sem menu depois de atualizar. Aqui o Godot
+# oficial confere os scripts do launcher a cada mudança, antes de chegarem ao console.
+on:
+  push:
+    paths: ["console/launcher/**", ".github/workflows/launcher.yml"]
+  pull_request:
+    paths: ["console/launcher/**", ".github/workflows/launcher.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  conferir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GODOT: 4.5.1-stable
+    steps:
+      - uses: actions/checkout@v5
+      - name: Baixa o Godot
+        run: |
+          curl -fsSL -o godot.zip "https://github.com/godotengine/godot/releases/download/$GODOT/Godot_v${GODOT}_linux.x86_64.zip"
+          unzip -q godot.zip && mv "Godot_v${GODOT}_linux.x86_64" godot && chmod +x godot
+      - name: O conferidor pega erro de verdade?
+        # Controle: um script quebrado de propósito TEM que ser recusado. Se passar, a conferência
+        # abaixo não vale nada.
+        run: |
+          mkdir -p /tmp/ctl && cp console/launcher/project.godot /tmp/ctl/
+          printf 'extends Node\nfunc _ready() -> void:\n\tvar x: int = "texto" +\n' > /tmp/ctl/quebrado.gd
+          if ./godot --headless --path /tmp/ctl --check-only --script res://quebrado.gd; then
+            echo "o Godot aceitou um script quebrado"; exit 1
+          fi
+      - name: Confere main.gd e settings.gd
+        run: |
+          for f in main.gd settings.gd; do
+            echo "== $f"
+            ./godot --headless --path console/launcher --check-only --script "res://$f" 2>&1 | tee "/tmp/$f.log"
+            test "${PIPESTATUS[0]}" = 0
+            ! grep -E "SCRIPT ERROR|Parse Error|Compile Error" "/tmp/$f.log"
+          done
