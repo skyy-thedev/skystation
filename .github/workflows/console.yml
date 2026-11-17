@@ -79,6 +79,12 @@ jobs:
           import -window root imagens/toast-com-menu.png
           cat toast.log
           grep -q "overlay marcado" toast.log
+          # o aviso é desenhado no canto superior direito: lá tem que ter pixel claro (texto)…
+          brilho() { convert "$1" -crop 520x80+740+20 -colorspace Gray -format "%[fx:maxima]" info:; }
+          echo "canto com aviso: $(brilho imagens/toast.png)  ·  com o menu aberto: $(brilho imagens/toast-com-menu.png)"
+          awk -v v="$(brilho imagens/toast.png)" 'BEGIN { exit !(v > 0.6) }'
+          # …e com o menu Home aberto o aviso não pode aparecer
+          awk -v v="$(brilho imagens/toast-com-menu.png)" 'BEGIN { exit !(v < 0.2) }' 
           kill %1 %2 %3 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         if: always()

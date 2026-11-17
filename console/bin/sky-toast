@@ -160,7 +160,7 @@ def main():
         def marcar():
             surf = win.get_surface()
             if surf is not None and isinstance(surf, GdkX11.X11Surface):
-                estado["marcada"] = skygamescope.marcar_overlay(GdkX11.X11Surface.get_xid(surf))
+                estado["marcada"] = skygamescope.marcar_overlay(surf.get_xid())
                 print("sky-toast: overlay " + ("marcado" if estado["marcada"] else "NÃO marcado (xprop?)"), flush=True)
             return False
 
