@@ -175,6 +175,7 @@ async function buscarRawg(nome: string, sistema: string, ano?: number): Promise<
 
 // ---------------------------------------------------------------- Wikipédia
 
+const SERIE = /franquia|série de jogos|série de videogames|media franchise|video game franchise|video game series|is a series of/i;
 const PALAVRAS_JOGO = /jogo|videogame|video game|vídeo game|eletrônico|electronic game/i;
 
 async function buscarWikipedia(nome: string, sistema: string, lingua: "pt" | "en", ano?: number): Promise<Partial<InfoJogo> | null> {
@@ -192,6 +193,8 @@ async function buscarWikipedia(nome: string, sistema: string, lingua: "pt" | "en
     if (!r || r.type === "disambiguation") continue;
     const texto = `${r.description ?? ""} ${r.extract ?? ""}`;
     if (!PALAVRAS_JOGO.test(texto)) continue;
+    // página da série inteira ("Mortal Kombat é uma franquia…"), não do jogo
+    if (SERIE.test((r.extract ?? "").slice(0, 160))) continue;
     // com o ano, a página tem de citar esse ano (ou o anterior/seguinte, por causa de lançamentos regionais)
     if (ano && ![ano - 1, ano, ano + 1].some((a) => texto.includes(String(a)))) continue;
     const anoTexto = /\b(19[7-9]\d|20[0-4]\d)\b/.exec(r.extract ?? "")?.[1];
@@ -267,7 +270,7 @@ async function montar(nome: string, sistema: string, ano?: number): Promise<Info
   };
 }
 
-const emCache = unstable_cache(montar, ["sky-jogo-v4"], { revalidate: 7 * 24 * 60 * 60, tags: ["jogos"] });
+const emCache = unstable_cache(montar, ["sky-jogo-v5"], { revalidate: 7 * 24 * 60 * 60, tags: ["jogos"] });
 
 const VAZIO = (nome: string): InfoJogo => ({
   nome, capa: null, arte: null, resumo: null, ano: null, generos: [], fonte: null, link: null,
