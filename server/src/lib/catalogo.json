@@ -1,0 +1,31 @@
+{
+  "_leia": "Jogos e emuladores comprovadamente testados no SkyStation. Para incluir um jogo, acrescente uma linha em 'jogos' (id único, nome como aparece nas lojas, sistema). 'situacao': perfeito | jogavel | com-falhas. 'nota' é opcional e aparece na ficha.",
+  "emuladores": [
+    { "sistema": "ps1", "nome": "PlayStation", "emulador": "RetroArch · PCSX-ReARMed", "situacao": "funciona", "destaques": "Roda do disco, salvar/carregar estado, saves na nuvem" },
+    { "sistema": "snes", "nome": "Super Nintendo", "emulador": "RetroArch · Snes9x", "situacao": "funciona", "destaques": "Salvar/carregar estado, saves na nuvem" },
+    { "sistema": "ps2", "nome": "PlayStation 2", "emulador": "PCSX2", "situacao": "funciona", "destaques": "Roda do disco, perfis de desempenho, cartão de memória por perfil" },
+    { "sistema": "ps3", "nome": "PlayStation 3", "emulador": "RPCS3", "situacao": "funciona", "destaques": "Patches oficiais automáticos; pede PC com 6+ threads" },
+    { "sistema": "x360", "nome": "Xbox 360", "emulador": "Xenia Canary", "situacao": "funciona", "destaques": "Saves por perfil e na nuvem; pede PC forte" }
+  ],
+  "emBreve": [
+    { "sistema": "n64", "nome": "Nintendo 64", "emulador": "RetroArch · Mupen64Plus-Next" },
+    { "sistema": "psp", "nome": "PSP", "emulador": "RetroArch · PPSSPP" },
+    { "sistema": "gc", "nome": "GameCube e Wii", "emulador": "RetroArch · Dolphin" },
+    { "sistema": "nds", "nome": "DS e 3DS", "emulador": "RetroArch" },
+    { "sistema": "gba", "nome": "Game Boy / GBA", "emulador": "RetroArch" },
+    { "sistema": "md", "nome": "Mega Drive e NES", "emulador": "RetroArch" }
+  ],
+  "jogos": [
+    { "id": "ps2-gta-san-andreas", "nome": "Grand Theft Auto: San Andreas", "sistema": "ps2", "situacao": "jogavel" },
+    { "id": "ps2-god-of-war", "nome": "God of War", "sistema": "ps2", "situacao": "jogavel" },
+    { "id": "ps2-god-of-war-2", "nome": "God of War II", "sistema": "ps2", "situacao": "jogavel" },
+    { "id": "ps2-resident-evil-4", "nome": "Resident Evil 4", "sistema": "ps2", "situacao": "jogavel" },
+    { "id": "ps2-pes-2013", "nome": "Pro Evolution Soccer 2013", "sistema": "ps2", "situacao": "jogavel" },
+    { "id": "ps3-gta-4", "nome": "Grand Theft Auto IV", "sistema": "ps3", "situacao": "jogavel" },
+    { "id": "ps3-metal-gear-rising", "nome": "Metal Gear Rising: Revengeance", "sistema": "ps3", "situacao": "jogavel" },
+    { "id": "ps3-resident-evil-5", "nome": "Resident Evil 5", "sistema": "ps3", "situacao": "jogavel" },
+    { "id": "x360-forza-4", "nome": "Forza Motorsport 4", "sistema": "x360", "situacao": "jogavel" },
+    { "id": "ps1-tomb-raider", "nome": "Tomb Raider", "sistema": "ps1", "situacao": "jogavel" },
+    { "id": "ps1-gran-turismo", "nome": "Gran Turismo", "sistema": "ps1", "situacao": "jogavel" }
+  ]
+}

@@ -38,6 +38,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
             <nav className="menu-principal">
               <Link href="/">Início</Link>
               <Link href="/#jogos">Jogos</Link>
+              <Link href="/#emuladores">Emuladores</Link>
               {eu && <Link href={`/u/${eu.usuario}`}>Meu perfil</Link>}
               {eu && <Link href="/conta">Conta</Link>}
             </nav>

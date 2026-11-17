@@ -1,14 +1,15 @@
 import Link from "next/link";
 import { Avatar } from "@/components/Avatar";
 import { Banner } from "@/components/Banner";
-import { CartaoJogo } from "@/components/CartaoJogo";
+import { CartaoCatalogo } from "@/components/CartaoCatalogo";
 import { GradeJogos } from "@/components/GradeJogos";
 import avatares from "@/lib/avatares.json";
-import { nomeSistema } from "@/lib/jogos";
+import { catalogoComFichas, destaqueDoDia, EM_BREVE, EMULADORES, hrefCatalogo, SITUACOES } from "@/lib/catalogo";
+import { CORES_SISTEMA, nomeSistema } from "@/lib/jogos";
 import { quemEstaLogado } from "@/lib/sessao-pagina";
 import { vitrine } from "@/lib/vitrine";
 
-// a página muda a cada sinal dos consoles: nada de página estática
+// a faixa do mês muda a cada troféu: nada de página estática
 export const dynamic = "force-dynamic";
 
 function resumoCurto(t: string | null) {
@@ -18,14 +19,10 @@ function resumoCurto(t: string | null) {
 
 export default async function Inicio() {
   const eu = await quemEstaLogado();
-  const v = await vitrine(eu);
-  const d = v.destaque;
-
-  const botaoConta = eu ? (
-    <Link href={`/u/${eu.usuario}`} className="botao botao-claro">Ver meu perfil</Link>
-  ) : (
-    <Link href="/criar-conta" className="botao">Criar conta</Link>
-  );
+  const [jogos, rede] = await Promise.all([catalogoComFichas(), vitrine(eu, { comFichas: false })]);
+  const d = destaqueDoDia(jogos);
+  const mes = rede.mes;
+  const porSistema = (s: string) => jogos.filter((j) => j.sistema === s);
 
   return (
     <>
@@ -33,24 +30,13 @@ export default async function Inicio() {
         <Banner
           info={d.info}
           sistema={d.sistema}
-          selo={`${d.selo} · ${nomeSistema(d.sistema)}`}
-          texto={
-            <>
-              {resumoCurto(d.info.resumo) && <p>{resumoCurto(d.info.resumo)}</p>}
-              <p className="banner-quem">
-                <span className="avatares-pilha">
-                  {d.jogadores.slice(0, 4).map((j, i) => (
-                    <Avatar key={`${j.usuario ?? j.apelido}-${i}`} id={j.avatar} tamanho={28} titulo={j.apelido} />
-                  ))}
-                </span>
-                {d.legenda}
-              </p>
-            </>
-          }
+          selo={`Testado no SkyStation · ${nomeSistema(d.sistema)}`}
+          titulo={d.nome}
+          texto={resumoCurto(d.info.resumo) && <p>{resumoCurto(d.info.resumo)}</p>}
           acoes={
             <>
-              <Link href={d.href} className="botao botao-claro">Ver o jogo</Link>
-              {eu ? <Link href="/#jogos" className="botao">O que a galera joga</Link> : botaoConta}
+              <Link href={hrefCatalogo(d)} className="botao botao-claro">Ver ficha</Link>
+              <Link href="/#jogos" className="botao">Todos os jogos testados</Link>
             </>
           }
         />
@@ -58,79 +44,93 @@ export default async function Inicio() {
         <Banner
           selo="SkyStation"
           titulo={<>A rede do <span className="ciano">SkyStation</span></>}
-          texto={<p>Seu perfil, seus amigos, seus troféus e seus saves, em qualquer console e aqui no site.</p>}
-          acoes={
-            eu ? (
-              <>
-                {botaoConta}
-                <Link href="/conta" className="botao secundario">Minha conta</Link>
-              </>
-            ) : (
-              <>
-                <Link href="/entrar" className="botao botao-claro">Iniciar sessão</Link>
-                {botaoConta}
-              </>
-            )
-          }
-          extra={
-            <div className="vitrine">
-              {avatares.map((a) => (
-                <Avatar key={a.id} id={a.id} tamanho={56} titulo={a.nome} />
-              ))}
-            </div>
-          }
+          texto={<p>Os jogos que rodam no SkyStation, e a rede para jogar com os amigos.</p>}
         />
       )}
+
+      <section className="emuladores" id="emuladores">
+        <div className="secao-titulo">
+          <h2>Sistemas que já rodam no SkyStation</h2>
+          <p className="suave">Emuladores instalados e testados no console. É só colocar o jogo na pasta e jogar.</p>
+        </div>
+        <div className="emuladores-grade">
+          {EMULADORES.map((e) => {
+            const n = porSistema(e.sistema).length;
+            return (
+              <article key={e.sistema} className="cartao-emulador" style={{ ["--cor-sistema" as string]: CORES_SISTEMA[e.sistema] ?? "#123a7a" }}>
+                <span className="emulador-sigla">{nomeSistema(e.sistema)}</span>
+                <span className="emulador-funciona"><span className="bolinha online" /> Funcionando</span>
+                <h3>{e.nome}</h3>
+                <p className="emulador-nome">{e.emulador}</p>
+                <p className="apagado">{e.destaques}</p>
+                <span className="emulador-total">{n ? `${n} ${n === 1 ? "jogo testado" : "jogos testados"}` : "Sem jogos na lista ainda"}</span>
+              </article>
+            );
+          })}
+        </div>
+        <div className="em-teste">
+          <span className="apagado">Em teste:</span>
+          {EM_BREVE.map((e) => (
+            <span key={e.sistema} className="chip-teste" title={e.emulador}>{e.nome}</span>
+          ))}
+        </div>
+      </section>
 
       <GradeJogos
         abas={[
           {
-            id: "agora",
-            titulo: "Jogando agora",
-            total: v.jogando.length,
-            vazio: "Ninguém está jogando agora. Ligue o SkyStation e apareça aqui!",
-            cartoes: v.jogando.map((i) => <CartaoJogo key={i.chave} item={i} />),
+            id: "todos",
+            titulo: "Todos os testados",
+            total: jogos.length,
+            vazio: "Nenhum jogo na lista ainda.",
+            cartoes: jogos.map((j) => <CartaoCatalogo key={j.id} jogo={j} />),
           },
-          {
-            id: "recentes",
-            titulo: "Jogados recentemente",
-            total: v.recentes.length,
-            vazio: eu ? "Nenhum jogo recente entre você e seus amigos." : "Entre na sua conta para ver o que seus amigos andam jogando.",
-            cartoes: v.recentes.map((i) => <CartaoJogo key={i.chave} item={i} />),
-          },
-          {
-            id: "trofeus",
-            titulo: "Troféus recentes",
-            total: v.trofeus.length,
-            vazio: "Nenhum troféu por aqui ainda.",
-            cartoes: v.trofeus.map((i) => <CartaoJogo key={i.chave} item={i} />),
-          },
+          ...EMULADORES.filter((e) => porSistema(e.sistema).length).map((e) => ({
+            id: e.sistema,
+            titulo: nomeSistema(e.sistema),
+            total: porSistema(e.sistema).length,
+            vazio: "",
+            cartoes: porSistema(e.sistema).map((j) => <CartaoCatalogo key={j.id} jogo={j} />),
+          })),
         ]}
       />
+      <p className="legenda-situacao">
+        {(Object.keys(SITUACOES) as (keyof typeof SITUACOES)[]).map((k) => (
+          <span key={k}>
+            <span className="bolinha" style={{ background: SITUACOES[k].cor }} /> {SITUACOES[k].rotulo}
+          </span>
+        ))}
+      </p>
 
       <section className="faixa-mes">
         <div className="faixa-mes-titulo">
-          <span>Em {v.mes.nome}</span>
+          <span>Em {mes.nome}</span>
           <strong>na SkyNetwork</strong>
-          <p>O que rolou neste mês entre você e a galera: platinas, caçadores de troféus e quem chegou na rede.</p>
+          <p>A rede dos consoles: platinas, caçadores de troféus e quem chegou.</p>
+          {!eu && (
+            <div className="linha" style={{ marginTop: 22 }}>
+              <Link href="/criar-conta" className="botao botao-claro">Criar conta</Link>
+              <Link href="/entrar" className="botao secundario-escuro">Iniciar sessão</Link>
+            </div>
+          )}
         </div>
         <div className="faixa-mes-cartoes">
           <article className="cartao-mes cartao-mes-platina">
             <div className="cartao-mes-arte"><span className="trofeu-grande" /></div>
             <h3>Platinas do mês</h3>
-            <p className="numero">{v.mes.platinas}</p>
+            <p className="numero">{mes.platinas}</p>
             <p className="apagado">
-              {v.mes.ultimaPlatina ? `Última: ${v.mes.ultimaPlatina.jogo}, por ${v.mes.ultimaPlatina.de}` : "Nenhuma platina ainda. Quem vai ser o primeiro?"}
+              {mes.ultimaPlatina ? `Última: ${mes.ultimaPlatina.jogo}, por ${mes.ultimaPlatina.de}` : "Nenhuma platina ainda. Quem vai ser o primeiro?"}
             </p>
           </article>
           <article className="cartao-mes cartao-mes-cacador">
             <div className="cartao-mes-arte">
-              {v.mes.cacador ? <Avatar id={v.mes.cacador.avatar} tamanho={84} titulo={v.mes.cacador.apelido} /> : <span className="trofeu-grande ouro" />}
+              {mes.cacador ? <Avatar id={mes.cacador.avatar} tamanho={84} titulo={mes.cacador.apelido} /> : <span className="trofeu-grande ouro" />}
             </div>
             <h3>Caçador do mês</h3>
-            <p className="numero">{v.mes.cacador ? v.mes.cacador.apelido : "—"}</p>
+            <p className="numero">{mes.cacador ? mes.cacador.apelido : "—"}</p>
             <p className="apagado">
-              {v.mes.cacador ? `${v.mes.cacador.total} ${v.mes.cacador.total === 1 ? "troféu" : "troféus"} em ${v.mes.nome}` : "Ganhe um troféu e tome a coroa."}
+              {mes.cacador ? `${mes.cacador.total} ${mes.cacador.total === 1 ? "troféu" : "troféus"} em ${mes.nome}` : "Ganhe um troféu e tome a coroa."}
             </p>
           </article>
           <article className="cartao-mes cartao-mes-novos">
@@ -138,8 +138,8 @@ export default async function Inicio() {
               {avatares.slice(0, 5).map((a) => <Avatar key={a.id} id={a.id} tamanho={40} />)}
             </div>
             <h3>Novos na rede</h3>
-            <p className="numero">{v.mes.novosMembros}</p>
-            <p className="apagado">{v.mes.novosMembros === 1 ? "conta criada neste mês" : "contas criadas neste mês"}</p>
+            <p className="numero">{mes.novosMembros}</p>
+            <p className="apagado">{mes.novosMembros === 1 ? "conta criada neste mês" : "contas criadas neste mês"}</p>
           </article>
         </div>
       </section>

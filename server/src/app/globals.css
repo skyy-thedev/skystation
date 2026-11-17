@@ -259,6 +259,50 @@ textarea { resize: vertical; min-height: 70px; }
 .cadeado { text-align: center; padding: 40px 10px; color: var(--suave); }
 .abas { display: grid; gap: 18px; }
 
+
+/* ---------------------------------------------------------------- emuladores e catálogo */
+.secao-titulo { margin: 0 0 26px; }
+.secao-titulo h2 { color: var(--texto); font-size: clamp(24px, 3vw, 34px); font-weight: 800; margin: 0 0 6px; letter-spacing: -0.5px; }
+.secao-titulo p { margin: 0; }
+.emuladores { padding: 56px 0 10px; }
+.emuladores-grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 18px; }
+.cartao-emulador {
+  position: relative; overflow: hidden; border-radius: 22px; padding: 22px 20px 20px; min-height: 250px;
+  display: flex; flex-direction: column; gap: 4px;
+  background:
+    radial-gradient(140% 90% at 100% 0%, color-mix(in srgb, var(--cor-sistema) 70%, transparent), transparent 60%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
+  border: 1px solid var(--borda);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.cartao-emulador:hover { transform: translateY(-4px); box-shadow: 0 0 0 2px var(--destaque), 0 18px 40px rgba(0, 0, 0, 0.45); }
+.emulador-sigla {
+  font-size: 40px; font-weight: 900; letter-spacing: -1px; line-height: 1; margin-bottom: 14px;
+  color: #fff; text-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+.emulador-funciona {
+  order: -1; align-self: flex-start; margin-bottom: 14px; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: rgba(0, 0, 0, 0.4); color: #bff8e3;
+}
+.cartao-emulador h3 { margin: 0; font-size: 19px; }
+.emulador-nome { margin: 0; color: var(--destaque); font-weight: 600; font-size: 14px; }
+.cartao-emulador .apagado { margin: 6px 0 0; line-height: 1.4; }
+.emulador-total { margin-top: auto; padding-top: 14px; font-weight: 700; font-size: 14px; }
+.em-teste { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 18px; }
+.chip-teste { font-size: 13px; padding: 5px 12px; border-radius: 999px; border: 1px dashed var(--borda); color: var(--suave); }
+.legenda-situacao { display: flex; justify-content: center; gap: 18px; color: var(--suave); font-size: 13px; margin: 26px 0 0; }
+.legenda-situacao span { display: inline-flex; align-items: center; gap: 6px; }
+.secundario-escuro { background: rgba(4, 18, 43, 0.85); color: #fff; }
+.selo-testado {
+  display: inline-flex; align-items: center; gap: 8px; font-weight: 700; padding: 8px 14px; border-radius: 999px;
+  background: rgba(4, 18, 43, 0.7); border: 1px solid var(--borda);
+}
+.selo-testado .bolinha { background: var(--cor-situacao); box-shadow: 0 0 10px var(--cor-situacao); }
+.no-skystation { margin-top: 10px; }
+.ficha-tecnica { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.ficha-tecnica div { display: flex; flex-direction: column; gap: 4px; padding: 14px; border-radius: 14px; background: rgba(0, 0, 0, 0.22); }
+.ficha-tecnica code { font-size: 15px; }
+
 /* ---------------------------------------------------------------- rodapé */
 .rodape {
   display: flex; flex-direction: column; align-items: center; gap: 10px;

@@ -1,3 +1,4 @@
+import { EMULADORES, jogoDoCatalogo } from "./catalogo";
 import { db } from "./db";
 import { infoJogo, SISTEMAS, type InfoJogo } from "./jogos";
 import { OFFLINE_APOS_MS } from "./rede";
@@ -81,7 +82,7 @@ async function fichas(lista: { titulo: string; sistema: string }[]) {
   return (titulo: string, sistema: string) => prontos.get(`${sistema}|${titulo}`)!;
 }
 
-export async function vitrine(eu: { id: string } | null) {
+export async function vitrine(eu: { id: string } | null, { comFichas = true } = {}) {
   const vis = await perfisVisiveis(eu);
   const ids = [...vis.keys()];
   const agora = Date.now();
@@ -158,7 +159,8 @@ export async function vitrine(eu: { id: string } | null) {
 
   const trofeusBruto = trofeus.filter((t) => vis.has(t.perfilId)).slice(0, 12);
 
-  const ficha = await fichas([
+  const semFicha = (titulo: string): InfoJogo => ({ nome: titulo, capa: null, arte: null, resumo: null, ano: null, generos: [], fonte: null, link: null });
+  const ficha = !comFichas ? semFicha : await fichas([
     ...jogandoBruto.map((j) => ({ titulo: j.titulo, sistema: j.sistema })),
     ...recentesBruto.map((j) => ({ titulo: j.titulo, sistema: j.sistema })),
     ...trofeusBruto.filter((t) => t.jogoId !== "skystation").map((t) => ({ titulo: t.jogo || t.jogoId, sistema: sis(t.jogoId) })),
@@ -226,12 +228,13 @@ export async function vitrine(eu: { id: string } | null) {
 
 /** Página de um jogo: ficha + quem joga + troféus ganhos nele (só dos perfis visíveis). */
 export async function paginaJogo(sistema: string, jogoId: string, eu: { id: string } | null) {
-  const [save, pres, trof] = await Promise.all([
+  const catalogo = jogoDoCatalogo(sistema, jogoId);
+  const [save, pres, trof] = catalogo ? [null, null, null] : await Promise.all([
     db.save.findFirst({ where: { jogoId, ...(sistema !== "outro" ? { sistema } : {}) }, select: { titulo: true }, orderBy: { atualizadoEm: "desc" } }),
     db.presenca.findFirst({ where: { jogoId }, select: { jogo: true } }),
     db.trofeuGanho.findFirst({ where: { jogoId }, select: { jogo: true } }),
   ]);
-  const titulo = save?.titulo || pres?.jogo || trof?.jogo;
+  const titulo = catalogo?.nome || save?.titulo || pres?.jogo || trof?.jogo;
   if (!titulo) return null;
 
   const vis = await perfisVisiveis(eu);
@@ -266,6 +269,8 @@ export async function paginaJogo(sistema: string, jogoId: string, eu: { id: stri
     }));
   return {
     info,
+    catalogo,
+    emulador: EMULADORES.find((e) => e.sistema === (catalogo?.sistema ?? sistema)) ?? null,
     sistema: sistema === "outro" ? "" : sistema,
     jogadores,
     trofeus: trofeus.map((t) => ({ ...t, de: publico(vis.get(t.perfilId)!) })),

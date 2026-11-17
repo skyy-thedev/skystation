@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Avatar } from "@/components/Avatar";
 import { Banner } from "@/components/Banner";
+import { SITUACOES } from "@/lib/catalogo";
 import { nomeSistema } from "@/lib/jogos";
 import { quemEstaLogado } from "@/lib/sessao-pagina";
 import { paginaJogo } from "@/lib/vitrine";
@@ -52,9 +53,33 @@ export default async function Jogo(props: Props) {
         sistema={j.sistema}
         selo={[nomeSistema(j.sistema), info.ano, ...info.generos].filter(Boolean).join(" · ")}
         texto={info.resumo ? <p>{info.resumo}</p> : <p>Ainda não achamos a ficha deste jogo na internet.</p>}
-        acoes={fonte && <span className="apagado">Fonte: {fonte}</span>}
+        acoes={
+          <>
+            {j.catalogo && (
+              <span className="selo-testado" style={{ ["--cor-situacao" as string]: SITUACOES[j.catalogo.situacao].cor }}>
+                <span className="bolinha" /> Testado no SkyStation · {SITUACOES[j.catalogo.situacao].rotulo}
+              </span>
+            )}
+            {fonte && <span className="apagado">Fonte: {fonte}</span>}
+          </>
+        }
       />
 
+      {j.catalogo && (
+        <section className="cartao no-skystation">
+          <h2>No SkyStation</h2>
+          <div className="ficha-tecnica">
+            <div><span className="apagado">Sistema</span><b>{nomeSistema(j.sistema)}</b></div>
+            <div><span className="apagado">Emulador</span><b>{j.emulador?.emulador ?? "—"}</b></div>
+            <div><span className="apagado">Situação</span><b style={{ color: SITUACOES[j.catalogo.situacao].cor }}>{SITUACOES[j.catalogo.situacao].rotulo}</b></div>
+            <div><span className="apagado">Onde colocar</span><b><code>roms/{j.sistema}</code></b></div>
+          </div>
+          {j.catalogo.nota && <p style={{ marginBottom: 0 }}>{j.catalogo.nota}</p>}
+          {j.emulador?.destaques && <p className="apagado" style={{ marginBottom: 0 }}>{j.emulador.destaques}</p>}
+        </section>
+      )}
+
+      {(!j.catalogo || j.jogadores.length > 0 || j.trofeus.length > 0) && (
       <div className="duas conteudo-jogo">
         <section className="cartao">
           <h2>Quem joga · {j.jogadores.length}</h2>
@@ -98,6 +123,7 @@ export default async function Jogo(props: Props) {
           )}
         </section>
       </div>
+      )}
     </>
   );
 }
