@@ -131,6 +131,15 @@ try {
   ok(sb.dados.naoLidas === 0, "nenhuma não lida depois disso");
   const conv = await api("GET", `/api/mensagens?com=${idA}`, { ...B });
   ok(conv.dados.mensagens.length === 2 && conv.dados.mensagens[0].minha === false && conv.dados.mensagens[0].lida, "histórico da conversa");
+  // convite para jogar junto (netplay do RetroArch): leva a sala
+  ok((await api("POST", "/api/mensagens", { ...A, corpo: { paraId: idB, tipo: "netplay", texto: "Bora jogar junto?" } })).status === 400, "netplay sem sala = 400");
+  const sala = { ip: "185.23.1.9", porta: 55435, sessao: "AbC123+/xyz=", senha: "k3y", crc: "A1B2C3D4", core: "Snes9x 1.63" };
+  const marca2 = (await api("POST", "/api/sync", { ...B, corpo: {} })).dados.agora;
+  ok((await api("POST", "/api/mensagens", { ...A, corpo: { paraId: idB, tipo: "netplay", texto: "Bora jogar junto?", jogoId: "snes-Super_Mario_World", jogo: "Super Mario World", sistema: "snes", sala } })).status === 201, "A convida B para jogar junto (netplay)");
+  sb = await api("POST", "/api/sync", { ...B, corpo: { desde: marca2 } });
+  const np = sb.dados.mensagens.find((m) => m.tipo === "netplay");
+  ok(np && np.sala.sessao === sala.sessao && np.sala.porta === 55435 && np.jogo === "Super Mario World", "B recebe a sala do netplay no sync");
+  await api("POST", "/api/mensagens/lidas", { ...B, corpo: { deId: idA } });
 
   // ---------------------------------------------------------------- troféus
   const t1 = await api("POST", "/api/trofeus", { ...A, corpo: { trofeus: [{ trofeu: "primeira-partida", nome: "Primeira partida", tipo: "bronze" }, { trofeu: "maratonista", nome: "Maratonista", tipo: "ouro" }] } });

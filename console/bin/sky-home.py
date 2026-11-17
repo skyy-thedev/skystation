@@ -46,6 +46,7 @@ HOLD_KILL = 5.0
 RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
 PID_FILE = os.path.join(RUN, "game.pid")
 TITLE_FILE = os.path.join(RUN, "game.title")
+NETPLAY_SIS = {"ps1", "snes", "n64", "nes", "md", "gba", "gb"}   # sistemas do RetroArch com netplay
 SHOT = os.path.join(RUN, "pause.png")
 OVERLAY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sky-overlay.py")
 SOUNDS = "/opt/skystation/sounds"
@@ -411,6 +412,10 @@ class Home:
             items.append(("rapida", {"t": "Enviar: " + r, "texto": r}))
         if self.menu_pid:
             titulo = read(TITLE_FILE) or "este jogo"
+            if read(os.path.join(RUN, "game.sys")) in NETPLAY_SIS:
+                # Fase 11.4: abre uma sala do RetroArch e manda o convite com ela
+                items.append(("jogar_junto", {"t": f"Jogar {titulo} junto, online",
+                                              "sub": f"{nome} entra como jogador 2 pela internet"}))
             items.append(("convidar", {"t": f"Convidar para {titulo}"}))
         return items
 
@@ -713,6 +718,18 @@ class Home:
             self.enviar_mensagem(self.items[self.sel][1]["texto"])
         elif action == "convidar":
             self.enviar_mensagem("", convite=True)
+        elif action == "jogar_junto" and self.amigo:
+            # a sala só abre com o jogo rodando: volta ao jogo e o sky-netplay faz o resto em segundo
+            # plano (abre a sala, acha no lobby e manda o convite; o aviso aparece quando terminar)
+            fid = self.amigo[0]
+            self.send("msg Abrindo a sala…")
+            play("salvo")
+            self.choose("resume")
+            try:
+                subprocess.Popen([sys.executable, os.path.join(SKY_BIN, "sky-netplay"), "hospedar", fid],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            except OSError:
+                pass
         elif action == "trofeu":
             it = self.items[self.sel][1]
             self.send("msg " + (it["sub"] if it.get("ganho") else "Ainda não conquistado: " + it["sub"]))

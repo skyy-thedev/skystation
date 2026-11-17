@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""SkyStation (Fase 11.4): jogar junto pela SkyNetwork — o netplay do RetroArch com convite.
+
+    sky-netplay hospedar <perfilId do amigo>   abre a sala no jogo aberto agora e manda o convite
+    sky-netplay entrar <id da mensagem>        prepara a entrada na sala do convite (o launcher abre o jogo)
+    sky-netplay sala                           a sala aberta agora (se houver), para conferência
+
+Como funciona:
+  1. Todo jogo de RetroArch (PS1, SNES, N64, NES, Mega Drive, GBA, GB) já abre pronto para virar sala:
+     o sky-emu escolhe um apelido único e uma senha aleatória e grava em netplay.json.
+  2. "hospedar" manda NETPLAY_HOST_TOGGLE pelo canal de comandos do RetroArch. A sala sobe pela
+     retransmissão de São Paulo (nada de abrir porta no roteador) e aparece no lobby público do
+     RetroArch — com senha, então ninguém de fora entra.
+  3. O sky-netplay procura a própria sala no lobby (pelo apelido único), pega o endereço da
+     retransmissão e o código da sessão e manda tudo no convite da SkyNetwork.
+  4. Quem recebe aperta A no convite (categoria SkyNetwork): o launcher grava netplay-entrar.json e
+     abre o mesmo jogo; o sky-emu conecta direto na sala, com a senha.
+
+Os dois precisam do mesmo jogo (mesmo arquivo) e da mesma versão do emulador — o SkyStation instala a
+mesma nos dois consoles. Saída: uma linha JSON, como os outros comandos do console.
+"""
+import json
+import os
+import sys
+import time
+import unicodedata
+import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import skynet  # noqa: E402
+
+LOBBY = os.environ.get("SKY_LOBBY_URL", "http://lobby.libretro.com/list/")
+SISTEMAS = {"ps1", "snes", "n64", "nes", "md", "gba", "gb"}
+ESPERA_LOBBY = 45      # segundos procurando a sala no lobby depois de abrir
+FIFO = os.path.join(skynet.RUN, "retroarch.cmd")
+
+
+def ler(nome):
+    try:
+        with open(os.path.join(skynet.RUN, nome), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def jogo_aberto():
+    """(id, título, sistema) do jogo rodando agora; None se não há jogo."""
+    pid = ler("game.pid")
+    if not pid.isdigit() or not os.path.exists(f"/proc/{pid}"):
+        return None
+    return ler("game.id"), ler("game.title"), ler("game.sys")
+
+
+def lobby():
+    req = urllib.request.Request(LOBBY, headers={"User-Agent": skynet.AGENTE, "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        dados = json.loads(r.read().decode("utf-8", "replace"))
+    salas = []
+    for item in dados if isinstance(dados, list) else []:
+        f = item.get("fields", item) if isinstance(item, dict) else {}
+        if isinstance(f, dict):
+            salas.append(f)
+    return salas
+
+
+def achar_sala(nick, espera=ESPERA_LOBBY):
+    fim = time.time() + espera
+    while time.time() < fim:
+        try:
+            for s in lobby():
+                if s.get("username") == nick:
+                    return s
+        except Exception:
+            pass
+        time.sleep(3)
+    return None
+
+
+def comando_retroarch(cmd):
+    """Escreve no canal de comandos do RetroArch (o FIFO que o sky-emu abriu)."""
+    if not os.path.exists(FIFO):
+        return False
+    fd = os.open(FIFO, os.O_WRONLY | os.O_NONBLOCK)
+    try:
+        os.write(fd, (cmd + "\n").encode())
+    finally:
+        os.close(fd)
+    return True
+
+
+def hospedar(amigo_id):
+    cfg = skynet.config()
+    if not skynet.conectado(cfg):
+        return skynet.saida({"ok": False, "error": "Entre na SkyNetwork para jogar junto."})
+    jogo = jogo_aberto()
+    if not jogo:
+        return skynet.saida({"ok": False, "error": "Abra o jogo primeiro."})
+    gid, titulo, sistema = jogo
+    if sistema not in SISTEMAS:
+        return skynet.saida({"ok": False, "error": "Jogar junto online funciona em PS1, SNES, N64, NES, Mega Drive e Game Boy."})
+    np = skynet.ler_json(os.path.join(skynet.RUN, "netplay.json"), {}) or {}
+    if not np.get("nick") or np.get("convidado"):
+        return skynet.saida({"ok": False, "error": "Este jogo foi aberto antes da atualização: feche e abra de novo."})
+    sala = skynet.ler_json(os.path.join(skynet.RUN, "netplay-sala.json"), None)
+    if not (isinstance(sala, dict) and sala.get("nick") == np["nick"]):
+        if not comando_retroarch("NETPLAY_HOST_TOGGLE"):
+            return skynet.saida({"ok": False, "error": "Não achei o canal de comandos do emulador."})
+        s = achar_sala(np["nick"])
+        if not s:
+            comando_retroarch("NETPLAY_HOST_TOGGLE")   # desfaz: sala sem convite não serve para nada
+            return skynet.saida({"ok": False, "error": "A sala não apareceu no servidor do RetroArch. Confira a internet e tente de novo."})
+        ip = s.get("mitm_ip") or s.get("ip") or ""
+        porta = int(s.get("mitm_port") or s.get("port") or 0)
+        sala = {"nick": np["nick"], "ip": ip, "porta": porta, "sessao": s.get("mitm_session") or "",
+                "senha": np.get("senha", ""), "crc": str(s.get("game_crc") or "")[:16],
+                "core": f"{s.get('core_name', '')} {s.get('core_version', '')}".strip()[:80]}
+        skynet.gravar_json(os.path.join(skynet.RUN, "netplay-sala.json"), sala, 0o600)
+    corpo = {"paraId": amigo_id, "tipo": "netplay", "texto": f"Bora jogar {titulo or 'junto'}? A sala está aberta!"[:280],
+             "jogoId": gid[:200], "jogo": titulo[:200], "sistema": sistema,
+             "sala": {k: sala[k] for k in ("ip", "porta", "sessao", "senha", "crc", "core") if sala.get(k) not in (None, "")}}
+    perfil, _ = skynet.perfis()
+    st, r = skynet.api("POST", "/api/mensagens", corpo, perfil=perfil, cfg=cfg)
+    if st not in (200, 201):
+        return skynet.saida({"ok": False, "error": skynet.mensagem(r, "Não consegui mandar o convite.")})
+    skynet.aviso("netplay", "Sala aberta: o convite foi. Quando o amigo entrar, o jogo continua com ele no controle 2.",
+                 historico=False)
+    return skynet.saida({"ok": True, "message": "Convite enviado: a sala está aberta"})
+
+
+def normal(t):
+    t = unicodedata.normalize("NFD", t or "").encode("ascii", "ignore").decode().lower()
+    return " ".join("".join(c if c.isalnum() else " " for c in t).split())
+
+
+def entrar(msg_id):
+    net = skynet.ler_json(skynet.NET_JSON, {}) or {}
+    m = next((m for m in net.get("mensagens", []) if isinstance(m, dict) and m.get("id") == msg_id), None)
+    if not m or m.get("tipo") != "netplay" or not isinstance(m.get("sala"), dict):
+        return skynet.saida({"ok": False, "error": "Esse convite não existe mais."})
+    sala = m["sala"]
+    destino = os.path.join(skynet.RUN, "netplay-entrar.json")
+    skynet.gravar_json(destino, {k: sala.get(k) for k in ("ip", "porta", "sessao", "senha")}, 0o600)
+    return skynet.saida({"ok": True, "jogoId": m.get("jogoId"), "jogo": m.get("jogo"), "sistema": m.get("sistema"),
+                         "titulo_normal": normal(m.get("jogo") or ""), "de": (m.get("de") or {}).get("id")})
+
+
+def main():
+    a = sys.argv[1:]
+    if len(a) == 2 and a[0] == "hospedar":
+        return hospedar(a[1])
+    if len(a) == 2 and a[0] == "entrar":
+        return entrar(a[1])
+    if a == ["sala"]:
+        return skynet.saida({"ok": True, "sala": skynet.ler_json(os.path.join(skynet.RUN, "netplay-sala.json"), None)})
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception as e:  # nunca deixa o menu sem resposta
+        print(json.dumps({"ok": False, "error": str(e)}))
+        sys.exit(1)

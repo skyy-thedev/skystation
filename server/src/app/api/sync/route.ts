@@ -84,6 +84,7 @@ export const POST = rota(async (req) => {
       jogoId: m.jogoId,
       jogo: m.jogo,
       sistema: m.sistema,
+      sala: m.sala,
       enviadaEm: m.enviadaEm,
       lida: m.lidaEm !== null,
     })),

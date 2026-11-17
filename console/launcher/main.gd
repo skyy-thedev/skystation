@@ -1043,6 +1043,17 @@ func _build_net_cat() -> Dictionary:
 		c_net["items"].append(_act("Já tenho ID: entrar", "Este perfil passa a ser a sua conta (amigos, troféus e saves vêm junto)", "net:net_conta_entrar", "search"))
 	if not net.get("online", false):
 		c_net["items"].append(_act("Sem conexão com a SkyNetwork", "Os amigos voltam a aparecer quando a internet voltar", "settings:4", "wifi"))
+	# Fase 11.4: salas de "jogar junto" abertas pelos amigos (vale por 30 min depois do convite)
+	var agora_utc := Time.get_unix_time_from_system()
+	for m in net.get("mensagens", []):
+		if typeof(m) != TYPE_DICTIONARY or _nulo(m.get("tipo")) != "netplay":
+			continue
+		var quando := Time.get_unix_time_from_datetime_string(_nulo(m.get("enviadaEm")).substr(0, 19))
+		if quando <= 0 or agora_utc - quando > 1800:
+			continue
+		c_net["items"].append(_act("Jogar junto: " + _nulo(m.get("jogo")),
+			"%s abriu a sala  ·  A para entrar como jogador 2 (precisa ter o mesmo jogo)" % _nulo(m.get("de", {}).get("apelido")),
+			"netplay:" + _nulo(m.get("id")), "pad", accent))
 	for p in net.get("pedidosRecebidos", []):
 		if typeof(p) == TYPE_DICTIONARY:
 			c_net["items"].append(_act("Pedido de amizade: " + _nulo(p.get("de", {}).get("apelido")), "Aperte A para aceitar ou recusar", "settings:4", "bell", accent))
@@ -1081,6 +1092,41 @@ func _build_net_cat() -> Dictionary:
 	c_net["items"].append(_act("Ícone do perfil", "Escolha numa grade, como no site", "net:net_icones", glifo_eu))
 	c_net["items"].append(_act("Opções da SkyNetwork", "Saves na nuvem, invisível, senha, usar o perfil em outro console, sair", "settings:4", "gear"))
 	return c_net
+
+
+func _titulo_normal(t: String) -> String:
+	var r := RegEx.new()
+	r.compile("[^a-z0-9]+")
+	return r.sub(t.to_lower().strip_edges(), " ", true).strip_edges()
+
+
+func _entrar_netplay(msg_id: String) -> void:
+	# Fase 11.4: aceita a sala do amigo. O sky-netplay grava os dados da sala; o sky-emu conecta.
+	var r := _run_json(SKY_BIN + "/sky-netplay", ["entrar", msg_id])
+	if not r.get("ok", false):
+		_toast(str(r.get("error", "Não consegui entrar na sala")), 3.5, "pad")
+		return
+	var alvo: Dictionary = {}
+	var sis := _nulo(r.get("sistema"))
+	var gid := _nulo(r.get("jogoId"))
+	var tn := _titulo_normal(_nulo(r.get("jogo")))
+	for g in games:
+		if str(g["sys"]) != sis:
+			continue
+		if str(g["id"]) == gid:
+			alvo = g
+			break
+		if alvo.is_empty() and _titulo_normal(str(g["title"])) == tn:
+			alvo = g
+	if alvo.is_empty():
+		DirAccess.remove_absolute(run_dir + "/netplay-entrar.json")
+		_toast("Você não tem %s (%s) neste console: copie o mesmo arquivo do amigo para jogar junto" % [
+			_nulo(r.get("jogo")), sis.to_upper()], 5.0, "pad")
+		return
+	if _nulo(r.get("de")) != "":
+		_bg(_run_json.bind(SKY_BIN + "/sky-cloud", ["lidas", _nulo(r.get("de"))]), func(_x): pass)
+	_toast("Entrando na sala…", 2.5, "pad")
+	_launch(alvo)
 
 
 func _act(title: String, sub: String, action: String, glyph: String, color: Color = Color(0, 0, 0, 0)) -> Dictionary:
@@ -1301,6 +1347,9 @@ func _activate() -> void:
 		_open_settings(4)
 		if settings != null:
 			settings.call("abrir_amigo", action.substr(7))
+		return
+	if action.begins_with("netplay:"):
+		_entrar_netplay(action.substr(8))
 		return
 	if action.begins_with("net:"):
 		_open_settings(4)

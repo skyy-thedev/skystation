@@ -159,12 +159,15 @@ model Mensagem {
   paraId    String
   de        Perfil    @relation("de", fields: [deId], references: [id], onDelete: Cascade)
   para      Perfil    @relation("para", fields: [paraId], references: [id], onDelete: Cascade)
-  tipo      String    @default("texto") // texto | convite
+  tipo      String    @default("texto") // texto | convite | netplay
   texto     String    // até 280 caracteres
   // só nos convites: o jogo para o qual está chamando
   jogoId    String?
   jogo      String?
   sistema   String?
+  // só no convite "netplay" (Fase 11.4): a sala do RetroArch no servidor de retransmissão
+  // { ip, porta, sessao, senha, crc, core } — quem recebe entra direto, sem digitar nada
+  sala      Json?
   enviadaEm DateTime  @default(now())
   lidaEm    DateTime?
 

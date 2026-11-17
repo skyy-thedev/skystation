@@ -168,10 +168,14 @@ class Rede:
             self.vistos.add(m["id"])
             self.mensagens.append({"id": m["id"], "de": m["de"], "tipo": m.get("tipo", "texto"),
                                    "texto": m.get("texto", ""), "jogo": m.get("jogo"), "jogoId": m.get("jogoId"),
+                                   "sistema": m.get("sistema"), "sala": m.get("sala"),
                                    "enviadaEm": m.get("enviadaEm"), "lida": bool(m.get("lida"))})
             if m.get("lida"):
                 continue
-            if m.get("tipo") == "convite":
+            if m.get("tipo") == "netplay":
+                aviso("mensagem", f"{m['de']['apelido']} abriu uma sala de {m.get('jogo') or 'jogo'}: entre pela SkyNetwork para jogar junto!",
+                      "jogo-novo")
+            elif m.get("tipo") == "convite":
                 aviso("mensagem", f"{m['de']['apelido']} chamou você para jogar {m.get('jogo') or ''}".strip(), "jogo-novo")
             else:
                 aviso("mensagem", f"{m['de']['apelido']}: {m.get('texto', '')}", "jogo-novo")

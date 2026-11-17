@@ -47,8 +47,9 @@ class Console:
         e = dict(os.environ, HOME=self.home, XDG_RUNTIME_DIR=os.path.join(self.home, "run"), SKY_REDE_URL=url)
         return e
 
-    def sky(self, *args, prog="sky-cloud", url=URL, senha=None):
+    def sky(self, *args, prog="sky-cloud", url=URL, senha=None, extra=None):
         env = self.env(url)
+        env.update(extra or {})
         if senha is not None:
             env["SKY_SENHA"] = senha
         r = subprocess.run([sys.executable, os.path.join(BIN, prog), *args], env=env,
@@ -171,6 +172,55 @@ try:
     ok(any(e.startswith("Bart ganhou o troféu de bronze: Primeira partida") for e in ev), "A recebe o troféu de B")
     ok(A.net()["naoLidas"] == 2 and len(A.net()["mensagens"]) == 2, "net.json de A guarda as mensagens")
     ok(A.sky("lidas", idB)["ok"] and A.sky("uma-vez", prog="sky-net")["ok"] and A.net()["naoLidas"] == 0, "A marca como lidas")
+    B.jogo(None)
+
+    # ------------------------------------------------------------ jogar junto online (netplay, Fase 11.4)
+    import http.server
+    import threading
+    salas = []
+
+    class Lobby(http.server.BaseHTTPRequestHandler):   # o lobby do RetroArch, de mentira
+        def do_GET(self):
+            corpo = json.dumps(salas).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(corpo)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), Lobby)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    lobby = {"SKY_LOBBY_URL": f"http://127.0.0.1:{srv.server_port}/list/"}
+    ok(not B.sky("hospedar", idA, prog="sky-netplay", extra=lobby)["ok"], "sem jogo aberto não dá para abrir sala")
+    B.jogo("snes-Super_Mario_World", "Super Mario World", "snes")
+    with open(os.path.join(B.run, "netplay.json"), "w") as f:
+        json.dump({"nick": "SkyStation_teste01", "senha": "abc123", "sistema": "snes", "convidado": False}, f)
+    fifo = os.path.join(B.run, "retroarch.cmd")
+    os.mkfifo(fifo)
+    leitor = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+    salas.append({"fields": {"username": "SkyStation_outro", "mitm_ip": "9.9.9.9", "mitm_port": 1, "mitm_session": "x"}})
+    salas.append({"fields": {"username": "SkyStation_teste01", "ip": "1.1.1.1", "port": 1, "mitm_ip": "185.1.2.3",
+                             "mitm_port": 55435, "mitm_session": "QUJDREVG", "game_crc": "ABCD1234",
+                             "core_name": "Snes9x", "core_version": "1.63"}})
+    r = B.sky("hospedar", idA, prog="sky-netplay", extra=lobby)
+    ok(r["ok"], "B abre a sala de Super Mario World e convida A")
+    ok(os.read(leitor, 100) == b"NETPLAY_HOST_TOGGLE\n", "o RetroArch recebeu o pedido para abrir a sala")
+    A.sky("uma-vez", prog="sky-net")
+    conv = next(m for m in A.net()["mensagens"] if m.get("tipo") == "netplay")
+    ok(conv["sala"]["ip"] == "185.1.2.3" and conv["sala"]["porta"] == 55435 and conv["sala"]["sessao"] == "QUJDREVG"
+       and conv["sala"]["senha"] == "abc123" and conv["jogo"] == "Super Mario World", "A recebe a sala certa (retransmissão, sessão e senha)")
+    ok(any("abriu uma sala de Super Mario World" in e for e in A.eventos()), "A recebe o aviso da sala")
+    ok(B.sky("hospedar", idA, prog="sky-netplay", extra=lobby)["ok"] and os.read(leitor, 100) == b"",
+       "convidar de novo reaproveita a sala aberta (não fecha nem reabre)")
+    e = A.sky("entrar", conv["id"], prog="sky-netplay")
+    with open(os.path.join(A.run, "netplay-entrar.json")) as f:
+        entrada = json.load(f)
+    ok(e["ok"] and e["sistema"] == "snes" and e["jogoId"] == "snes-Super_Mario_World" and entrada["sessao"] == "QUJDREVG"
+       and entrada["senha"] == "abc123", "A aceita: os dados da sala ficam prontos para o sky-emu conectar")
+    os.close(leitor)
+    srv.shutdown()
     B.jogo(None)
 
     # ------------------------------------------------------------ saves na nuvem

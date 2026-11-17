@@ -90,12 +90,55 @@ EOF
         sed -i -e "s|^savefile_directory = .*|savefile_directory = \"$SKY/saves/ps1/disco/$DISCO\"|" \
                -e "s|^savestate_directory = .*|savestate_directory = \"$SKY/states/ps1/disco/$DISCO\"|" "$CFG"
     fi
+    # Fase 11.4: jogar junto pela SkyNetwork (netplay do RetroArch). Toda partida já sai pronta para
+    # abrir uma sala: o menu Home manda NETPLAY_HOST_TOGGLE e o sky-netplay acha a sala no lobby e
+    # manda o convite. A sala passa pela retransmissão de São Paulo (sem abrir porta no roteador) e
+    # tem senha aleatória: só quem recebeu o convite entra. Quem aceita um convite chega aqui com
+    # netplay-entrar.json (gravado pelo launcher) e conecta direto na sala do amigo.
+    NP_ARGS=()
+    case "$SYS" in ps1|snes|n64|nes|md|gba|gb)
+        NPDIR="${XDG_RUNTIME_DIR:-/tmp}/skystation"
+        mkdir -p "$NPDIR"
+        NP_NICK="SkyStation_$(tr -dc 'a-z0-9' </dev/urandom | head -c 8)"
+        NP_SENHA="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 12)"
+        NP_MITM=true; NP_ANUNCIO=true
+        ENTRAR="$NPDIR/netplay-entrar.json"
+        if [ -f "$ENTRAR" ] && [ $(( $(date +%s) - $(stat -c %Y "$ENTRAR") )) -lt 600 ]; then
+            SALA="$(python3 - "$ENTRAR" <<'PY'
+import json, re, sys
+d = json.load(open(sys.argv[1]))
+limpo = lambda v, pad: v if re.fullmatch(pad, str(v)) else ""
+print(limpo(d.get("ip", ""), r"[A-Za-z0-9.:-]{3,100}"), limpo(d.get("porta", ""), r"\d{1,5}"),
+      limpo(d.get("sessao", ""), r"[A-Za-z0-9+/=_-]{0,64}") or "-", limpo(d.get("senha", ""), r"[A-Za-z0-9]{0,32}") or "-")
+PY
+)"
+            rm -f "$ENTRAR"
+            read -r NP_IP NP_PORTA NP_SESSAO NP_SENHA_SALA <<<"$SALA"
+            if [ -n "$NP_IP" ] && [ -n "$NP_PORTA" ]; then
+                NP_ARGS=(-C "$NP_IP" --port "$NP_PORTA")
+                [ "$NP_SESSAO" != "-" ] && NP_ARGS+=("--mitm-session=$NP_SESSAO")
+                [ "$NP_SENHA_SALA" != "-" ] && NP_SENHA="$NP_SENHA_SALA"
+                NP_MITM=false; NP_ANUNCIO=false
+            fi
+        fi
+        cat >>"$CFG" <<EOF
+netplay_nickname = "$NP_NICK"
+netplay_password = "$NP_SENHA"
+netplay_use_mitm_server = "$NP_MITM"
+netplay_mitm_server = "saopaulo"
+netplay_public_announce = "$NP_ANUNCIO"
+netplay_start_as_spectator = "false"
+EOF
+        (umask 077; printf '{"nick": "%s", "senha": "%s", "sistema": "%s", "convidado": %s}\n' \
+            "$NP_NICK" "$NP_SENHA" "$SYS" "$([ ${#NP_ARGS[@]} -gt 0 ] && echo true || echo false)" >"$NPDIR/netplay.json")
+        ;;
+    esac
     # Canal de comandos só local (Fase 5.6): o menu Home escreve SAVE_STATE / LOAD_STATE aqui.
     # Aberto em leitura+escrita para o RetroArch nunca ver "fim de arquivo" na entrada.
     FIFO="${XDG_RUNTIME_DIR:-/tmp}/skystation/retroarch.cmd"
     mkdir -p "$(dirname "$FIFO")"
     rm -f "$FIFO" && mkfifo -m 600 "$FIFO" && exec 3<>"$FIFO"
-    exec retroarch --fullscreen --config "$CFG" -L "$CORE" "$ROM" <&3
+    exec retroarch --fullscreen --config "$CFG" "${NP_ARGS[@]}" -L "$CORE" "$ROM" <&3
     ;;
 ps2)
     PCSX2="/opt/pcsx2/AppRun"

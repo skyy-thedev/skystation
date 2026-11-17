@@ -139,6 +139,17 @@ No console:
   (`saves/x360`; na primeira vez copia os que já existiam). Só saves e o perfil do Xbox; DLC e
   atualizações de jogo ficam no console.
 
+## Jogar junto online (Fase 11.4)
+
+PS1, SNES, N64, NES, Mega Drive e Game Boy: o netplay do RetroArch com convite pela SkyNetwork.
+- **Quem convida:** com o jogo aberto, menu Home → Amigos → o amigo → **Jogar … junto, online**. O jogo
+  volta, a sala abre pela retransmissão de São Paulo (sem abrir porta no roteador) e o convite vai sozinho.
+- **Quem recebe:** aparece o aviso e, na categoria **SkyNetwork**, o item **Jogar junto: <jogo>**. A entra como
+  jogador 2. Precisa ter o **mesmo arquivo** do jogo (copie do amigo pela Central web) e o SkyStation atualizado.
+- A sala tem senha aleatória e só aparece no lobby do RetroArch para quem tem o convite entrar.
+- `sky-netplay hospedar|entrar|sala` faz o trabalho; o `sky-emu` deixa todo jogo de RetroArch pronto para virar sala.
+- PS1 e N64 podem perder a sincronia em alguns jogos (limitação dos núcleos); SNES, NES e Mega Drive são os mais estáveis.
+
 ## Patches automáticos do PS3 (Fase 8.3)
 
 Ao abrir um jogo de PS3, o `sky-ps3` baixa (1x por semana) a base oficial de patches do RPCS3 e liga
