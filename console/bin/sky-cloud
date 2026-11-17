@@ -12,6 +12,11 @@ Rede:
     sky-cloud convidar <perfilId>       chama o amigo para o jogo aberto agora
     sky-cloud lidas <perfilId>          marca como lidas as mensagens desse amigo
     sky-cloud conversa <perfilId>       as últimas mensagens trocadas com esse amigo (as duas direções)
+    sky-cloud conta                     a conta do perfil em uso (ID, ícone, visibilidade)
+    sky-cloud conta-criar <ID>          transforma o perfil em conta pessoal (senha em SKY_SENHA)
+    sky-cloud conta-entrar <ID>         o perfil em uso passa a ser essa conta (senha em SKY_SENHA)
+    sky-cloud conta-senha               define uma senha nova para a conta em uso (SKY_SENHA)
+    sky-cloud icone <id>|proximo        troca o ícone do perfil
     sky-cloud codigo-vinculo            gera um código (15 min) para usar ESTE perfil em outro console
     sky-cloud vincular <código>         o perfil em uso passa a ser o jogador daquele código
     sky-cloud desvincular               o perfil em uso volta a ser só deste console
@@ -29,6 +34,9 @@ os cartões do perfil sobem juntos, como uma unidade só. O Xbox 360 também: o 
 de todos os jogos sob o mesmo perfil de Xbox, então sobem juntos, mas só os saves (pastas
 00000001) e o perfil (FFFE07D1); DLC e atualizações de jogo ficam de fora. Antes de trocar um save local pelo da nuvem,
 o que estava no console é guardado em perfis/<perfil>/nuvem-antes/.
+
+A senha nunca vai na linha de comando (qualquer programa veria na lista de processos): vem da
+variável de ambiente SKY_SENHA.
 
 Toda resposta termina com uma linha JSON: {"ok": true/false, "message"/"error": "..."}.
 """
@@ -589,6 +597,57 @@ def main():
             corpo["sistema"] = ler("game.sys")
         st, r = api("POST", "/api/mensagens", corpo, perfil=perfil, cfg=cfg)
         return simples(st, r, "Convite enviado")
+    if c == "conta":
+        cfg, perfil = exigir_rede()
+        st, r = api("GET", "/api/conta", perfil=perfil, cfg=cfg)
+        if st != 200:
+            return saida({"ok": False, "error": skynet.mensagem(r)})
+        return saida({"ok": True, **r.get("conta", {}), "site": skynet.url_base(cfg)})
+    if c in ("conta-criar", "conta-entrar", "conta-senha"):
+        cfg, perfil = exigir_rede()
+        senha = os.environ.get("SKY_SENHA", "")
+        if len(senha) < 6:
+            return saida({"ok": False, "error": "A senha precisa de pelo menos 6 caracteres."})
+        if c == "conta-senha":
+            st, r = api("POST", "/api/conta/senha", {"senha": senha}, perfil=perfil, cfg=cfg)
+            return saida({"ok": st == 200, "message": "Senha trocada. Entre no site com a senha nova.",
+                          "error": "" if st == 200 else skynet.mensagem(r)})
+        if len(a) != 2:
+            return saida({"ok": False, "error": "Falta o ID SkyNetwork."})
+        usuario = a[1].strip().lower()
+        if c == "conta-criar":
+            st, r = api("POST", "/api/conta", {"usuario": usuario, "senha": senha}, perfil=perfil, cfg=cfg)
+            if st == 404 and r.get("erro") == "perfil_desconhecido":
+                skynet.enviar_perfis(cfg)
+                st, r = api("POST", "/api/conta", {"usuario": usuario, "senha": senha}, perfil=perfil, cfg=cfg)
+            if st != 201:
+                return saida({"ok": False, "error": skynet.mensagem(r)})
+            sincronizar_ja()
+            return saida({"ok": True, "usuario": usuario,
+                          "message": f"Conta @{usuario} criada! Entre no site com esse ID: {skynet.url_base(cfg)}"})
+        st, r = api("POST", "/api/perfis/entrar", {"localId": perfil, "usuario": usuario, "senha": senha}, cfg=cfg)
+        if st != 200:
+            return saida({"ok": False, "error": skynet.mensagem(r)})
+        gravar_estado({"unidades": {}, "conflitos": {}})      # saves agora comparam com a nuvem da conta
+        sincronizar_ja()
+        return saida({"ok": True, "usuario": r["perfil"]["usuario"],
+                      "message": f"Este perfil agora é a conta @{r['perfil']['usuario']}"})
+    if c == "icone" and len(a) == 2:
+        cfg, perfil = exigir_rede()
+        lista = [x["id"] for x in skynet.avatares()]
+        alvo = a[1]
+        if alvo == "proximo":
+            st, r = api("GET", "/api/conta", perfil=perfil, cfg=cfg)
+            atual = (r.get("conta") or {}).get("avatar", lista[0]) if st == 200 else lista[0]
+            alvo = lista[(lista.index(atual) + 1) % len(lista)] if atual in lista else lista[0]
+        if alvo not in lista:
+            return saida({"ok": False, "error": "Ícone desconhecido."})
+        st, r = api("PATCH", "/api/conta", {"avatar": alvo}, perfil=perfil, cfg=cfg)
+        if st != 200:
+            return saida({"ok": False, "error": skynet.mensagem(r)})
+        sincronizar_ja()
+        nome = next((x["nome"] for x in skynet.avatares() if x["id"] == alvo), alvo)
+        return saida({"ok": True, "avatar": alvo, "message": f"Ícone do perfil: {nome}"})
     if c == "codigo-vinculo":
         cfg, perfil = exigir_rede()
         st, r = api("POST", "/api/perfis/codigo", perfil=perfil, cfg=cfg)

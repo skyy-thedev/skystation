@@ -22,6 +22,7 @@ CONVITE = os.environ.get("SKY_CONVITE", "")
 RAIZ = tempfile.mkdtemp(prefix="skyteste-")
 passos = 0
 TOKENS = []
+CONTAS = []   # (ID, senha) criadas no teste: excluídas no fim pelo site
 
 
 def ok(cond, msg):
@@ -46,8 +47,11 @@ class Console:
         e = dict(os.environ, HOME=self.home, XDG_RUNTIME_DIR=os.path.join(self.home, "run"), SKY_REDE_URL=url)
         return e
 
-    def sky(self, *args, prog="sky-cloud", url=URL):
-        r = subprocess.run([sys.executable, os.path.join(BIN, prog), *args], env=self.env(url),
+    def sky(self, *args, prog="sky-cloud", url=URL, senha=None):
+        env = self.env(url)
+        if senha is not None:
+            env["SKY_SENHA"] = senha
+        r = subprocess.run([sys.executable, os.path.join(BIN, prog), *args], env=env,
                            capture_output=True, text=True, timeout=120)
         try:
             return json.loads(r.stdout.strip().splitlines()[-1])
@@ -258,6 +262,31 @@ try:
     ok(B.sky("desvincular")["ok"] and B.sky("estado")["eu"]["id"] == idB, "B desfaz o vínculo e volta ao próprio perfil")
     req = urllib.request.Request(URL + "/api/trofeus", headers={"Authorization": "Bearer " + B.token(), "X-Perfil": "p1"})
     ok(len(json.load(urllib.request.urlopen(req))["trofeus"]) == 1, "o troféu de B está no servidor")
+    # ------------------------------------------------------------ conta pessoal e ícone
+    import secrets
+    ID = "teste_" + secrets.token_hex(3)
+    ok(A.sky("conta")["usuario"] is None, "o perfil de A ainda não tem conta")
+    ok(A.sky("conta-criar", ID, senha="123")["ok"] is False, "senha curta é recusada")
+    ok(A.sky("conta-criar", ID)["ok"] is False, "sem senha é recusado")
+    r = A.sky("conta-criar", ID.upper(), senha="senha-do-A")
+    ok(r["ok"] and r["usuario"] == ID, "A cria a conta pessoal")
+    CONTAS.append([ID, "senha-do-A"])
+    ok(A.sky("conta-criar", ID + "x", senha="senha-do-A")["ok"] is False, "não cria duas contas no mesmo perfil")
+    ok(A.sky("icone", "cometa")["avatar"] == "cometa", "troca o ícone pelo nome")
+    ok(A.sky("icone", "proximo")["avatar"] != "cometa", "A no ícone passa para o próximo")
+    ok(A.sky("icone", "dragao")["ok"] is False, "ícone que não existe é recusado")
+    A.sky("icone", "robo")
+    ok(A.sky("uma-vez", prog="sky-net")["ok"] and A.net()["eu"]["avatar"] == "robo" and A.net()["eu"]["usuario"] == ID,
+       "o net.json leva ID e ícone (o launcher desenha)")
+    B.sky("uma-vez", prog="sky-net")
+    ok(B.net()["amigos"][0]["avatar"] == "robo", "o amigo B vê o ícone de A")
+    ok(B.sky("conta-entrar", ID, senha="errada!")["ok"] is False, "entrar com senha errada é recusado")
+    r = B.sky("conta-entrar", ID, senha="senha-do-A")
+    ok(r["ok"] and B.sky("estado")["eu"]["usuario"] == ID, "B entra com a conta de A (ID e senha)")
+    ok(B.sky("conta-senha", senha="senha-nova")["ok"], "o console troca a senha da conta (esqueci a senha)")
+    CONTAS[-1][1] = "senha-nova"
+    ok(B.sky("desvincular")["ok"] and B.sky("estado")["eu"]["id"] == idB, "B volta ao próprio perfil")
+
     ok(A.sky("sair")["ok"] and A.sky("estado")["conectado"] is False, "sair da rede")
     print(f"\nTudo certo: {passos} verificações.")
 except AssertionError as e:
@@ -270,4 +299,16 @@ finally:
                                                           headers={"Authorization": "Bearer " + tok}), timeout=20)
         except Exception:
             pass
+    for usuario, senha in CONTAS:   # contas sobrevivem ao console: exclui pelo site
+        try:
+            import http.cookiejar
+            jar = http.cookiejar.CookieJar()
+            op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+            cab = {"Content-Type": "application/json"}
+            op.open(urllib.request.Request(URL + "/api/web/entrar", data=json.dumps({"usuario": usuario, "senha": senha}).encode(),
+                                           headers=cab, method="POST"), timeout=20)
+            op.open(urllib.request.Request(URL + "/api/web/eu", data=json.dumps({"senha": senha}).encode(),
+                                           headers=cab, method="DELETE"), timeout=20)
+        except Exception as e:
+            print("aviso: não consegui excluir a conta de teste", usuario, e)
     shutil.rmtree(RAIZ, ignore_errors=True)
