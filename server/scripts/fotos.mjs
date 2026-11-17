@@ -19,7 +19,7 @@ const api = async (metodo, caminho, corpo, cab = {}) => {
 const s = randomBytes(2).toString("hex");
 const id = `sky_${s}`, idAmigo = `bart_${s}`;
 const tokens = [];
-const browser = await chromium.launch();
+const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
 try {
   const c1 = await api("POST", "/api/consoles", { nome: "Fotos 1", convite: CONVITE });
   const c2 = await api("POST", "/api/consoles", { nome: "Fotos 2", convite: CONVITE });
@@ -41,7 +41,16 @@ try {
     { trofeu: "primeira", nome: "Primeira partida", tipo: "bronze" },
     { trofeu: "colecionador", nome: "Colecionador", tipo: "prata" },
     { jogoId: "ps2-gow2", jogo: "God of War II", trofeu: "titan", nome: "Modo Titã", tipo: "platina" },
+    { jogoId: "ps2-sotc", jogo: "Shadow of the Colossus (USA)", trofeu: "colosso1", nome: "Primeiro colosso", tipo: "bronze" },
+    { jogoId: "ps1-crash", jogo: "Crash Bandicoot", trofeu: "gemas", nome: "Todas as gemas", tipo: "ouro" },
+    { jogoId: "n64-sm64", jogo: "Super Mario 64", trofeu: "estrelas", nome: "120 estrelas", tipo: "platina" },
   ] }, A);
+  // o amigo jogando outro jogo e com troféus próprios (página inicial com várias capas)
+  await api("POST", "/api/presenca", { status: "jogando", jogoId: "x360-halo3", jogo: "Halo 3", sistema: "x360" }, B);
+  await api("POST", "/api/trofeus", { trofeus: [
+    { jogoId: "x360-halo3", jogo: "Halo 3", trofeu: "lenda", nome: "Lendário", tipo: "ouro" },
+    { jogoId: "ps1-ff7", jogo: "Final Fantasy VII (Disc 1)", trofeu: "materia", nome: "Mestre das matérias", tipo: "prata" },
+  ] }, B);
 
   async function foto(nome, caminho, { largura = 1280, altura = 860, logado = false } = {}) {
     const ctx = await browser.newContext({ viewport: { width: largura, height: altura }, deviceScaleFactor: 1 });
@@ -61,6 +70,9 @@ try {
     await ctx.close();
   }
   await foto("inicio", "/");
+  await foto("inicio-logado", "/", { logado: true });
+  await foto("inicio-celular", "/", { largura: 390, altura: 844, logado: true });
+  await foto("jogo", "/jogo/ps2/ps2-gow2", { logado: true });
   await foto("entrar", "/entrar", { altura: 700 });
   await foto("criar-conta", "/criar-conta");
   await foto("perfil", `/u/${id}`, { logado: true });
