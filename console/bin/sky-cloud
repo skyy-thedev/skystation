@@ -11,6 +11,7 @@ Rede:
     sky-cloud mensagem <perfilId> <texto>     manda uma mensagem a um amigo
     sky-cloud convidar <perfilId>       chama o amigo para o jogo aberto agora
     sky-cloud lidas <perfilId>          marca como lidas as mensagens desse amigo
+    sky-cloud conversa <perfilId>       as últimas mensagens trocadas com esse amigo (as duas direções)
     sky-cloud codigo-vinculo            gera um código (15 min) para usar ESTE perfil em outro console
     sky-cloud vincular <código>         o perfil em uso passa a ser o jogador daquele código
     sky-cloud desvincular               o perfil em uso volta a ser só deste console
@@ -24,7 +25,9 @@ Saves na nuvem (o sky-run chama sozinho):
 
 Como os saves são divididos: cada JOGO é uma unidade (PS1 e cartuchos: o arquivo de save do jogo;
 PS3: as pastas do código do jogo). O PS2 usa cartão de memória compartilhado entre os jogos, então
-os cartões do perfil sobem juntos, como uma unidade só. Antes de trocar um save local pelo da nuvem,
+os cartões do perfil sobem juntos, como uma unidade só. O Xbox 360 também: o Xenia guarda os saves
+de todos os jogos sob o mesmo perfil de Xbox, então sobem juntos, mas só os saves (pastas
+00000001) e o perfil (FFFE07D1); DLC e atualizações de jogo ficam de fora. Antes de trocar um save local pelo da nuvem,
 o que estava no console é guardado em perfis/<perfil>/nuvem-antes/.
 
 Toda resposta termina com uma linha JSON: {"ok": true/false, "message"/"error": "..."}.
@@ -50,6 +53,8 @@ SAVES = os.path.join(skynet.SKY, "saves")
 # Sistemas em que o emulador grava um arquivo de save com o nome do jogo (RetroArch).
 POR_ARQUIVO = {"ps1", "snes", "n64", "gba", "gb", "nes", "md", "nds"}
 LIMITE = 64 * 1024 * 1024
+# Xbox 360: tipos de conteúdo do Xenia que são save (00000001) ou o perfil do jogador (FFFE07D1).
+X360_PASTAS = ("00000001", "FFFE07D1")
 GUARDAR_ANTES = 10
 
 
@@ -93,6 +98,9 @@ def unidade(gid, titulo, cmd):
     if sis == "ps2":
         return {"chave": "ps2-cartoes", "sistema": "ps2", "titulo": "Cartões de memória do PS2",
                 "prefixos": ["ps2/"]}
+    if sis == "x360":
+        return {"chave": "x360-saves", "sistema": "x360", "titulo": "Saves do Xbox 360",
+                "prefixos": ["x360/"], "pastas": list(X360_PASTAS)}
     if sis in POR_ARQUIVO:
         if rom == "disco":
             serial = re.sub(r"[^A-Za-z0-9-]", "", t[3] if len(t) > 3 else "") or "disco"
@@ -129,12 +137,22 @@ def arquivos(u):
                 for d, _, fs in os.walk(p):
                     for f in fs:
                         out.add(os.path.relpath(os.path.join(d, f), base))
-    return sorted(r.replace(os.sep, "/") for r in out if not r.endswith(".tmp"))
+    lst = sorted(r.replace(os.sep, "/") for r in out if not r.endswith(".tmp"))
+    if u.get("pastas"):
+        lst = [r for r in lst if filtro_pastas(u, r)]
+    return lst
+
+
+def filtro_pastas(u, rel):
+    """Só caminhos que passam por uma das pastas permitidas (ex.: saves do Xbox, sem DLC)."""
+    return any(p in rel.split("/")[:-1] for p in u["pastas"])
 
 
 def pertence(u, rel):
     """Um caminho vindo de um .zip só é aceito se cair dentro da unidade (nada de ../ nem /etc)."""
     if rel.startswith("/") or "\\" in rel or ".." in rel.split("/") or rel.endswith("/"):
+        return False
+    if u.get("pastas") and not filtro_pastas(u, rel):
         return False
     return any(rel.startswith(p) for p in u["prefixos"])
 
@@ -244,13 +262,13 @@ def q(u):
 
 def anotar(est, u, versao, h, pendente=False):
     est["unidades"][u["chave"]] = {"versao": versao, "hash": h, "pendente": pendente, "sistema": u["sistema"],
-                                   "titulo": u["titulo"], "prefixos": u["prefixos"]}
+                                   "titulo": u["titulo"], "prefixos": u["prefixos"], "pastas": u.get("pastas", [])}
 
 
 def conflito(est, u, nuvem):
     novo = u["chave"] not in est["conflitos"]
     est["conflitos"][u["chave"]] = {"titulo": u["titulo"], "sistema": u["sistema"], "prefixos": u["prefixos"],
-                                    "nuvem": nuvem, "desde": int(time.time())}
+                                    "pastas": u.get("pastas", []), "nuvem": nuvem, "desde": int(time.time())}
     if novo:
         aviso("nuvem", f"Conflito de save em {u['titulo']}: escolha em Configurações → SkyNetwork", "alerta")
 
@@ -381,7 +399,8 @@ def cmd_pendentes():
     for chave, e in list(est["unidades"].items()):
         if not e.get("pendente") or chave in est["conflitos"]:
             continue
-        u = {"chave": chave, "sistema": e["sistema"], "titulo": e.get("titulo", chave), "prefixos": e["prefixos"]}
+        u = {"chave": chave, "sistema": e["sistema"], "titulo": e.get("titulo", chave), "prefixos": e["prefixos"],
+             "pastas": e.get("pastas", [])}
         res, _ = enviar(cfg, perfil, u, est)
         if res == "erro":
             break                                # sem internet de novo: tenta na próxima
@@ -400,7 +419,8 @@ def cmd_resolver(chave, lado):
         return saida({"ok": False, "error": "Não há conflito neste save."})
     if os.path.exists(os.path.join(skynet.RUN, "game.pid")):
         return saida({"ok": False, "error": "Feche o jogo antes de resolver o conflito."})
-    u = {"chave": chave, "sistema": c["sistema"], "titulo": c["titulo"], "prefixos": c["prefixos"]}
+    u = {"chave": chave, "sistema": c["sistema"], "titulo": c["titulo"], "prefixos": c["prefixos"],
+         "pastas": c.get("pastas", [])}
     perfil, _ = skynet.perfis()
     if lado == "nuvem":
         erro = baixar(cfg, perfil, u, est)
@@ -595,6 +615,13 @@ def main():
         skynet.enviar_perfis(cfg)
         sincronizar_ja()
         return saida({"ok": True, "message": "Vínculo desfeito: este perfil voltou a ser só deste console"})
+    if c == "conversa" and len(a) == 2:
+        cfg, perfil = exigir_rede()
+        from urllib.parse import quote
+        st, r = api("GET", "/api/mensagens?com=" + quote(a[1]), perfil=perfil, cfg=cfg)
+        if st != 200:
+            return saida({"ok": False, "error": skynet.mensagem(r)})
+        return saida({"ok": True, "mensagens": list(reversed(r.get("mensagens", [])))[-20:]})
     if c == "lidas" and len(a) == 2:
         cfg, perfil = exigir_rede()
         st, r = api("POST", "/api/mensagens/lidas", {"deId": a[1]}, perfil=perfil, cfg=cfg)

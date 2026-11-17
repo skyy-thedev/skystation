@@ -44,6 +44,35 @@ fi
 CAGE_OPTS="-m last"
 cage -h 2>&1 | grep -q -- "-m extend" || CAGE_OPTS=""
 
+# Fase 9.3: avisos por cima do jogo pedem o gamescope (o compositor do Steam Deck) no lugar do cage.
+# Liga/desliga em Sistema → "Avisos por cima do jogo" (arquivo ~/.config/skystation/compositor).
+# Plano B: se o gamescope sair com erro, a sessão volta sozinha para o cage (que já funcionava) e o
+# console fica no cage até ele ser ligado de novo pelo menu. O motivo fica em compositor.falhou.
+COMP_FILE="$HOME/.config/skystation/compositor"
+if [ "$(tr -d '[:space:]' 2>/dev/null <"$COMP_FILE")" = gamescope ]; then
+    if command -v gamescope >/dev/null 2>&1; then
+        echo "--- compositor: gamescope ---" >"$LOG"
+        t0=$(date +%s)
+        # Dentro do gamescope os programas abrem pelo X11 (Xwayland do próprio gamescope).
+        env -u WAYLAND_DISPLAY SKY_COMPOSITOR=gamescope SDL_VIDEODRIVER=x11 QT_QPA_PLATFORM=xcb GDK_BACKEND=x11 \
+            gamescope --xwayland-count 1 -- $APP >>"$LOG" 2>&1
+        code=$?
+        [ -w /mnt/skystation ] && cp "$LOG" /mnt/skystation/session.log 2>/dev/null
+        if [ $code -eq 0 ]; then
+            exit 0                     # saída normal (reiniciar a interface, atualizar): reabre no gamescope
+        fi
+        {
+            echo "$(date '+%d/%m %H:%M') o gamescope saiu com código $code depois de $(( $(date +%s) - t0 )) s"
+            tail -n 25 "$LOG"
+        } >"$HOME/.config/skystation/compositor.falhou"
+        echo "--- gamescope falhou (código $code): voltando ao cage ---" >>"$LOG"
+    else
+        echo "o gamescope não está instalado" >"$HOME/.config/skystation/compositor.falhou"
+    fi
+    echo cage >"$COMP_FILE"
+    cp -f "$LOG" "$LOG_DIR/gamescope.log" 2>/dev/null
+fi
+
 # Modo de vídeo (comando skystation-vm):
 #   auto     -> tenta a GPU; se o compositor cair nos primeiros 20 s, usa só CPU (pixman)
 #   hibrido  -> compositor na CPU, launcher e jogos na GPU (útil na VM com aceleração 3D)

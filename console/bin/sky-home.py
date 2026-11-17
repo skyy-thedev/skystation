@@ -24,6 +24,7 @@ Como o menu funciona por baixo:
 import glob
 import json
 import os
+import queue
 import re
 import select
 import shutil
@@ -62,6 +63,13 @@ CAT_NEXT = {E.BTN_TR, E.KEY_PAGEDOWN, E.KEY_E}
 SKY_BIN = os.path.dirname(os.path.abspath(__file__))
 ACCEPT = {E.BTN_SOUTH, E.KEY_ENTER, E.KEY_KPENTER, E.KEY_SPACE}
 BACK = {E.BTN_EAST, E.KEY_ESC, E.KEY_BACKSPACE, E.BTN_MODE, E.KEY_F12, E.BTN_START}
+SKY_CLOUD = os.path.join(SKY_BIN, "sky-cloud")
+RAPIDAS = ["Bora jogar?", "Entra aí!", "GG!", "Já volto", "Agora não dá"]
+# Teclado virtual (Fase 10): direcional só do controle e das setas; W/A/S/D de um teclado de verdade digitam
+KB_UP = {E.KEY_UP, E.BTN_DPAD_UP}
+KB_DOWN = {E.KEY_DOWN, E.BTN_DPAD_DOWN}
+KB_LEFT = {E.KEY_LEFT, E.BTN_DPAD_LEFT}
+KB_RIGHT = {E.KEY_RIGHT, E.BTN_DPAD_RIGHT}
 
 
 def log(msg):
@@ -153,6 +161,27 @@ def quando(t):
     return time.strftime("%d/%m %H:%M", time.localtime(float(t)))
 
 
+def marcar_menu(aberto):
+    p = os.path.join(RUN, "menu.aberto")
+    try:
+        if aberto:
+            open(p, "w").close()
+        elif os.path.exists(p):
+            os.remove(p)
+    except OSError:
+        pass
+
+
+def quando_iso(iso):
+    """'2026-11-17T10:37:39.716Z' -> 'agora', 'há 5 min', 'ontem 21:40'…"""
+    try:
+        import calendar
+        t = calendar.timegm(time.strptime(str(iso)[:19], "%Y-%m-%dT%H:%M:%S"))
+    except (ValueError, TypeError):
+        return ""
+    return quando(t)
+
+
 def status_info():
     """Bateria do console e dos controles, temperatura e hora, para o rodapé do menu."""
     info = {"hora": time.strftime("%H:%M")}
@@ -237,6 +266,10 @@ class Home:
         self.cats = []
         self.cat = 0
         self.info_at = 0.0
+        self.amigo = None       # Fase 10: conversa aberta (id do amigo) dentro da categoria Amigos
+        self.kb = None          # teclado virtual aberto (skyteclado.Teclado)
+        self.fila = queue.Queue()   # resultados das threads de rede, aplicados no laço principal
+        marcar_menu(False)      # sobra de uma sessão anterior que caiu com o menu aberto
 
     # ---------------------------------------------------------- dispositivos
     def scan(self):
@@ -291,6 +324,7 @@ class Home:
 
     def send_cats(self):
         self.send("cats " + json.dumps([{"id": c["id"], "title": c["title"], "icon": c["icon"],
+                                         "conversa": c.get("conversa"),
                                          "items": [dict(it, acao=a) for a, it in c["items"]]} for c in self.cats],
                                        ensure_ascii=False))
         self.send(f"sel {self.cat} {self.sel}")
@@ -314,18 +348,180 @@ class Home:
         ordem = {"jogando": 0, "online": 1, "ausente": 2, "offline": 3}
         estado = {"online": "Online", "ausente": "Ausente", "offline": "Offline"}
         items = []
+        novas = {}
+        for m in net.get("mensagens", []):
+            if not m.get("lida"):
+                de = str(m.get("de", {}).get("id", ""))
+                novas[de] = novas.get(de, 0) + 1
+        for m in reversed(net.get("mensagens", [])[-5:]):
+            if not m.get("lida"):
+                de = m.get("de", {})
+                items.append(("amigo", {"t": str(de.get("apelido", "?")) + ": " + str(m.get("texto", "")),
+                                        "sub": "A para responder", "fid": str(de.get("id", "")),
+                                        "nome": str(de.get("apelido", "?"))}))
         for a in sorted(net.get("amigos", []), key=lambda a: (ordem.get(a.get("status"), 9), a.get("apelido", ""))):
             if a.get("status") == "jogando":
                 sub = "Jogando " + str(a.get("jogo") or "") + (("  ·  " + str(a["sistema"]).upper()) if a.get("sistema") else "")
             else:
                 sub = estado.get(a.get("status"), "Offline")
-            items.append(info(str(a.get("apelido", "?")), sub))
-        for m in reversed(net.get("mensagens", [])[-5:]):
-            if not m.get("lida"):
-                items.append(info(str(m.get("de", {}).get("apelido", "?")) + ": " + str(m.get("texto", "")), "Mensagem"))
+            n = novas.get(str(a.get("id", "")), 0)
+            if n:
+                sub += f"  ·  {n} nova(s)"
+            items.append(("amigo", {"t": str(a.get("apelido", "?")), "sub": sub + "  ·  A para conversar",
+                                    "fid": str(a.get("id", "")), "nome": str(a.get("apelido", "?"))}))
         if not items:
             items = [info("Nenhum amigo ainda", "Adicione pelo código em Sistema → SkyNetwork")]
         return items
+
+    # ---------------------------------------------------------- conversa e teclado (Fase 10)
+    def cloud(self, *args, timeout=12):
+        """Roda o sky-cloud e devolve o JSON da última linha."""
+        try:
+            out = subprocess.run([sys.executable, SKY_CLOUD, *args], capture_output=True, text=True, timeout=timeout)
+            return json.loads(out.stdout.strip().splitlines()[-1])
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+            return {"ok": False, "error": "A SkyNetwork não respondeu"}
+
+    def em_thread(self, fn, depois):
+        """fn() roda numa thread (rede); depois(resultado) roda no laço principal."""
+        def run():
+            r = fn()
+            self.fila.put(lambda: depois(r))
+        threading.Thread(target=run, daemon=True).start()
+
+    def conversa_balao(self, msgs):
+        """As mensagens viram balões no painel à direita do menu (sky-overlay)."""
+        if msgs is None:
+            return [{"texto": "Carregando a conversa…", "sistema": True}]
+        if not msgs:
+            return [{"texto": "Nenhuma mensagem ainda. Diga oi!", "sistema": True}]
+        out = []
+        for m in msgs[-12:]:
+            txt = str(m.get("texto", ""))
+            if m.get("tipo") == "convite":
+                txt = "Convite: " + txt
+            out.append({"texto": txt, "minha": bool(m.get("minha")), "quando": quando_iso(m.get("enviadaEm"))})
+        return out
+
+    def conversa_items(self, fid, nome):
+        items = [("voltar_amigos", {"t": "Voltar aos amigos"})]
+        items.append(("escrever", {"t": "Escrever mensagem…", "sub": "Teclado na tela, com o controle"}))
+        for r in RAPIDAS:
+            items.append(("rapida", {"t": "Enviar: " + r, "texto": r}))
+        if self.menu_pid:
+            titulo = read(TITLE_FILE) or "este jogo"
+            items.append(("convidar", {"t": f"Convidar para {titulo}"}))
+        return items
+
+    def abrir_amigo(self, fid, nome):
+        self.amigo = (fid, nome)
+        k = self.cat_index("amigos")
+        self.cats[k]["items"] = self.conversa_items(fid, nome)
+        self.cats[k]["conversa"] = self.conversa_balao(None)
+        self.cats[k]["title"] = nome
+        self.items = self.cats[k]["items"]
+        self.sel = 1   # cai em "Escrever mensagem…"
+        self.send_cats()
+        self.carregar_conversa()
+
+    def carregar_conversa(self):
+        if not self.amigo:
+            return
+        fid, nome = self.amigo
+
+        def buscar():
+            r = self.cloud("conversa", fid)
+            self.cloud("lidas", fid, timeout=6)
+            return r
+
+        def mostrar(r):
+            if not self.menu or self.amigo != (fid, nome):
+                return
+            k = self.cat_index("amigos")
+            self.cats[k]["conversa"] = self.conversa_balao(r.get("mensagens", []) if r.get("ok") else [])
+            self.send_cats()
+            if not r.get("ok"):
+                self.send("msg " + r.get("error", "Não consegui abrir a conversa"))
+        self.em_thread(buscar, mostrar)
+
+    def fechar_amigo(self):
+        self.amigo = None
+        k = self.cat_index("amigos")
+        self.cats[k]["title"] = "Amigos"
+        self.cats[k].pop("conversa", None)
+        self.cats[k]["items"] = self.amigos_items()
+        if self.cat == k:
+            self.items = self.cats[k]["items"]
+            self.sel = 0
+        self.send_cats()
+
+    def enviar_mensagem(self, texto, convite=False):
+        if not self.amigo:
+            return
+        fid = self.amigo[0]
+        self.send("msg Enviando…")
+        args = ("convidar", fid) if convite else ("mensagem", fid, texto)
+
+        def depois(r):
+            play("salvo" if r.get("ok") else "alerta")
+            self.send("msg " + (r.get("message") if r.get("ok") else r.get("error", "Não consegui enviar")))
+            self.carregar_conversa()
+        self.em_thread(lambda: self.cloud(*args), depois)
+
+    def kb_abrir(self):
+        import skyteclado
+        self.kb = skyteclado.Teclado("Mensagem para " + (self.amigo[1] if self.amigo else ""))
+        self.kb_enviar_estado()
+
+    def kb_enviar_estado(self):
+        self.send("kb " + json.dumps(self.kb.estado(), ensure_ascii=False) if self.kb else "kb")
+
+    def kb_fechar(self):
+        self.kb = None
+        self.kb_enviar_estado()
+
+    def kb_key(self, code, shift=False):
+        import skyteclado
+        t = self.kb
+        if code in KB_UP:
+            t.mover(0, -1)
+        elif code in KB_DOWN:
+            t.mover(0, 1)
+        elif code in KB_LEFT:
+            t.mover(-1, 0)
+        elif code in KB_RIGHT:
+            t.mover(1, 0)
+        elif code == E.BTN_SOUTH:
+            t.apertar()
+        elif code == E.BTN_EAST:
+            if not t.apagar():
+                self.kb_fechar()            # B com o texto vazio: desiste
+                return
+        elif code == E.KEY_BACKSPACE:
+            t.apagar()
+        elif code in (E.BTN_NORTH, E.KEY_SPACE):
+            t.espaco()
+        elif code == E.BTN_WEST:
+            t.maiuscula()
+        elif code == E.BTN_SELECT:
+            t.pagina()
+        elif code in (E.BTN_START, E.KEY_ENTER, E.KEY_KPENTER):
+            t.enviar()
+        elif code in (E.BTN_MODE, E.KEY_ESC, E.KEY_F12):
+            self.kb_fechar()
+            return
+        else:
+            nome = E.KEY.get(code, "")
+            if isinstance(nome, list):
+                nome = nome[0]
+            t.digitar(skyteclado.tecla_fisica(str(nome), shift))
+        if t.enviado:
+            texto = t.texto
+            self.kb_fechar()
+            self.enviar_mensagem(texto)
+            return
+        play("navegar")
+        self.kb_enviar_estado()
 
     def notif_items(self):
         try:
@@ -345,12 +541,15 @@ class Home:
 
     def open_menu(self, pid, power=False, aba=""):
         log("menu de energia aberto" if power else "menu Home aberto")
+        self.amigo = None
+        self.kb = None
         self.menu_pid = pid
         self.menu, self.power = True, power
         if pid:
             signal_group(pid, signal.SIGSTOP)
         self.grab_all(True)
         self.ungrab_at = None
+        marcar_menu(True)        # o sky-toast (gamescope) esconde os avisos enquanto o menu está aberto
         title = read(TITLE_FILE)
         # foto da tela congelada: vira o fundo do menu e pode ser salva como captura
         shot = ""
@@ -428,6 +627,9 @@ class Home:
         pid = self.menu_pid
         self.menu_pid = None
         self.menu = self.power = False
+        self.amigo = None
+        self.kb = None
+        marcar_menu(False)
         if self.overlay:
             self.send("quit")
             try:
@@ -500,6 +702,18 @@ class Home:
             except Exception:
                 pass
             self.refresh_notifs("Notificações limpas")
+        elif action == "amigo":
+            it = self.items[self.sel][1]
+            if it.get("fid"):
+                self.abrir_amigo(it["fid"], it.get("nome", "Amigo"))
+        elif action == "voltar_amigos":
+            self.fechar_amigo()
+        elif action == "escrever":
+            self.kb_abrir()
+        elif action == "rapida":
+            self.enviar_mensagem(self.items[self.sel][1]["texto"])
+        elif action == "convidar":
+            self.enviar_mensagem("", convite=True)
         elif action == "trofeu":
             it = self.items[self.sel][1]
             self.send("msg " + (it["sub"] if it.get("ganho") else "Ainda não conquistado: " + it["sub"]))
@@ -523,13 +737,18 @@ class Home:
         self.send("msg " + msg)
 
     def set_cat(self, k):
+        if self.amigo:
+            self.fechar_amigo()           # sair da categoria Amigos fecha a conversa
         self.cat = k % len(self.cats)
         self.items = self.cats[self.cat]["items"]
         self.sel = 0
         play("navegar")
         self.send(f"sel {self.cat} {self.sel}")
 
-    def menu_key(self, code):
+    def menu_key(self, code, shift=False):
+        if self.kb is not None:
+            self.kb_key(code, shift)
+            return
         n = len(self.items)
         action = self.items[self.sel][0] if n else ""
         if code in NAV_UP and n:
@@ -556,7 +775,10 @@ class Home:
         elif code in ACCEPT and n:
             self.activate()
         elif code in BACK:
-            self.choose("resume")
+            if self.amigo and code in (E.BTN_EAST, E.KEY_ESC, E.KEY_BACKSPACE):
+                self.fechar_amigo()       # B dentro da conversa volta à lista de amigos
+            else:
+                self.choose("resume")
 
     def menu_abs(self, path, dev, ev):
         if ev.code in (E.ABS_HAT0Y, E.ABS_HAT0X):
@@ -614,11 +836,23 @@ class Home:
                             else:
                                 self.pressed[path].discard(ev.code)
                             if self.menu_open() and ev.value == 1:
-                                self.menu_key(ev.code)
+                                shift = bool(self.pressed[path] & {E.KEY_LEFTSHIFT, E.KEY_RIGHTSHIFT})
+                                self.menu_key(ev.code, shift)
                         elif ev.type == E.EV_ABS and self.menu_open():
                             self.menu_abs(path, dev, ev)
                 except OSError:
                     last_scan = 0.0
+
+            # resultados de rede (conversa carregada, mensagem enviada)
+            while True:
+                try:
+                    acao = self.fila.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    acao()
+                except Exception as e:      # nunca derruba o botão Home
+                    log(f"erro ao aplicar resultado: {e!r}")
 
             # Fase 8.1: deslize no touchpad (sky-notify) pede o menu já na aba Notificações
             pedido = os.path.join(RUN, "home.pedido")

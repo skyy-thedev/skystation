@@ -937,6 +937,7 @@ func _build_cats() -> void:
 		_act("Gestos no touchpad", _touch_txt(), "touchpad", "pad"),
 		_act("Este aparelho", _hw_txt(), "hwprofile", "info"),
 		_act("Medição de FPS", "Ligada: contador e log nos jogos" if _fps_on() else "Desligada", "fps", "gauge"),
+		_act("Avisos por cima do jogo", _overlay_txt(), "gamescope", "bell"),
 		_act("Informações do sistema", "Hardware e versão", "settings:3", "info"),
 		_act("Atualizar o SkyStation", _update_txt(), "update", "refresh"),
 	]
@@ -1035,6 +1036,8 @@ func _refresh_sys_items() -> void:
 					it["sub"] = "Ligados" if sounds_on else "Desligados"
 				"fps":
 					it["sub"] = "Ligada: contador e log nos jogos" if _fps_on() else "Desligada"
+				"gamescope":
+					it["sub"] = _overlay_txt()
 				"music":
 					it["sub"] = "Ligada" if music_on else "Desligada"
 				"power_info":
@@ -1149,6 +1152,8 @@ func _activate() -> void:
 				_write_text(conf_dir + "/sons.off", "1")
 		"fps":
 			_toggle_fps()
+		"gamescope":
+			_toggle_gamescope()
 		"update":
 			_start_update()
 		"rollback":
@@ -1271,6 +1276,32 @@ func _on_settings_closed() -> void:
 
 func _fps_on() -> bool:
 	return FileAccess.file_exists(conf_dir + "/mangohud.on")
+
+
+# Fase 9.3: avisos por cima do jogo = trocar o compositor cage pelo gamescope (vale ao reabrir)
+func _gamescope_on() -> bool:
+	return _read_text(conf_dir + "/compositor", "cage").strip_edges() == "gamescope"
+
+
+func _overlay_txt() -> String:
+	if OS.get_environment("SKY_COMPOSITOR") == "gamescope":
+		return "Ligado (gamescope). A desliga e reabre o menu"
+	if FileAccess.file_exists(conf_dir + "/compositor.falhou"):
+		return "O gamescope falhou ao abrir; voltou ao normal. A tenta de novo"
+	if not FileAccess.file_exists("/usr/bin/gamescope"):
+		return "Precisa do gamescope: use Atualizar o SkyStation com internet"
+	return "Desligado. A liga (experimental) e reabre o menu"
+
+
+func _toggle_gamescope() -> void:
+	var ligado: bool = OS.get_environment("SKY_COMPOSITOR") == "gamescope" or _gamescope_on()
+	if not ligado and not FileAccess.file_exists("/usr/bin/gamescope"):
+		_toast("Instale o gamescope: Sistema → Atualizar o SkyStation (com internet)", 4.0, "bell")
+		return
+	_write_text(conf_dir + "/compositor", "cage" if ligado else "gamescope")
+	DirAccess.remove_absolute(conf_dir + "/compositor.falhou")
+	busy_msg = "Voltando ao modo normal…" if ligado else "Reabrindo com o gamescope…"
+	quit_at = t + 1.2   # a sessão reabre sozinha com o compositor novo (e volta ao cage se ele falhar)
 
 
 func _toggle_fps() -> void:

@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""SkyStation: avisos por cima do jogo (Fase 9.3, só com o gamescope).
+
+Roda a sessão inteira (iniciado pelo sky-shell quando o compositor é o gamescope). Lê os mesmos
+avisos que o launcher mostra ($XDG_RUNTIME_DIR/skystation/events.jsonl: troféu, controle, bateria,
+amigo, mensagem, save na nuvem…) e, enquanto um jogo está aberto, desenha cada um num cartão no
+canto da tela, por 4 segundos, sem pausar o jogo e sem tirar o controle dele.
+
+Sem jogo aberto quem mostra os avisos é o próprio launcher; com o menu Home aberto, o menu.
+A janela é transparente e fica marcada como overlay do gamescope (skygamescope.marcar_overlay).
+
+    sky-toast                 fica rodando
+    sky-toast teste "texto"   escreve um aviso de teste no events.jsonl (aparece se um jogo estiver aberto)
+"""
+import json
+import math
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import skygamescope  # noqa: E402
+
+RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
+EVENTS = os.path.join(RUN, "events.jsonl")
+DURACAO = 4.0
+ENTRADA = 0.25
+# cor da bolinha à esquerda do aviso (o resto usa a cor do tema)
+OURO = (255, 205, 70)
+COR_TIPO = {"trofeu": OURO, "trofeu-amigo": OURO, "bateria": (255, 170, 90), "temperatura": (255, 170, 90)}
+CORES = {  # destaque de cada tema (o mesmo do launcher)
+    "noite": (79, 209, 255), "oceano": (95, 220, 255), "aurora": (84, 240, 184),
+    "crepusculo": (255, 122, 208), "brasa": (255, 154, 82), "grafite": (207, 216, 234),
+}
+
+
+def jogo_aberto():
+    try:
+        with open(os.path.join(RUN, "game.pid")) as f:
+            os.kill(int(f.read().strip()), 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def menu_aberto():
+    return os.path.exists(os.path.join(RUN, "menu.aberto"))
+
+
+def destaque():
+    try:
+        with open(os.path.expanduser("~/.config/skystation/tema")) as f:
+            k = f.read().strip()
+    except OSError:
+        k = ""
+    return CORES.get(k, CORES["noite"])
+
+
+def teste(texto):
+    os.makedirs(RUN, exist_ok=True)
+    with open(EVENTS, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"t": time.time(), "kind": "trofeu", "text": texto}, ensure_ascii=False) + "\n")
+    return 0
+
+
+def main():
+    if sys.argv[1:2] == ["teste"]:
+        return teste(" ".join(sys.argv[2:]) or "Teste de aviso por cima do jogo")
+    if not skygamescope.ativo():
+        print("sky-toast: só funciona dentro do gamescope", flush=True)
+        return 0
+    try:
+        import gi
+        gi.require_version("Gtk", "4.0")
+        gi.require_version("GdkX11", "4.0")
+        from gi.repository import GdkX11, GLib, Gtk
+    except (ImportError, ValueError) as e:
+        print(f"sky-toast: GTK 4 indisponível ({e}); avisos por cima do jogo desligados", flush=True)
+        return 0
+
+    estado = {"fila": [], "atual": None, "desde": 0.0, "pos": 0, "marcada": False}
+    try:
+        estado["pos"] = os.path.getsize(EVENTS)      # só avisos novos, não os da sessão inteira
+    except OSError:
+        pass
+
+    app = Gtk.Application(application_id="br.skystation.toast")
+
+    def ler_eventos():
+        try:
+            tam = os.path.getsize(EVENTS)
+        except OSError:
+            return
+        if tam < estado["pos"]:
+            estado["pos"] = 0                         # arquivo recriado
+        if tam == estado["pos"]:
+            return
+        with open(EVENTS, encoding="utf-8", errors="replace") as f:
+            f.seek(estado["pos"])
+            novos = f.read()
+            estado["pos"] = f.tell()
+        for linha in novos.splitlines():
+            try:
+                ev = json.loads(linha)
+            except ValueError:
+                continue
+            if jogo_aberto() and not menu_aberto() and ev.get("text"):
+                estado["fila"].append(ev)
+        del estado["fila"][:-5]                       # rajada de avisos: fica com os 5 últimos
+
+    def desenhar(_area, cr, w, h):
+        ev = estado["atual"]
+        if not ev:
+            return
+        t = time.monotonic() - estado["desde"]
+        k = min(1.0, t / ENTRADA, max(0.0, (DURACAO - t) / ENTRADA))
+        k = 1 - (1 - k) ** 3
+        s = h / 720
+        acc = [c / 255 for c in destaque()]
+        texto = str(ev.get("text", ""))[:90]
+        cr.select_font_face("DejaVu Sans", 0, 1)
+        cr.set_font_size(19 * s)
+        ext = cr.text_extents(texto)
+        bw = min(w * 0.6, ext.width + 84 * s)
+        bh = 62 * s
+        x = w - bw - 36 * s
+        y = 30 * s - (1 - k) * (bh + 40 * s)
+        r = bh / 2
+        cr.new_sub_path()
+        cr.arc(x + r, y + r, r, math.pi / 2, 3 * math.pi / 2)
+        cr.arc(x + bw - r, y + r, r, -math.pi / 2, math.pi / 2)
+        cr.close_path()
+        cr.set_source_rgba(0.02, 0.04, 0.09, 0.86 * k)
+        cr.fill_preserve()
+        cr.set_source_rgba(acc[0], acc[1], acc[2], 0.75 * k)
+        cr.set_line_width(max(1.0, 1.5 * s))
+        cr.stroke()
+        bola = [c / 255 for c in COR_TIPO.get(ev.get("kind", ""), destaque())]
+        cr.arc(x + 32 * s, y + bh / 2, 7 * s, 0, 2 * math.pi)
+        cr.set_source_rgba(bola[0], bola[1], bola[2], k)
+        cr.fill()
+        cr.rectangle(x, y, bw - 20 * s, bh)
+        cr.clip()
+        cr.set_source_rgba(0.95, 0.96, 1.0, k)
+        cr.move_to(x + 56 * s, y + bh / 2 + ext.height / 2 - 2 * s)
+        cr.show_text(texto)
+
+    def ativar(app):
+        win = Gtk.ApplicationWindow(application=app)
+        win.set_decorated(False)
+        win.set_can_focus(False)
+        css = Gtk.CssProvider()
+        css.load_from_data(b"window, window.background { background: transparent; }")
+        Gtk.StyleContext.add_provider_for_display(win.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        area = Gtk.DrawingArea()
+        area.set_draw_func(desenhar)
+        win.set_child(area)
+        win.fullscreen()
+
+        def marcar():
+            surf = win.get_surface()
+            if surf is not None and isinstance(surf, GdkX11.X11Surface):
+                estado["marcada"] = skygamescope.marcar_overlay(GdkX11.X11Surface.get_xid(surf))
+                print("sky-toast: overlay " + ("marcado" if estado["marcada"] else "NÃO marcado (xprop?)"), flush=True)
+            return False
+
+        def tique():
+            ler_eventos()
+            agora = time.monotonic()
+            if estado["atual"] and (agora - estado["desde"] > DURACAO or menu_aberto() or not jogo_aberto()):
+                estado["atual"] = None
+                area.queue_draw()
+            if not estado["atual"] and estado["fila"] and not menu_aberto():
+                estado["atual"] = estado["fila"].pop(0)
+                estado["desde"] = agora
+            if estado["atual"]:
+                area.queue_draw()
+                return True
+            return True
+
+        win.present()
+        GLib.timeout_add(300, marcar)
+        GLib.timeout_add(33, tique)       # ~30 quadros por segundo só enquanto há aviso na tela
+        print("sky-toast: iniciado", flush=True)
+
+    app.connect("activate", ativar)
+    return app.run([sys.argv[0]])
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)
