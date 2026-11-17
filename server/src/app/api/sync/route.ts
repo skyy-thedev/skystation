@@ -10,7 +10,7 @@ const entrada = z.object({
   desde: z.iso.datetime().optional(),
 });
 
-const perfilPublico = { id: true, apelido: true, cor: true } as const;
+const perfilPublico = { id: true, apelido: true, cor: true, avatar: true, usuario: true } as const;
 const comPresenca = { ...perfilPublico, invisivel: true, presenca: true } as const;
 
 /**
@@ -63,6 +63,8 @@ export const POST = rota(async (req) => {
       cor: perfil.cor,
       codigo: perfil.codigo,
       invisivel: perfil.invisivel,
+      usuario: perfil.usuario,
+      avatar: perfil.avatar,
     },
     amigos: aceitas.map((a) => ({
       amizadeId: a.id,

@@ -33,6 +33,33 @@ async function api(metodo, caminho, { token, perfil, corpo } = {}) {
 }
 
 const tokens = [];
+const contas = []; // [navegador, senha] para excluir no fim
+
+/** Um "navegador": guarda o cookie de sessão do site entre as chamadas. */
+function navegador() {
+  let cookie = "";
+  return async (metodo, caminho, corpo, extra = {}) => {
+    const r = await fetch(BASE + caminho, {
+      method: metodo,
+      redirect: "manual",
+      headers: {
+        ...(corpo !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...(cookie ? { Cookie: cookie } : {}),
+        ...extra,
+      },
+      body: corpo !== undefined ? JSON.stringify(corpo) : undefined,
+    });
+    const set = r.headers.get("set-cookie");
+    if (set) {
+      const m = /sky_sessao=([^;]*)/.exec(set);
+      if (m) cookie = m[1] ? `sky_sessao=${m[1]}` : "";
+    }
+    const texto = await r.text();
+    let dados = null;
+    try { dados = JSON.parse(texto); } catch {}
+    return { status: r.status, dados, texto, local: r.headers.get("location") };
+  };
+}
 try {
   console.log("Servidor: " + BASE);
   const saude = await api("GET", "/api/saude");
@@ -196,6 +223,97 @@ try {
   ok((await api("DELETE", "/api/perfis/vincular?localId=p2", { token: B.token })).status === 200, "B desfaz o vínculo");
   ok((await api("POST", "/api/sync", { ...A2, corpo: {} })).status === 404, "sem vínculo, o p2 de B não existe mais");
 
+  // ---------------------------------------------------------------- contas pessoais e site
+  const sufixo = randomBytes(3).toString("hex");
+  const idA = `sky_${sufixo}`, idB2 = `bart_${sufixo}`, idC = `novo_${sufixo}`;
+  const nA = navegador(), nB = navegador(), nC = navegador(), anonimo = navegador();
+  ok((await api("POST", "/api/conta", { ...A, corpo: { usuario: "A!", senha: "segredo1" } })).status === 400, "ID com caractere inválido = 400");
+  ok((await api("POST", "/api/conta", { ...A, corpo: { usuario: "admin", senha: "segredo1" } })).status === 409, "ID reservado = 409");
+  ok((await api("POST", "/api/conta", { ...A, corpo: { usuario: idA, senha: "123" } })).status === 400, "senha curta = 400");
+  const ca = await api("POST", "/api/conta", { ...A, corpo: { usuario: idA.toUpperCase(), senha: "segredo-A" } });
+  ok(ca.status === 201 && ca.dados.conta.usuario === idA && ca.dados.conta.avatar === "estrela", "o perfil de A vira conta (ID em minúsculas, ícone padrão)");
+  contas.push([nA, "segredo-A"]);
+  ok((await api("POST", "/api/conta", { ...A, corpo: { usuario: idA + "x", senha: "segredo-A" } })).status === 409, "um perfil só tem uma conta");
+  ok((await api("POST", "/api/conta", { ...B, corpo: { usuario: idA, senha: "segredo-B" } })).status === 409, "ID já usado = 409");
+  ok((await api("POST", "/api/conta", { ...B, corpo: { usuario: idB2, senha: "segredo-B" } })).status === 201, "B também cria conta");
+  contas.push([nB, "segredo-B"]);
+
+  ok((await nA("POST", "/api/web/entrar", { usuario: idA, senha: "errada" })).status === 401, "site: senha errada = 401");
+  ok((await nA("GET", "/api/web/eu")).status === 401, "site: sem sessão = 401");
+  const la = await nA("POST", "/api/web/entrar", { usuario: idA.toUpperCase(), senha: "segredo-A" });
+  ok(la.status === 200, "site: A entra (ID sem diferenciar maiúsculas)");
+  const euA = await nA("GET", "/api/web/eu");
+  ok(euA.status === 200 && euA.dados.eu.usuario === idA && euA.dados.amigos.length === 1, "site: /api/web/eu traz a conta e os amigos");
+  await nB("POST", "/api/web/entrar", { usuario: idB2, senha: "segredo-B" });
+
+  ok((await nA("PATCH", "/api/web/eu", { avatar: "dragao" })).status === 400, "ícone que não existe = 400");
+  ok((await nA("PATCH", "/api/web/eu", { bio: "oi" }, { Origin: "https://site-malicioso.example" })).status === 403, "mudança vinda de outro site = 403");
+  const pa3 = await nA("PATCH", "/api/web/eu", { avatar: "cometa", apelido: "Sky da Web", bio: "Jogo PS2 todo dia", visibilidade: "publico" });
+  ok(pa3.status === 200 && pa3.dados.eu.avatar === "cometa", "site: muda ícone, nome, bio e visibilidade");
+  await api("PUT", "/api/perfis", { token: A.token, corpo: { perfis: [{ localId: "p1", apelido: "Nome do console" }] } });
+  let sbx = await api("POST", "/api/sync", { ...B, corpo: {} });
+  const amigoA = sbx.dados.amigos.find((x) => x.id === idA_perfil());
+  function idA_perfil() { return euA.dados.eu.id; }
+  ok(amigoA && amigoA.avatar === "cometa" && amigoA.apelido === "Sky da Web" && amigoA.usuario === idA,
+     "no console de B, o amigo aparece com o ícone e o nome da conta (o console não sobrescreve)");
+  const pc = await api("PATCH", "/api/conta", { ...A, corpo: { avatar: "robo" } });
+  ok(pc.status === 200 && pc.dados.conta.avatar === "robo", "o console também troca o ícone");
+
+  // perfil no site: público, só amigos, privado, invisível
+  await api("POST", "/api/presenca", { ...A, corpo: { status: "jogando", jogoId: "ps2-gow2", jogo: "God of War II", sistema: "ps2" } });
+  let vp = await anonimo("GET", `/api/web/perfil/${idA}`);
+  ok(vp.status === 200 && vp.dados.completo && vp.dados.jogo === "God of War II" && vp.dados.trofeus.total === 0 && vp.dados.amigos.length === 1,
+     "público: qualquer um vê status, jogo, troféus e amigos");
+  let html = await anonimo("GET", `/u/${idA}`);
+  ok(html.status === 200 && html.texto.includes("Sky da Web") && html.texto.includes("God of War II") && html.texto.includes("/avatares/robo.svg"),
+     "a página do perfil no site mostra nome, jogo e ícone");
+  await nA("PATCH", "/api/web/eu", { invisivel: true });
+  vp = await anonimo("GET", `/api/web/perfil/${idA}`);
+  ok(vp.dados.status === "offline" && vp.dados.jogo === null, "invisível: ninguém vê o que está jogando");
+  ok((await nA("GET", `/api/web/perfil/${idA}`)).dados.status === "jogando", "…menos o próprio dono");
+  await nA("PATCH", "/api/web/eu", { invisivel: false, visibilidade: "amigos" });
+  vp = await anonimo("GET", `/api/web/perfil/${idA}`);
+  ok(vp.dados.completo === false && vp.dados.bio === undefined && vp.dados.apelido === "Sky da Web", "só amigos: visitante vê só nome e ícone");
+  ok((await nB("GET", `/api/web/perfil/${idA}`)).dados.completo === true, "só amigos: o amigo B vê tudo");
+  await nA("PATCH", "/api/web/eu", { visibilidade: "privado" });
+  ok((await nB("GET", `/api/web/perfil/${idA}`)).dados.completo === false, "privado: nem o amigo vê");
+  ok((await nA("GET", `/api/web/perfil/${idA}`)).dados.completo === true, "privado: o dono vê");
+  html = await anonimo("GET", `/u/${idA}`);
+  ok(html.status === 200 && html.texto.includes("Este perfil é privado") && !html.texto.includes("God of War II"), "a página respeita o privado");
+  ok((await anonimo("GET", `/u/ninguem_${sufixo}`)).status === 404, "perfil que não existe = 404");
+  ok((await anonimo("GET", "/")).status === 200 && (await anonimo("GET", "/entrar")).status === 200, "página inicial e de entrar no ar");
+  const conta = await anonimo("GET", "/conta");
+  ok([303, 307, 308].includes(conta.status) && (conta.local || "").includes("/entrar"), "/conta sem login manda para /entrar");
+  ok((await nA("GET", "/conta")).texto.includes(idA), "/conta logado mostra a conta");
+
+  // criar conta pelo site e entrar com ela num console
+  ok((await nC("POST", "/api/web/registrar", { usuario: idC, senha: "segredo-C", apelido: "Caio", convite: "errado" })).status === 403, "site: convite errado = 403");
+  const rc = await nC("POST", "/api/web/registrar", { usuario: idC, senha: "segredo-C", apelido: "Caio", avatar: "raposa", convite: CONVITE.toUpperCase() });
+  ok(rc.status === 201 && (await nC("GET", "/api/web/eu")).dados.eu.avatar === "raposa", "site: cria conta sem console e já fica logado");
+  contas.push([nC, "segredo-C"]);
+  ok((await anonimo("POST", "/api/web/registrar", { usuario: idC, senha: "x123456", apelido: "X", convite: CONVITE })).status === 409, "site: ID repetido = 409");
+  ok((await api("POST", "/api/perfis/entrar", { token: B.token, corpo: { localId: "p3", usuario: idC, senha: "errada1" } })).status === 401, "console: senha errada = 401");
+  const ent = await api("POST", "/api/perfis/entrar", { token: B.token, corpo: { localId: "p3", usuario: idC, senha: "segredo-C" } });
+  ok(ent.status === 200 && ent.dados.perfil.usuario === idC, "console B entra com a conta criada no site (perfil p3)");
+  const euB3 = await api("GET", "/api/eu", { token: B.token });
+  ok(euB3.dados.perfis.some((x) => x.localId === "p3" && x.vinculado && x.usuario === idC && x.avatar === "raposa"), "o p3 de B agora é a conta do site");
+  ok((await api("POST", "/api/sync", { token: B.token, perfil: "p3", corpo: {} })).dados.eu.usuario === idC, "e sincroniza como ela");
+
+  // senhas
+  ok((await nA("POST", "/api/web/senha", { atual: "errada", nova: "nova-senha-A" })).status === 401, "trocar senha com a atual errada = 401");
+  ok((await nA("POST", "/api/web/senha", { atual: "segredo-A", nova: "nova-senha-A" })).status === 200, "trocar senha pelo site");
+  ok((await api("POST", "/api/conta/senha", { ...A, corpo: { senha: "pelo-console" } })).status === 200, "esqueci a senha: o console define outra");
+  ok((await nA("GET", "/api/web/eu")).status === 401, "trocar pelo console encerra as sessões do site");
+  ok((await nA("POST", "/api/web/entrar", { usuario: idA, senha: "pelo-console" })).status === 200, "entra com a senha nova");
+  contas[0][1] = "pelo-console";
+
+  // bloqueio depois de 5 erros (na conta C, que é só de teste)
+  for (let i = 0; i < 5; i++) await anonimo("POST", "/api/web/entrar", { usuario: idC, senha: "errada" + i });
+  ok((await anonimo("POST", "/api/web/entrar", { usuario: idC, senha: "segredo-C" })).status === 429, "5 senhas erradas bloqueiam por 15 minutos");
+
+  // excluir conta
+  ok((await nB("DELETE", "/api/web/eu", { senha: "errada" })).status === 401, "excluir conta pede a senha certa");
+
   // ---------------------------------------------------------------- desfazer amizade
   ok((await api("DELETE", `/api/amigos/${ped.dados.amizadeId}`, { ...B })).status === 200, "B desfaz a amizade");
   sa = await api("POST", "/api/sync", { ...A, corpo: {} });
@@ -205,6 +323,12 @@ try {
   process.exitCode = 1;
 } finally {
   for (const token of tokens) await api("DELETE", "/api/eu", { token });
+  // contas pessoais sobrevivem ao console: exclui pelo site (a C está bloqueada, então espera o
+  // bloqueio só se precisar; ela ainda tem a sessão aberta da criação)
+  for (const [nav, senha] of contas) {
+    const r = await nav("DELETE", "/api/web/eu", { senha });
+    if (r.status !== 200 && r.status !== 401) console.error("aviso: não consegui excluir uma conta de teste", r.status, r.dados);
+  }
   if (tokens.length) {
     const r = await api("GET", "/api/eu", { token: tokens[0] });
     if (r.status !== 401) { console.error("FALHOU: console de teste não foi removido"); process.exitCode = 1; }

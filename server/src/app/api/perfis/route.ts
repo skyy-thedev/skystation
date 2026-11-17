@@ -42,9 +42,11 @@ export const PUT = rota(async (req) => {
       ...(p.cor ? { cor: p.cor } : {}),
       ...(p.invisivel !== undefined ? { invisivel: p.invisivel } : {}),
     };
-    const existe = await db.perfil.findUnique({ where: chave, select: { id: true } });
+    const existe = await db.perfil.findUnique({ where: chave, select: { id: true, usuario: true } });
     if (existe) {
-      await db.perfil.update({ where: chave, data: mudancas });
+      // Com conta pessoal, nome e cor são da conta (mudam pelo site ou pelo PATCH /api/conta).
+      const data = existe.usuario ? (p.invisivel !== undefined ? { invisivel: p.invisivel } : {}) : mudancas;
+      await db.perfil.update({ where: chave, data });
       continue;
     }
     // Código de amigo: sorteia de novo se, por azar, já existir (o banco garante que é único).

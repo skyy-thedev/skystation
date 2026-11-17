@@ -20,6 +20,8 @@ export const GET = rota(async (req: NextRequest) => {
     where: { enviadaEm: { lt: new Date(agora - 90 * DIA) } },
   });
 
+  const sessoes = await db.sessao.deleteMany({ where: { expira: { lt: new Date(agora) } } });
+
   const pendentes = await db.saveVersao.findMany({
     where: { confirmada: false, criadaEm: { lt: new Date(agora - DIA) } },
     select: { id: true, chave: true },
@@ -35,5 +37,5 @@ export const GET = rota(async (req: NextRequest) => {
     await db.saveVersao.deleteMany({ where: { id: { in: pendentes.map((v) => v.id) } } });
   }
 
-  return json({ ok: true, mensagensApagadas: mensagens.count, enviosPendentesApagados: pendentes.length, arquivos });
+  return json({ ok: true, mensagensApagadas: mensagens.count, sessoesVencidas: sessoes.count, enviosPendentesApagados: pendentes.length, arquivos });
 });

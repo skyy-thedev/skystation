@@ -42,6 +42,8 @@ type PerfilComPresenca = {
   id: string;
   apelido: string;
   cor: string;
+  avatar: string;
+  usuario: string | null;
   invisivel: boolean;
   presenca: {
     status: string;
@@ -55,7 +57,7 @@ type PerfilComPresenca = {
 
 /** O que um amigo pode ver de um perfil. Invisível aparece como offline, sem jogo. */
 export function vistoPorAmigos(p: PerfilComPresenca, agora = new Date()) {
-  const base = { id: p.id, apelido: p.apelido, cor: p.cor };
+  const base = { id: p.id, apelido: p.apelido, cor: p.cor, avatar: p.avatar, usuario: p.usuario };
   const pr = p.presenca;
   const offline = p.invisivel || !pr || agora.getTime() - pr.vistoEm.getTime() > OFFLINE_APOS_MS;
   if (offline) {
