@@ -1369,6 +1369,7 @@ func _update_done(code: int, out: String) -> void:
 # ---------------------------------------------------------------- painel de opções (Y / Start)
 
 func _toggle_panel() -> void:
+	confirm_delete = false   # 9.0: fechar a confirmação com B não pode deixar o próximo "Apagar" já confirmado
 	panel_open = not panel_open
 	if panel_open:
 		var it := _cur()
@@ -2032,7 +2033,18 @@ func _close_receive() -> void:
 
 func _run_job(args: Array, title: String) -> void:
 	if job_thread != null:
-		return
+		# Fase 9.0: antes, se a tarefa anterior não tivesse sido "recolhida" (o aviso de fim não chegou
+		# ou a leitura ficou presa), a próxima era ignorada em silêncio: apagar um segundo jogo só
+		# funcionava depois de reiniciar a interface. Agora uma tarefa que já deu o resultado não
+		# segura a próxima, e uma que ainda está rodando avisa em vez de sumir com o pedido.
+		if busy_msg != "":
+			_toast("Espere a tarefa atual terminar", 2.5, "drive")
+			return
+		if job_thread.is_alive():
+			bg_threads.append(job_thread)   # termina sozinha; é recolhida ao fechar a interface
+		else:
+			job_thread.wait_to_finish()
+		job_thread = null
 	var info := OS.execute_with_pipe(SKY_BIN + "/sky-jogos", PackedStringArray(args))
 	if info.is_empty():
 		_toast("Não consegui iniciar", 3.0, "drive")
@@ -2067,7 +2079,8 @@ func _on_job_line(line: String) -> void:
 		_reload_games()
 		_refresh_status()
 	elif str(ev.get("evento", "")) == "fim":
-		if job_thread != null:
+		# só recolhe a thread que de fato terminou (o "fim" de uma tarefa antiga não pode travar a nova)
+		if job_thread != null and not job_thread.is_alive():
 			job_thread.wait_to_finish()
 			job_thread = null
 		if busy_msg != "":

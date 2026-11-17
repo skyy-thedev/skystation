@@ -106,7 +106,23 @@ Dica: `.chd` ocupa bem menos que `.bin/.cue` (converta com o `chdman` no PC).
 A pasta `server/` é o servidor que os consoles acessam pela internet: saves na nuvem por perfil e
 por jogo (com 5 versões guardadas e aviso de conflito), amigos por código de 6 letras, quem está
 jogando o quê, mensagens, convites e troféus. Como colocar no ar e a lista de rotas:
-`server/README.md`. O lado do console (`sky-cloud` e `sky-net`) ainda não existe.
+`server/README.md`.
+
+No console:
+- **Entrar:** Configurações → SkyNetwork → digitar o código de convite. Aparece o seu código de
+  amigo (6 letras); passe para os amigos.
+- **Amigos:** categoria nova no menu principal e no menu Home dentro do jogo: quem está online, o que
+  está jogando, pedidos e mensagens novas. A em um amigo abre mensagens rápidas, teclado e opções.
+- **Saves na nuvem** (`sky-cloud`): ao abrir um jogo baixa o save se a nuvem tiver um mais novo; ao
+  fechar envia se mudou. PS1 e cartuchos: o save do jogo; PS2: os cartões de memória do perfil;
+  PS3: as pastas do código do jogo. Xbox 360 ainda não. Conflito (os dois consoles jogaram sem
+  sincronizar) nunca é resolvido sozinho: aparece em SkyNetwork para escolher. O save trocado
+  fica guardado em `perfis/<perfil>/nuvem-antes/`.
+- **Mesmo perfil em dois consoles:** SkyNetwork → "Usar este perfil em outro console" gera um código
+  de 8 letras (15 min, uso único); no outro console, "Já tenho perfil em outro console".
+- **Em segundo plano** (`sky-net`): sincroniza a cada 30 s e na hora em que um jogo abre/fecha; avisa
+  amigo online, amigo começou a jogar, mensagem, convite, pedido de amizade e troféu de amigo.
+- Teste do lado do console contra um servidor de verdade: `console/tests/teste-rede.py`.
 
 ## Patches automáticos do PS3 (Fase 8.3)
 
