@@ -156,6 +156,14 @@ def main():
         area = Gtk.DrawingArea()
         area.set_draw_func(desenhar)
         win.set_child(area)
+        # Tamanho da tela inteira já na criação: sem isso, onde ninguém atende o "tela cheia"
+        # (X11 sem gerenciador de janelas) a janela nasce pequena e o aviso cai fora dela.
+        try:
+            mon = win.get_display().get_monitors().get_item(0)
+            g = mon.get_geometry()
+            win.set_default_size(g.width, g.height)
+        except Exception:
+            win.set_default_size(1920, 1080)
         win.fullscreen()
 
         def marcar():
