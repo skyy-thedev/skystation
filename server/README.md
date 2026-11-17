@@ -17,8 +17,9 @@ armazenamento compatível com S3 (Cloudflare R2). Tudo cabe nos planos gratuitos
    token com permissão *Object Read & Write* nesse bucket. Anote o endpoint, o Access Key ID e o Secret.
 4. **Variáveis** (Settings → Environment Variables), conforme o `.env.example`:
    `SKY_CONVITE`, `CRON_SECRET`, `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`
-   (e `S3_REGION=auto`). Opcional, para capas e artes melhores nos jogos: `IGDB_CLIENT_ID` e
-   `IGDB_CLIENT_SECRET` (app grátis em dev.twitch.tv/console). Sem elas, as capas e os resumos vêm da Wikipédia.
+   (e `S3_REGION=auto`). Opcional, para capas e artes melhores nos jogos:
+   `IGDB_CLIENT_ID` e `IGDB_CLIENT_SECRET` (app grátis em dev.twitch.tv/console) e/ou `RAWG_API_KEY`
+   (chave grátis em rawg.io/apidocs). Sem elas, as capas e os resumos vêm só da Wikipédia.
 5. **Deploy.** Abra `https://<seu-projeto>.vercel.app/api/saude`: deve responder `"ok": true` e
    `"saves": true`.
 

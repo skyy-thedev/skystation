@@ -11,7 +11,7 @@ export function CartaoJogo({ item }: { item: ItemJogo }) {
   const rotulo = item.sistema === "sky" ? "" : nomeSistema(item.sistema);
   return (
     <Link href={item.href} className="cartao-jogo">
-      <Capa nome={item.info.nome} src={item.info.capa} sistema={rotulo} cor={CORES_SISTEMA[item.sistema] ?? "#1b3a6b"} />
+      <Capa nome={item.info.nome} src={item.info.capa ?? item.info.arte} sistema={rotulo} cor={CORES_SISTEMA[item.sistema] ?? "#1b3a6b"} />
       <div className="cartao-jogo-texto">
         {item.trofeu ? (
           <>

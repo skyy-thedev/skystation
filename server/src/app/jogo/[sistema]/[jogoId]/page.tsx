@@ -40,7 +40,7 @@ export default async function Jogo(props: Props) {
   const { info } = j;
   const fonte = info.link ? (
     <a href={info.link} target="_blank" rel="noreferrer noopener">
-      {info.fonte === "igdb" ? "IGDB" : "Wikipédia"}
+      {info.fonte === "igdb" ? "IGDB" : info.fonte === "rawg" ? "RAWG" : "Wikipédia"}
     </a>
   ) : null;
 

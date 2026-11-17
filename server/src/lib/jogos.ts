@@ -5,8 +5,12 @@ import { unstable_cache } from "next/cache";
 // Fontes, nesta ordem:
 //   1. IGDB (base de jogos da Twitch): capa, arte larga para o banner, ano, gêneros e resumo em inglês.
 //      Só entra se IGDB_CLIENT_ID e IGDB_CLIENT_SECRET estiverem configurados (app grátis em dev.twitch.tv).
-//   2. Wikipédia em português: resumo em português e a imagem da página (quase sempre a capa).
-//   3. Wikipédia em inglês: o mesmo, quando não há página em português.
+//   2. RAWG (rawg.io): arte larga para o banner, ano, gêneros e resumo em inglês.
+//      Só entra se RAWG_API_KEY estiver configurada (chave grátis em rawg.io/apidocs).
+//   3. Wikipédia em português: resumo em português e a imagem da página (quase sempre a capa).
+//   4. Wikipédia em inglês: o mesmo, quando não há página em português.
+// As fontes se completam: capa em pé da IGDB ou da Wikipédia, arte larga da IGDB ou da RAWG,
+// resumo em português da Wikipédia quando existe.
 // Sem nada encontrado, o site mostra uma capa gerada (cor do sistema + nome).
 
 export const SISTEMAS: Record<string, string> = {
@@ -21,14 +25,14 @@ export const CORES_SISTEMA: Record<string, string> = {
   gba: "#4b3d9e", gb: "#7d8b4a", nes: "#b23a3a", md: "#1b1b1b",
 };
 
-// nomes que a Wikipédia e a IGDB usam para cada sistema (ajudam a achar o jogo certo)
-const PLATAFORMA: Record<string, { igdb: number; wiki: string }> = {
-  ps1: { igdb: 7, wiki: "PlayStation" }, ps2: { igdb: 8, wiki: "PlayStation 2" }, ps3: { igdb: 9, wiki: "PlayStation 3" },
-  psp: { igdb: 38, wiki: "PlayStation Portable" }, vita: { igdb: 46, wiki: "PlayStation Vita" },
-  x360: { igdb: 12, wiki: "Xbox 360" }, snes: { igdb: 19, wiki: "Super Nintendo" }, n64: { igdb: 4, wiki: "Nintendo 64" },
-  gc: { igdb: 21, wiki: "GameCube" }, wii: { igdb: 5, wiki: "Wii" }, nds: { igdb: 20, wiki: "Nintendo DS" },
-  "3ds": { igdb: 37, wiki: "Nintendo 3DS" }, gba: { igdb: 24, wiki: "Game Boy Advance" }, gb: { igdb: 33, wiki: "Game Boy" },
-  nes: { igdb: 18, wiki: "Nintendo Entertainment System" }, md: { igdb: 29, wiki: "Mega Drive" },
+// ids e nomes que a IGDB, a RAWG e a Wikipédia usam para cada sistema (ajudam a achar o jogo certo)
+const PLATAFORMA: Record<string, { igdb: number; rawg?: number; wiki: string }> = {
+  ps1: { igdb: 7, rawg: 27, wiki: "PlayStation" }, ps2: { igdb: 8, rawg: 15, wiki: "PlayStation 2" }, ps3: { igdb: 9, rawg: 16, wiki: "PlayStation 3" },
+  psp: { igdb: 38, rawg: 17, wiki: "PlayStation Portable" }, vita: { igdb: 46, rawg: 19, wiki: "PlayStation Vita" },
+  x360: { igdb: 12, rawg: 14, wiki: "Xbox 360" }, snes: { igdb: 19, rawg: 79, wiki: "Super Nintendo" }, n64: { igdb: 4, rawg: 83, wiki: "Nintendo 64" },
+  gc: { igdb: 21, rawg: 105, wiki: "GameCube" }, wii: { igdb: 5, rawg: 11, wiki: "Wii" }, nds: { igdb: 20, rawg: 9, wiki: "Nintendo DS" },
+  "3ds": { igdb: 37, rawg: 8, wiki: "Nintendo 3DS" }, gba: { igdb: 24, rawg: 24, wiki: "Game Boy Advance" }, gb: { igdb: 33, rawg: 26, wiki: "Game Boy" },
+  nes: { igdb: 18, rawg: 49, wiki: "Nintendo Entertainment System" }, md: { igdb: 29, rawg: 167, wiki: "Mega Drive" },
 };
 
 export type InfoJogo = {
@@ -38,7 +42,7 @@ export type InfoJogo = {
   resumo: string | null;
   ano: number | null;
   generos: string[];
-  fonte: "igdb" | "wikipedia" | null;
+  fonte: "igdb" | "rawg" | "wikipedia" | null;
   link: string | null; // página de onde veio o resumo
 };
 
@@ -122,6 +126,37 @@ async function buscarIgdb(nome: string, sistema: string): Promise<Partial<InfoJo
   };
 }
 
+// ---------------------------------------------------------------- RAWG
+
+type JogoRawg = { id: number; slug: string; name: string; released?: string | null; background_image?: string | null; genres?: { name: string }[] };
+
+async function buscarRawg(nome: string, sistema: string): Promise<Partial<InfoJogo> | null> {
+  const chave = process.env.RAWG_API_KEY;
+  if (!chave) return null;
+  const plat = PLATAFORMA[sistema]?.rawg;
+  const pedir = (comPlataforma: boolean) => {
+    const q = new URLSearchParams({ key: chave, search: nome, page_size: "5", search_precise: "true" });
+    if (comPlataforma && plat) q.set("platforms", String(plat));
+    return json(`https://api.rawg.io/api/games?${q}`).then((d) => (d.results ?? []) as JogoRawg[]);
+  };
+  let lista = await pedir(true);
+  if (!lista.length) lista = await pedir(false);
+  const alvo = normalizar(nome);
+  const j = lista.find((x) => normalizar(x.name) === alvo) ?? lista.find((x) => parecenca(x.name, alvo) > 0);
+  if (!j) return null;
+  // o resumo só vem no detalhe do jogo
+  const det = await json(`https://api.rawg.io/api/games/${j.id}?${new URLSearchParams({ key: chave })}`).catch(() => null);
+  return {
+    nome: j.name,
+    arte: j.background_image ?? null,
+    resumo: det?.description_raw ? resumir(det.description_raw) : null,
+    ano: j.released ? Number(j.released.slice(0, 4)) : null,
+    generos: (j.genres ?? []).map((g) => g.name).slice(0, 3),
+    link: `https://rawg.io/games/${j.slug}`,
+    fonte: "rawg",
+  };
+}
+
 // ---------------------------------------------------------------- Wikipédia
 
 const PALAVRAS_JOGO = /jogo|videogame|video game|vídeo game|eletrônico|electronic game/i;
@@ -184,25 +219,31 @@ function parecenca(titulo: string, alvo: string) {
 async function montar(nome: string, sistema: string): Promise<InfoJogo> {
   let falhas = 0;
   const seguro = <T,>(p: Promise<T>) => p.catch(() => { falhas++; return null; });
-  const [igdb, pt] = await Promise.all([seguro(buscarIgdb(nome, sistema)), seguro(buscarWikipedia(nome, sistema, "pt"))]);
-  const en = !pt && !igdb?.resumo ? await seguro(buscarWikipedia(nome, sistema, "en")) : null;
+  const [igdb, rawg, pt] = await Promise.all([
+    seguro(buscarIgdb(nome, sistema)),
+    seguro(buscarRawg(nome, sistema)),
+    seguro(buscarWikipedia(nome, sistema, "pt")),
+  ]);
+  const precisaEn = !pt && !igdb?.resumo && !rawg?.resumo;
+  const en = precisaEn || (!igdb?.capa && !pt?.capa) ? await seguro(buscarWikipedia(nome, sistema, "en")) : null;
   // tudo deu erro de rede: não guarda o "nada" no cache por 7 dias (tenta de novo na próxima visita)
-  if (!igdb && !pt && !en && falhas >= 2) throw new Error("sem acesso às fontes de jogos");
-  const wiki = pt ?? en;
+  if (!igdb && !rawg && !pt && !en && falhas >= 2) throw new Error("sem acesso às fontes de jogos");
+  const base = igdb ?? rawg; // as bases de jogos acertam melhor o nome, o ano e os gêneros
+  const resumo = pt?.resumo ?? igdb?.resumo ?? rawg?.resumo ?? en?.resumo ?? null;
+  const fonte = pt?.resumo ? pt : igdb?.resumo ? igdb : rawg?.resumo ? rawg : en ?? base ?? null;
   return {
-    nome: igdb?.nome ?? nome,
-    capa: igdb?.capa ?? wiki?.capa ?? null,
-    arte: igdb?.arte ?? null,
-    // resumo em português primeiro
-    resumo: pt?.resumo ?? igdb?.resumo ?? en?.resumo ?? null,
-    ano: igdb?.ano ?? wiki?.ano ?? null,
-    generos: igdb?.generos ?? [],
-    fonte: pt ? "wikipedia" : igdb ? "igdb" : en ? "wikipedia" : null,
-    link: pt?.link ?? igdb?.link ?? en?.link ?? null,
+    nome: base?.nome ?? nome,
+    capa: igdb?.capa ?? pt?.capa ?? en?.capa ?? null,
+    arte: igdb?.arte ?? rawg?.arte ?? null,
+    resumo,
+    ano: base?.ano ?? pt?.ano ?? en?.ano ?? null,
+    generos: igdb?.generos?.length ? igdb.generos : rawg?.generos ?? [],
+    fonte: (fonte?.fonte as InfoJogo["fonte"]) ?? null,
+    link: fonte?.link ?? null,
   };
 }
 
-const emCache = unstable_cache(montar, ["sky-jogo-v1"], { revalidate: 7 * 24 * 60 * 60, tags: ["jogos"] });
+const emCache = unstable_cache(montar, ["sky-jogo-v2"], { revalidate: 7 * 24 * 60 * 60, tags: ["jogos"] });
 
 const VAZIO = (nome: string): InfoJogo => ({
   nome, capa: null, arte: null, resumo: null, ano: null, generos: [], fonte: null, link: null,
