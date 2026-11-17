@@ -74,6 +74,7 @@ def main():
         gi.require_version("Gtk", "4.0")
         gi.require_version("GdkX11", "4.0")
         from gi.repository import GdkX11, GLib, Gtk
+        gi.require_foreign("cairo")     # o desenho usa Cairo pelo pycairo (pacote python-cairo)
     except (ImportError, ValueError) as e:
         print(f"sky-toast: GTK 4 indisponível ({e}); avisos por cima do jogo desligados", flush=True)
         return 0

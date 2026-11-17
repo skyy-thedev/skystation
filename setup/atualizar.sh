@@ -161,8 +161,8 @@ if [ -d /run/systemd/system ]; then
 fi
 
 # Fase 9.3: avisos por cima do jogo usam o gamescope (o compositor do Steam Deck) e o xprop (marca a
-# janela de aviso como overlay). Só instala; quem liga é o menu (Sistema → Avisos por cima do jogo).
-for p in gamescope xorg-xprop; do
+# janela de aviso como overlay); o python-cairo desenha o aviso. Só instala; quem liga é o menu (Sistema → Avisos por cima do jogo).
+for p in gamescope xorg-xprop python-cairo; do
     pacman -Q "$p" >/dev/null 2>&1 && continue
     if ! timeout 600 pacman -S --needed --noconfirm "$p" >/dev/null 2>&1; then
         echo "    AVISO: não consegui instalar $p agora (sem internet?). Os avisos por cima do jogo ficam desligados."
