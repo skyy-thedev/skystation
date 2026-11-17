@@ -130,12 +130,11 @@
       "situacao": "perfeito"
     },
     {
-      "id": "snes-super-mario-all-stars",
-      "nome": "Super Mario All-Stars",
+      "id": "snes-super-mario-world",
+      "nome": "Super Mario World",
       "sistema": "snes",
-      "ano": 1993,
-      "situacao": "perfeito",
-      "nota": "Traz Super Mario Bros. 1, 2, 3 e The Lost Levels."
+      "ano": 1990,
+      "situacao": "perfeito"
     },
     {
       "id": "ps2-gta-san-andreas",
@@ -173,13 +172,6 @@
       "situacao": "perfeito"
     },
     {
-      "id": "ps2-pes-2013",
-      "nome": "Pro Evolution Soccer 2013",
-      "sistema": "ps2",
-      "ano": 2012,
-      "situacao": "jogavel"
-    },
-    {
       "id": "ps3-resident-evil-5",
       "nome": "Resident Evil 5",
       "sistema": "ps3",
@@ -210,6 +202,13 @@
       "ano": 2010,
       "situacao": "com-falhas",
       "nota": "Roda a ~30 FPS, mas cai nas lutas grandes; o notebook chega ao limite de temperatura."
+    },
+    {
+      "id": "ps3-pes-2013",
+      "nome": "Pro Evolution Soccer 2013",
+      "sistema": "ps3",
+      "ano": 2012,
+      "situacao": "jogavel"
     },
     {
       "id": "x360-metal-gear-rising",
