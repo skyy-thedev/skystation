@@ -4,9 +4,21 @@ name: Servidor (SkyNetwork)
 # um armazenamento S3 de mentira.
 on:
   push:
-    paths: ["server/**", ".github/workflows/servidor.yml"]
+    paths:
+      - "server/**"
+      - "console/bin/sky-cloud"
+      - "console/bin/sky-net"
+      - "console/bin/skynet.py"
+      - "console/tests/**"
+      - ".github/workflows/servidor.yml"
   pull_request:
-    paths: ["server/**", ".github/workflows/servidor.yml"]
+    paths:
+      - "server/**"
+      - "console/bin/sky-cloud"
+      - "console/bin/sky-net"
+      - "console/bin/skynet.py"
+      - "console/tests/**"
+      - ".github/workflows/servidor.yml"
 
 permissions:
   contents: read
@@ -69,6 +81,9 @@ jobs:
           curl -s http://localhost:3000/api/saude
       - name: Teste de ponta a ponta
         run: npm run teste
+      - name: Lado do console (sky-cloud e sky-net contra este servidor)
+        working-directory: .
+        run: SKY_REDE_URL=http://localhost:3000 python3 console/tests/teste-rede.py
       - name: Limpeza diária
         run: |
           test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/cron/limpeza)" = 401

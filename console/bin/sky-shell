@@ -30,8 +30,14 @@ RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}/skystation"
 if [ -f /opt/skystation/bin/sky-receber ]; then
     python3 /opt/skystation/bin/sky-receber servir >>"$LOG_DIR/central.log" 2>&1 &
 fi
+# Fase 10: SkyNetwork em segundo plano (amigos, presença, mensagens). Fora da rede ele só espera.
+NET_PID=""
+if [ -f /opt/skystation/bin/sky-net ]; then
+    python3 /opt/skystation/bin/sky-net >"$LOG_DIR/net.log" 2>&1 &
+    NET_PID=$!
+fi
 encerrar() {
-    kill "$HOME_PID" $NOTIFY_PID 2>/dev/null
+    kill "$HOME_PID" $NOTIFY_PID $NET_PID 2>/dev/null
     # a central pode ter sido ligada depois, pelo menu: encerra pelo PID que ela mesma anota
     CPID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("pid",""))' "$RUN_DIR/central.json" 2>/dev/null)"
     [ -n "$CPID" ] && kill "$CPID" 2>/dev/null

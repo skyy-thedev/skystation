@@ -1,19 +1,12 @@
-import { autenticar } from "@/lib/auth";
+import { autenticar, perfisDoConsole } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { json, rota } from "@/lib/http";
 import { apagar } from "@/lib/storage";
 
-const campos = { id: true, localId: true, apelido: true, cor: true, invisivel: true, codigo: true } as const;
-
 /** GET /api/eu — confere o token e lista os perfis deste console. */
 export const GET = rota(async (req) => {
   const console_ = await autenticar(req);
-  const perfis = await db.perfil.findMany({
-    where: { consoleId: console_.id },
-    orderBy: { localId: "asc" },
-    select: campos,
-  });
-  return json({ console: console_, perfis });
+  return json({ console: console_, perfis: await perfisDoConsole(console_.id) });
 });
 
 /** DELETE /api/eu — remove este console da rede, com perfis, amizades, mensagens e saves. */

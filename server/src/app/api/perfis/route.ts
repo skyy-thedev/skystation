@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { autenticar, novoCodigo } from "@/lib/auth";
+import { autenticar, novoCodigo, perfisDoConsole } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { corpo, Erro, json, rota } from "@/lib/http";
 
@@ -20,13 +20,22 @@ const entrada = z.object({
 /**
  * PUT /api/perfis — o console envia os perfis locais (do sky-perfis). Cria os novos e atualiza
  * apelido/cor/invisível dos que já existem. Perfis que sumiram do console NÃO são apagados
- * (os saves na nuvem continuam lá).
+ * (os saves na nuvem continuam lá). Num perfil vinculado (nascido em outro console) só o
+ * "invisível" muda por aqui: nome e cor são os do console de origem.
  */
 export const PUT = rota(async (req) => {
   const console_ = await autenticar(req);
   const { perfis } = await corpo(req, entrada);
 
+  const vinculos = await db.vinculo.findMany({ where: { consoleId: console_.id } });
   for (const p of perfis) {
+    const vinculo = vinculos.find((v) => v.localId === p.localId);
+    if (vinculo) {
+      if (p.invisivel !== undefined) {
+        await db.perfil.update({ where: { id: vinculo.perfilId }, data: { invisivel: p.invisivel } });
+      }
+      continue;
+    }
     const chave = { consoleId_localId: { consoleId: console_.id, localId: p.localId } };
     const mudancas = {
       apelido: p.apelido,
@@ -53,10 +62,5 @@ export const PUT = rota(async (req) => {
     }
   }
 
-  const lista = await db.perfil.findMany({
-    where: { consoleId: console_.id },
-    orderBy: { localId: "asc" },
-    select: { id: true, localId: true, apelido: true, cor: true, invisivel: true, codigo: true },
-  });
-  return json({ perfis: lista });
+  return json({ perfis: await perfisDoConsole(console_.id) });
 });

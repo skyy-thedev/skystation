@@ -1,0 +1,607 @@
+#!/usr/bin/env python3
+"""SkyStation: SkyNetwork e saves na nuvem (Fases 9.4 e 10).
+
+Rede:
+    sky-cloud estado                    situação: conectado? código de amigo, pedidos, conflitos
+    sky-cloud entrar <convite> [url]    registra este console na rede e envia os perfis
+    sky-cloud sair                      esquece o token (os saves continuam no console e na nuvem)
+    sky-cloud invisivel on|off          amigos não veem o que você joga
+    sky-cloud amigo <código>            pede amizade pelo código de 6 letras
+    sky-cloud aceitar|recusar <id>      responde a um pedido (ou desfaz uma amizade)
+    sky-cloud mensagem <perfilId> <texto>     manda uma mensagem a um amigo
+    sky-cloud convidar <perfilId>       chama o amigo para o jogo aberto agora
+    sky-cloud lidas <perfilId>          marca como lidas as mensagens desse amigo
+    sky-cloud codigo-vinculo            gera um código (15 min) para usar ESTE perfil em outro console
+    sky-cloud vincular <código>         o perfil em uso passa a ser o jogador daquele código
+    sky-cloud desvincular               o perfil em uso volta a ser só deste console
+
+Saves na nuvem (o sky-run chama sozinho):
+    sky-cloud nuvem on|off              liga/desliga a sincronização
+    sky-cloud antes <id> <título> <comando>    antes de abrir o jogo: baixa o save se a nuvem for mais nova
+    sky-cloud depois <id> <título> <comando>   depois de fechar: envia o save se mudou
+    sky-cloud pendentes                 tenta de novo os envios que ficaram sem internet
+    sky-cloud resolver <chave> nuvem|console   conflito: fica com o save da nuvem ou com o deste console
+
+Como os saves são divididos: cada JOGO é uma unidade (PS1 e cartuchos: o arquivo de save do jogo;
+PS3: as pastas do código do jogo). O PS2 usa cartão de memória compartilhado entre os jogos, então
+os cartões do perfil sobem juntos, como uma unidade só. Antes de trocar um save local pelo da nuvem,
+o que estava no console é guardado em perfis/<perfil>/nuvem-antes/.
+
+Toda resposta termina com uma linha JSON: {"ok": true/false, "message"/"error": "..."}.
+"""
+import hashlib
+import io
+import json
+import os
+import re
+import shlex
+import socket
+import sys
+import time
+import urllib.error
+import urllib.request
+import zipfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import skynet  # noqa: E402
+from skynet import api, aviso, saida  # noqa: E402
+
+SAVES = os.path.join(skynet.SKY, "saves")
+# Sistemas em que o emulador grava um arquivo de save com o nome do jogo (RetroArch).
+POR_ARQUIVO = {"ps1", "snes", "n64", "gba", "gb", "nes", "md", "nds"}
+LIMITE = 64 * 1024 * 1024
+GUARDAR_ANTES = 10
+
+
+def log(*a):
+    print(time.strftime("%H:%M:%S"), "sky-cloud:", *a, file=sys.stderr, flush=True)
+
+
+def pasta_saves():
+    """A pasta de saves de verdade (~/skystation/saves é um atalho para a do perfil em uso)."""
+    return os.path.realpath(SAVES)
+
+
+def arq_estado():
+    return os.path.join(os.path.dirname(pasta_saves()), "nuvem.json")
+
+
+def estado_local():
+    d = skynet.ler_json(arq_estado(), {})
+    if not isinstance(d, dict):
+        d = {}
+    d.setdefault("unidades", {})
+    d.setdefault("conflitos", {})
+    return d
+
+
+def gravar_estado(d):
+    skynet.gravar_json(arq_estado(), d)
+
+
+# ---------------------------------------------------------------- o que é "o save de um jogo"
+
+def unidade(gid, titulo, cmd):
+    """Descobre quais arquivos são o save deste jogo. None = jogo sem save sincronizável."""
+    try:
+        t = shlex.split(cmd)
+    except ValueError:
+        return None
+    if len(t) < 3 or os.path.basename(t[0]) != "sky-emu":
+        return None
+    sis, rom = t[1], t[2]
+    if sis == "ps2":
+        return {"chave": "ps2-cartoes", "sistema": "ps2", "titulo": "Cartões de memória do PS2",
+                "prefixos": ["ps2/"]}
+    if sis in POR_ARQUIVO:
+        if rom == "disco":
+            serial = re.sub(r"[^A-Za-z0-9-]", "", t[3] if len(t) > 3 else "") or "disco"
+            return {"chave": f"{sis}-disco-{serial}", "sistema": sis, "titulo": titulo,
+                    "prefixos": [f"{sis}/disco/{serial}/"]}
+        nome = os.path.splitext(os.path.basename(rom))[0]
+        if not nome:
+            return None
+        return {"chave": gid, "sistema": sis, "titulo": titulo, "prefixos": [f"{sis}/{nome}."]}
+    if sis == "ps3":
+        m = re.fullmatch(r"ps3-([A-Z]{4}\d{5})", gid)
+        if not m:
+            return None
+        return {"chave": gid, "sistema": "ps3", "titulo": titulo, "prefixos": [f"ps3/{m.group(1)}"]}
+    return None
+
+
+def arquivos(u):
+    """Caminhos (relativos à pasta de saves) dos arquivos da unidade, em ordem."""
+    base = pasta_saves()
+    out = set()
+    for pre in u["prefixos"]:
+        pasta = os.path.join(base, os.path.dirname(pre))
+        resto = os.path.basename(pre)           # "" quando o prefixo é uma pasta inteira
+        if not os.path.isdir(pasta):
+            continue
+        for nome in os.listdir(pasta):
+            if not nome.startswith(resto):
+                continue
+            p = os.path.join(pasta, nome)
+            if os.path.isfile(p):
+                out.add(os.path.relpath(p, base))
+            elif os.path.isdir(p) and not os.path.islink(p):
+                for d, _, fs in os.walk(p):
+                    for f in fs:
+                        out.add(os.path.relpath(os.path.join(d, f), base))
+    return sorted(r.replace(os.sep, "/") for r in out if not r.endswith(".tmp"))
+
+
+def pertence(u, rel):
+    """Um caminho vindo de um .zip só é aceito se cair dentro da unidade (nada de ../ nem /etc)."""
+    if rel.startswith("/") or "\\" in rel or ".." in rel.split("/") or rel.endswith("/"):
+        return False
+    return any(rel.startswith(p) for p in u["prefixos"])
+
+
+def hash_local(u, lst=None):
+    """sha256 do conteúdo (nomes + bytes). "" = não há save. Não depende de datas nem do .zip."""
+    lst = arquivos(u) if lst is None else lst
+    if not lst:
+        return ""
+    base = pasta_saves()
+    h = hashlib.sha256()
+    for rel in lst:
+        h.update(rel.encode() + b"\0")
+        try:
+            with open(os.path.join(base, rel), "rb") as f:
+                dados = f.read()
+        except OSError:
+            dados = b""
+        h.update(str(len(dados)).encode() + b"\0")
+        h.update(dados)
+    return h.hexdigest()
+
+
+def empacotar(u, lst):
+    base = pasta_saves()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+        for rel in lst:
+            z.write(os.path.join(base, rel), rel)
+    return buf.getvalue()
+
+
+def guardar_antes(u, lst):
+    """Cópia do save local antes de ser trocado pelo da nuvem (ficam as 10 mais recentes)."""
+    if not lst:
+        return
+    pasta = os.path.join(os.path.dirname(pasta_saves()), "nuvem-antes")
+    os.makedirs(pasta, exist_ok=True)
+    nome = re.sub(r"[^A-Za-z0-9._-]", "_", u["chave"])[:80] + time.strftime("-%Y%m%d-%H%M%S") + ".zip"
+    with open(os.path.join(pasta, nome), "wb") as f:
+        f.write(empacotar(u, lst))
+    for velho in sorted(os.listdir(pasta))[:-GUARDAR_ANTES]:
+        try:
+            os.remove(os.path.join(pasta, velho))
+        except OSError:
+            pass
+
+
+def aplicar(u, zip_bytes, hash_esperado):
+    """Troca o save local pelo conteúdo do .zip. Confere o hash antes de mexer em qualquer arquivo."""
+    base = pasta_saves()
+    try:
+        z = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except zipfile.BadZipFile:
+        return "o arquivo da nuvem está danificado"
+    nomes = sorted(n for n in z.namelist() if not n.endswith("/"))
+    if not nomes or not all(pertence(u, n) for n in nomes):
+        return "o arquivo da nuvem tem caminhos que não são deste jogo"
+    conteudo = {n: z.read(n) for n in nomes}
+    h = hashlib.sha256()
+    for n in nomes:
+        h.update(n.encode() + b"\0" + str(len(conteudo[n])).encode() + b"\0" + conteudo[n])
+    if h.hexdigest() != hash_esperado:
+        return "o arquivo da nuvem não confere com o registro (hash diferente)"
+    atuais = arquivos(u)
+    guardar_antes(u, atuais)
+    for n in nomes:
+        alvo = os.path.join(base, n)
+        os.makedirs(os.path.dirname(alvo), exist_ok=True)
+        with open(alvo + ".tmp", "wb") as f:
+            f.write(conteudo[n])
+        os.replace(alvo + ".tmp", alvo)
+    for rel in atuais:                      # o que existia só no console sai (a cópia ficou guardada)
+        if rel not in conteudo:
+            try:
+                os.remove(os.path.join(base, rel))
+            except OSError:
+                pass
+    return ""
+
+
+# ---------------------------------------------------------------- nuvem
+
+def http(metodo, url, dados=None, timeout=60):
+    """Envio/descarga direto no armazenamento (endereço temporário assinado pelo servidor)."""
+    cab = {"User-Agent": skynet.AGENTE}
+    if dados is not None:
+        cab["Content-Type"] = "application/zip"
+    req = urllib.request.Request(url, data=dados, method=metodo, headers=cab)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+    except (urllib.error.URLError, OSError) as e:
+        return 0, str(e).encode()
+
+
+def nuvem_ligada(cfg):
+    return skynet.conectado(cfg) and cfg.get("nuvem", True)
+
+
+def q(u):
+    from urllib.parse import urlencode
+    return urlencode({"sistema": u["sistema"], "jogoId": u["chave"]})
+
+
+def anotar(est, u, versao, h, pendente=False):
+    est["unidades"][u["chave"]] = {"versao": versao, "hash": h, "pendente": pendente, "sistema": u["sistema"],
+                                   "titulo": u["titulo"], "prefixos": u["prefixos"]}
+
+
+def conflito(est, u, nuvem):
+    novo = u["chave"] not in est["conflitos"]
+    est["conflitos"][u["chave"]] = {"titulo": u["titulo"], "sistema": u["sistema"], "prefixos": u["prefixos"],
+                                    "nuvem": nuvem, "desde": int(time.time())}
+    if novo:
+        aviso("nuvem", f"Conflito de save em {u['titulo']}: escolha em Configurações → SkyNetwork", "alerta")
+
+
+def baixar(cfg, perfil, u, est, info=None):
+    """Baixa a versão atual da nuvem por cima do save local. Devolve "" ou o erro."""
+    if info is None:
+        st, info = api("GET", "/api/saves/baixar?" + q(u), perfil=perfil, cfg=cfg)
+        if st != 200:
+            return skynet.mensagem(info)
+    st, corpo = http("GET", info["url"])
+    if st != 200:
+        return "não consegui baixar o save da nuvem"
+    erro = aplicar(u, corpo, info["hash"])
+    if erro:
+        return erro
+    anotar(est, u, info["versao"], info["hash"])
+    est["conflitos"].pop(u["chave"], None)
+    return ""
+
+
+def enviar(cfg, perfil, u, est, forcar=False):
+    """Envia o save local. Devolve (resultado, texto): "igual" | "enviado" | "conflito" | "erro" | "nada"."""
+    lst = arquivos(u)
+    h = hash_local(u, lst)
+    ant = est["unidades"].get(u["chave"], {})
+    if not h:
+        return "nada", ""
+    pacote = empacotar(u, lst)
+    if len(pacote) > LIMITE:
+        return "erro", "o save passa de 64 MB"
+    st, r = api("POST", "/api/saves/enviar", {
+        "sistema": u["sistema"], "jogoId": u["chave"], "titulo": u["titulo"][:200], "hash": h,
+        "tamanho": len(pacote), "baseVersao": int(ant.get("versao", 0)), "forcar": bool(forcar),
+    }, perfil=perfil, cfg=cfg, timeout=15)
+    if st == 409 and r.get("erro") == "conflito":
+        conflito(est, u, r.get("nuvem", {}))
+        return "conflito", skynet.mensagem(r)
+    if st != 200:
+        if st == 0:
+            anotar(est, u, int(ant.get("versao", 0)), ant.get("hash", ""), pendente=True)
+        return "erro", skynet.mensagem(r)
+    if r.get("estado") == "igual":
+        anotar(est, u, r["versao"], h)
+        est["conflitos"].pop(u["chave"], None)
+        return "igual", ""
+    ps, corpo = http("PUT", r["url"], pacote)
+    if ps not in (200, 201, 204):
+        anotar(est, u, int(ant.get("versao", 0)), ant.get("hash", ""), pendente=True)
+        return "erro", f"o armazenamento recusou o envio ({ps})"
+    st, c = api("POST", "/api/saves/confirmar", {"versaoId": r["versaoId"]}, perfil=perfil, cfg=cfg, timeout=15)
+    if st != 200:
+        anotar(est, u, int(ant.get("versao", 0)), ant.get("hash", ""), pendente=True)
+        return "erro", skynet.mensagem(c)
+    anotar(est, u, r["versao"], h)
+    est["conflitos"].pop(u["chave"], None)
+    return "enviado", ""
+
+
+def cmd_antes(gid, titulo, cmd):
+    cfg = skynet.config()
+    u = unidade(gid, titulo, cmd)
+    if not nuvem_ligada(cfg) or u is None:
+        return saida({"ok": True, "message": "nada a fazer"})
+    perfil, _ = skynet.perfis()
+    est = estado_local()
+    ant = est["unidades"].get(u["chave"], {})
+    local = hash_local(u)
+    st, info = api("GET", "/api/saves/baixar?" + q(u), perfil=perfil, cfg=cfg, timeout=6)
+    if st == 404 and info.get("erro") == "perfil_desconhecido":
+        skynet.enviar_perfis(cfg)
+        st, info = api("GET", "/api/saves/baixar?" + q(u), perfil=perfil, cfg=cfg, timeout=6)
+    if st != 200:
+        # 404 = nada na nuvem ainda; 0 = sem internet: joga com o save do console e envia depois
+        return saida({"ok": True, "message": "sem save na nuvem" if st == 404 else skynet.mensagem(info)})
+    if info["hash"] == local:
+        anotar(est, u, info["versao"], local)
+        est["conflitos"].pop(u["chave"], None)
+        gravar_estado(est)
+        return saida({"ok": True, "message": "save em dia"})
+    if not local or local == ant.get("hash"):
+        # o console não mexeu no save desde a última sincronização: a nuvem é mais nova
+        erro = baixar(cfg, perfil, u, est, info)
+        gravar_estado(est)
+        if erro:
+            log("baixar:", erro)
+            return saida({"ok": False, "error": erro})
+        aviso("nuvem", f"Save de {u['titulo']} baixado da nuvem", "salvo")
+        return saida({"ok": True, "message": "baixado", "versao": info["versao"]})
+    if int(ant.get("versao", 0)) == int(info["versao"]):
+        return saida({"ok": True, "message": "o console tem mudanças ainda não enviadas"})
+    # os dois lados mudaram: não escolhe sozinho
+    conflito(est, u, {k: info.get(k) for k in ("versao", "hash", "tamanho", "enviadoEm", "console")})
+    gravar_estado(est)
+    return saida({"ok": True, "message": "conflito", "conflito": True})
+
+
+def cmd_depois(gid, titulo, cmd):
+    cfg = skynet.config()
+    u = unidade(gid, titulo, cmd)
+    if not nuvem_ligada(cfg) or u is None:
+        return saida({"ok": True, "message": "nada a fazer"})
+    est = estado_local()
+    ant = est["unidades"].get(u["chave"], {})
+    if u["chave"] in est["conflitos"]:
+        return saida({"ok": True, "message": "conflito pendente: nada enviado"})
+    if hash_local(u) == ant.get("hash") and not ant.get("pendente"):
+        return saida({"ok": True, "message": "save não mudou"})
+    perfil, _ = skynet.perfis()
+    res, txt = enviar(cfg, perfil, u, est)
+    gravar_estado(est)
+    if res == "enviado":
+        aviso("nuvem", f"Save de {u['titulo']} guardado na nuvem")
+    elif res == "erro":
+        log("enviar:", txt)
+    return saida({"ok": res != "erro", "message": res, "error": txt})
+
+
+def cmd_pendentes():
+    cfg = skynet.config()
+    if not nuvem_ligada(cfg):
+        return saida({"ok": True, "enviados": 0})
+    if os.path.exists(os.path.join(skynet.RUN, "game.pid")):
+        return saida({"ok": True, "enviados": 0, "message": "jogo aberto"})   # o emulador pode estar gravando
+    est = estado_local()
+    perfil, _ = skynet.perfis()
+    n = 0
+    for chave, e in list(est["unidades"].items()):
+        if not e.get("pendente") or chave in est["conflitos"]:
+            continue
+        u = {"chave": chave, "sistema": e["sistema"], "titulo": e.get("titulo", chave), "prefixos": e["prefixos"]}
+        res, _ = enviar(cfg, perfil, u, est)
+        if res == "erro":
+            break                                # sem internet de novo: tenta na próxima
+        if res == "nada":
+            e["pendente"] = False                # o save foi apagado do console: nada a enviar
+        n += res == "enviado"
+    gravar_estado(est)
+    return saida({"ok": True, "enviados": n})
+
+
+def cmd_resolver(chave, lado):
+    cfg = skynet.config()
+    est = estado_local()
+    c = est["conflitos"].get(chave)
+    if not c:
+        return saida({"ok": False, "error": "Não há conflito neste save."})
+    if os.path.exists(os.path.join(skynet.RUN, "game.pid")):
+        return saida({"ok": False, "error": "Feche o jogo antes de resolver o conflito."})
+    u = {"chave": chave, "sistema": c["sistema"], "titulo": c["titulo"], "prefixos": c["prefixos"]}
+    perfil, _ = skynet.perfis()
+    if lado == "nuvem":
+        erro = baixar(cfg, perfil, u, est)
+        gravar_estado(est)
+        if erro:
+            return saida({"ok": False, "error": erro})
+        return saida({"ok": True, "message": f"{c['titulo']}: ficou o save da nuvem (o do console foi guardado)"})
+    res, txt = enviar(cfg, perfil, u, est, forcar=True)
+    gravar_estado(est)
+    if res in ("enviado", "igual"):
+        return saida({"ok": True, "message": f"{c['titulo']}: ficou o save deste console"})
+    return saida({"ok": False, "error": txt or "Não consegui enviar o save."})
+
+
+# ---------------------------------------------------------------- rede
+
+def sincronizar_ja():
+    """Pede ao sky-net uma sincronização imediata (em vez de esperar os 30 s)."""
+    try:
+        os.makedirs(skynet.RUN, exist_ok=True)
+        with open(os.path.join(skynet.RUN, "net.agora"), "w") as f:
+            f.write(str(time.time()))
+    except OSError:
+        pass
+
+
+def cmd_estado():
+    cfg = skynet.config()
+    est = estado_local()
+    net = skynet.ler_json(skynet.NET_JSON, {}) or {}
+    perfil, _ = skynet.perfis()
+    out = {"ok": True, "conectado": skynet.conectado(cfg), "url": skynet.url_base(cfg),
+           "console": cfg.get("console", ""), "nuvem": bool(cfg.get("nuvem", True)), "online": False,
+           "eu": {}, "pedidos": [], "enviados": [], "amigos": [],
+           "conflitos": [{"chave": k, "titulo": v.get("titulo", k),
+                          "console": (v.get("nuvem") or {}).get("console") or "outro console"}
+                         for k, v in est["conflitos"].items()],
+           "pendentes": sum(1 for e in est["unidades"].values() if e.get("pendente"))}
+    if not out["conectado"]:
+        return saida(out)
+    st, r = api("POST", "/api/sync", {}, perfil=perfil, cfg=cfg, timeout=6)
+    if st == 404 and r.get("erro") == "perfil_desconhecido":
+        skynet.enviar_perfis(cfg)
+        st, r = api("POST", "/api/sync", {}, perfil=perfil, cfg=cfg, timeout=6)
+    if st == 200:
+        st2, eu = api("GET", "/api/eu", cfg=cfg, timeout=6)
+        meu = next((x for x in eu.get("perfis", []) if x.get("localId") == perfil), {}) if st2 == 200 else {}
+        out["vinculado"] = bool(meu.get("vinculado"))
+        out.update(online=True, eu=r.get("eu", {}), pedidos=r.get("pedidosRecebidos", []),
+                   enviados=r.get("pedidosEnviados", []), amigos=r.get("amigos", []))
+    elif st == 401:
+        out.update(conectado=False, error="Este console foi removido da rede. Entre de novo com o convite.")
+    else:
+        out.update(eu=net.get("eu", {}), pedidos=net.get("pedidosRecebidos", []), amigos=net.get("amigos", []),
+                   error=skynet.mensagem(r))
+    return saida(out)
+
+
+def cmd_entrar(convite, url=""):
+    cfg = skynet.config()
+    if url:
+        cfg["url"] = url.rstrip("/")
+    if skynet.conectado(cfg):
+        st, _ = api("GET", "/api/eu", cfg=cfg)
+        if st == 200:
+            return saida({"ok": True, "message": "Este console já está na SkyNetwork."})
+    _, lst = skynet.perfis()
+    nome = ("SkyStation de " + str(lst[0].get("nome", "Jogador")))[:40]
+    try:
+        nome = (nome + " (" + socket.gethostname() + ")")[:40] if len(lst) > 1 else nome
+    except OSError:
+        pass
+    st, r = api("POST", "/api/consoles", {"nome": nome, "convite": convite.strip()}, cfg=cfg, token=False, timeout=15)
+    if st != 201:
+        return saida({"ok": False, "error": skynet.mensagem(r, "Não consegui entrar na rede.")})
+    cfg.update(token=r["token"], console=r["console"]["nome"], consoleId=r["console"]["id"])
+    cfg.setdefault("nuvem", True)
+    skynet.gravar_config(cfg)
+    st, p = skynet.enviar_perfis(cfg)
+    if st != 200:
+        return saida({"ok": False, "error": "Entrei na rede, mas não consegui enviar os perfis: " + skynet.mensagem(p)})
+    atual, _ = skynet.perfis()
+    codigo = next((x["codigo"] for x in p.get("perfis", []) if x["localId"] == atual), "")
+    sincronizar_ja()
+    return saida({"ok": True, "message": f"Você está na SkyNetwork! Seu código de amigo: {codigo}", "codigo": codigo})
+
+
+def cmd_sair():
+    cfg = skynet.config()
+    cfg.pop("token", None)
+    skynet.gravar_config(cfg)
+    try:
+        os.remove(skynet.NET_JSON)
+    except OSError:
+        pass
+    return saida({"ok": True, "message": "Este console saiu da SkyNetwork."})
+
+
+def exigir_rede():
+    cfg = skynet.config()
+    if not skynet.conectado(cfg):
+        saida({"ok": False, "error": "Este console ainda não entrou na SkyNetwork."})
+        sys.exit(1)
+    perfil, _ = skynet.perfis()
+    return cfg, perfil
+
+
+def simples(st, r, ok_msg, esperado=(200, 201)):
+    if st in esperado:
+        sincronizar_ja()
+        return saida({"ok": True, "message": ok_msg, **{k: v for k, v in r.items() if k in ("status", "amizadeId")}})
+    return saida({"ok": False, "error": skynet.mensagem(r)})
+
+
+def main():
+    a = sys.argv[1:]
+    c = a[0] if a else ""
+    if c == "estado":
+        return cmd_estado()
+    if c == "entrar" and len(a) >= 2:
+        return cmd_entrar(a[1], a[2] if len(a) > 2 else "")
+    if c == "sair":
+        return cmd_sair()
+    if c == "nuvem" and a[1:2] and a[1] in ("on", "off"):
+        cfg = skynet.config()
+        cfg["nuvem"] = a[1] == "on"
+        skynet.gravar_config(cfg)
+        return saida({"ok": True, "message": "Saves na nuvem " + ("ligados" if cfg["nuvem"] else "desligados")})
+    if c == "antes" and len(a) == 4:
+        return cmd_antes(a[1], a[2], a[3])
+    if c == "depois" and len(a) == 4:
+        return cmd_depois(a[1], a[2], a[3])
+    if c == "pendentes":
+        return cmd_pendentes()
+    if c == "resolver" and len(a) == 3 and a[2] in ("nuvem", "console"):
+        return cmd_resolver(a[1], a[2])
+    if c == "invisivel" and a[1:2] and a[1] in ("on", "off"):
+        cfg, _ = exigir_rede()
+        st, r = skynet.enviar_perfis(cfg, invisivel=a[1] == "on")
+        return simples(st, r, "Invisível: " + ("ligado (os amigos veem você offline)" if a[1] == "on" else "desligado"))
+    if c == "amigo" and len(a) == 2:
+        cfg, perfil = exigir_rede()
+        st, r = api("POST", "/api/amigos", {"codigo": a[1].strip().upper()}, perfil=perfil, cfg=cfg)
+        nome = (r.get("amigo") or {}).get("apelido", "")
+        return simples(st, r, f"Agora você e {nome} são amigos!" if r.get("status") == "aceita" else f"Pedido enviado para {nome}")
+    if c == "aceitar" and len(a) == 2:
+        cfg, perfil = exigir_rede()
+        st, r = api("POST", f"/api/amigos/{a[1]}/aceitar", perfil=perfil, cfg=cfg)
+        return simples(st, r, "Pedido aceito")
+    if c == "recusar" and len(a) == 2:
+        cfg, perfil = exigir_rede()
+        st, r = api("DELETE", f"/api/amigos/{a[1]}", perfil=perfil, cfg=cfg)
+        return simples(st, r, "Removido")
+    if c == "mensagem" and len(a) >= 3:
+        cfg, perfil = exigir_rede()
+        st, r = api("POST", "/api/mensagens", {"paraId": a[1], "texto": " ".join(a[2:])[:280]}, perfil=perfil, cfg=cfg)
+        return simples(st, r, "Mensagem enviada")
+    if c == "convidar" and len(a) == 2:
+        cfg, perfil = exigir_rede()
+        ler = lambda n: (open(os.path.join(skynet.RUN, n)).read().strip() if os.path.exists(os.path.join(skynet.RUN, n)) else "")  # noqa: E731
+        if not os.path.exists(os.path.join(skynet.RUN, "game.pid")):
+            return saida({"ok": False, "error": "Abra um jogo para convidar."})
+        corpo = {"paraId": a[1], "tipo": "convite", "texto": "Bora jogar " + (ler("game.title") or "comigo") + "?",
+                 "jogoId": ler("game.id")[:200], "jogo": ler("game.title")[:200]}
+        if re.fullmatch(r"[a-z0-9]{1,12}", ler("game.sys")):
+            corpo["sistema"] = ler("game.sys")
+        st, r = api("POST", "/api/mensagens", corpo, perfil=perfil, cfg=cfg)
+        return simples(st, r, "Convite enviado")
+    if c == "codigo-vinculo":
+        cfg, perfil = exigir_rede()
+        st, r = api("POST", "/api/perfis/codigo", perfil=perfil, cfg=cfg)
+        if st != 200:
+            return saida({"ok": False, "error": skynet.mensagem(r)})
+        return saida({"ok": True, "codigo": r["codigo"],
+                      "message": f"No outro console, digite {r['codigo']} (vale por 15 minutos)"})
+    if c == "vincular" and len(a) == 2:
+        cfg, perfil = exigir_rede()
+        st, r = api("POST", "/api/perfis/vincular", {"localId": perfil, "codigo": a[1].strip().upper()}, cfg=cfg)
+        if st != 200:
+            return saida({"ok": False, "error": skynet.mensagem(r)})
+        # as versões anotadas eram do perfil antigo: recomeça a comparação com a nuvem do zero
+        gravar_estado({"unidades": {}, "conflitos": {}})
+        sincronizar_ja()
+        return saida({"ok": True, "message": f"Este perfil agora é {r['perfil']['apelido']}: saves e amigos vêm da nuvem"})
+    if c == "desvincular":
+        cfg, perfil = exigir_rede()
+        from urllib.parse import quote
+        st, r = api("DELETE", "/api/perfis/vincular?localId=" + quote(perfil), cfg=cfg)
+        if st != 200:
+            return saida({"ok": False, "error": skynet.mensagem(r)})
+        gravar_estado({"unidades": {}, "conflitos": {}})
+        skynet.enviar_perfis(cfg)
+        sincronizar_ja()
+        return saida({"ok": True, "message": "Vínculo desfeito: este perfil voltou a ser só deste console"})
+    if c == "lidas" and len(a) == 2:
+        cfg, perfil = exigir_rede()
+        st, r = api("POST", "/api/mensagens/lidas", {"deId": a[1]}, perfil=perfil, cfg=cfg)
+        return simples(st, r, "ok")
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
