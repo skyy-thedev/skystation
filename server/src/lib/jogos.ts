@@ -104,7 +104,7 @@ type JogoIgdb = {
   screenshots?: { image_id: string }[];
 };
 
-async function buscarIgdb(nome: string, sistema: string): Promise<Partial<InfoJogo> | null> {
+async function buscarIgdb(nome: string, sistema: string, ano?: number): Promise<Partial<InfoJogo> | null> {
   const t = await tokenTwitch();
   if (!t) return null;
   const busca = nome.replace(/"/g, "");
@@ -120,6 +120,9 @@ async function buscarIgdb(nome: string, sistema: string): Promise<Partial<InfoJo
   if (!lista.length) lista = await pedir("");
   // prefere o nome idêntico; senão, o primeiro da busca
   const alvo = normalizar(nome);
+  const anoDe = (x: JogoIgdb) => (x.first_release_date ? new Date(x.first_release_date * 1000).getUTCFullYear() : null);
+  // com o ano, separa homônimos (God of War de 2005 × de 2018)
+  if (ano) lista = lista.filter((x) => !anoDe(x) || Math.abs(anoDe(x)! - ano) <= 1);
   const j = lista.find((x) => normalizar(x.name) === alvo) ?? lista[0];
   if (!j) return null;
   const img = (id: string | undefined, tam: string) => (id ? `https://images.igdb.com/igdb/image/upload/${tam}/${id}.jpg` : null);
@@ -139,7 +142,7 @@ async function buscarIgdb(nome: string, sistema: string): Promise<Partial<InfoJo
 
 type JogoRawg = { id: number; slug: string; name: string; released?: string | null; background_image?: string | null; genres?: { name: string }[] };
 
-async function buscarRawg(nome: string, sistema: string): Promise<Partial<InfoJogo> | null> {
+async function buscarRawg(nome: string, sistema: string, ano?: number): Promise<Partial<InfoJogo> | null> {
   const chave = process.env.RAWG_API_KEY?.trim();
   if (!chave) {
     console.warn("[jogos] RAWG desligada: falta RAWG_API_KEY neste ambiente");
@@ -154,6 +157,7 @@ async function buscarRawg(nome: string, sistema: string): Promise<Partial<InfoJo
   let lista = await pedir(true);
   if (!lista.length) lista = await pedir(false);
   const alvo = normalizar(nome);
+  if (ano) lista = lista.filter((x) => !x.released || Math.abs(Number(x.released.slice(0, 4)) - ano) <= 1);
   const j = lista.find((x) => normalizar(x.name) === alvo) ?? lista.find((x) => parecenca(x.name, alvo) > 0);
   if (!j) return null;
   // o resumo só vem no detalhe do jogo
@@ -173,26 +177,28 @@ async function buscarRawg(nome: string, sistema: string): Promise<Partial<InfoJo
 
 const PALAVRAS_JOGO = /jogo|videogame|video game|vídeo game|eletrônico|electronic game/i;
 
-async function buscarWikipedia(nome: string, sistema: string, lingua: "pt" | "en"): Promise<Partial<InfoJogo> | null> {
+async function buscarWikipedia(nome: string, sistema: string, lingua: "pt" | "en", ano?: number): Promise<Partial<InfoJogo> | null> {
   const base = `https://${lingua}.wikipedia.org`;
   const plataforma = PLATAFORMA[sistema]?.wiki ?? "";
-  const termo = `${nome} ${lingua === "pt" ? "jogo eletrônico" : "video game"} ${plataforma}`.trim();
+  const termo = `${nome} ${lingua === "pt" ? "jogo eletrônico" : "video game"} ${ano ?? ""} ${plataforma}`.replace(/\s+/g, " ").trim();
   const q = new URLSearchParams({ action: "query", list: "search", srsearch: termo, srlimit: "5", format: "json", origin: "*" });
   const achados: { title: string }[] = (await json(`${base}/w/api.php?${q}`)).query?.search ?? [];
   const alvo = normalizar(nome);
   // títulos parecidos com o nome vêm primeiro ("God of War II" antes de "God of War (série)")
   const ordem = [...achados].sort((a, b) => parecenca(b.title, alvo) - parecenca(a.title, alvo));
-  for (const { title } of ordem.slice(0, 3)) {
+  for (const { title } of ordem.slice(0, 4)) {
     if (parecenca(title, alvo) === 0) continue;
     const r = await json(`${base}/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, "_"))}`).catch(() => null);
     if (!r || r.type === "disambiguation") continue;
     const texto = `${r.description ?? ""} ${r.extract ?? ""}`;
     if (!PALAVRAS_JOGO.test(texto)) continue;
-    const ano = /\b(19[7-9]\d|20[0-4]\d)\b/.exec(r.extract ?? "")?.[1];
+    // com o ano, a página tem de citar esse ano (ou o anterior/seguinte, por causa de lançamentos regionais)
+    if (ano && ![ano - 1, ano, ano + 1].some((a) => texto.includes(String(a)))) continue;
+    const anoTexto = /\b(19[7-9]\d|20[0-4]\d)\b/.exec(r.extract ?? "")?.[1];
     return {
       capa: r.originalimage?.source ?? r.thumbnail?.source ?? null,
       resumo: resumir(r.extract ?? ""),
-      ano: ano ? Number(ano) : null,
+      ano: anoTexto ? Number(anoTexto) : null,
       link: r.content_urls?.desktop?.page ?? `${base}/wiki/${encodeURIComponent(title)}`,
       fonte: "wikipedia",
     };
@@ -228,7 +234,7 @@ function parecenca(titulo: string, alvo: string) {
 
 // ---------------------------------------------------------------- junta tudo
 
-async function montar(nome: string, sistema: string): Promise<InfoJogo> {
+async function montar(nome: string, sistema: string, ano?: number): Promise<InfoJogo> {
   let falhas = 0;
   // o log da Vercel mostra qual fonte falhou (nunca as chaves: só o nome da fonte e a mensagem)
   const seguro = <T,>(fonte: string, p: Promise<T>) =>
@@ -238,12 +244,12 @@ async function montar(nome: string, sistema: string): Promise<InfoJogo> {
       return null;
     });
   const [igdb, rawg, pt] = await Promise.all([
-    seguro("IGDB", buscarIgdb(nome, sistema)),
-    seguro("RAWG", buscarRawg(nome, sistema)),
-    seguro("Wikipédia pt", buscarWikipedia(nome, sistema, "pt")),
+    seguro("IGDB", buscarIgdb(nome, sistema, ano)),
+    seguro("RAWG", buscarRawg(nome, sistema, ano)),
+    seguro("Wikipédia pt", buscarWikipedia(nome, sistema, "pt", ano)),
   ]);
   const precisaEn = !pt && !igdb?.resumo && !rawg?.resumo;
-  const en = precisaEn || (!igdb?.capa && !pt?.capa) ? await seguro("Wikipédia en", buscarWikipedia(nome, sistema, "en")) : null;
+  const en = precisaEn || (!igdb?.capa && !pt?.capa) ? await seguro("Wikipédia en", buscarWikipedia(nome, sistema, "en", ano)) : null;
   // tudo deu erro de rede: não guarda o "nada" no cache por 7 dias (tenta de novo na próxima visita)
   if (!igdb && !rawg && !pt && !en && falhas >= 2) throw new Error("sem acesso às fontes de jogos");
   const base = igdb ?? rawg; // as bases de jogos acertam melhor o nome, o ano e os gêneros
@@ -254,26 +260,26 @@ async function montar(nome: string, sistema: string): Promise<InfoJogo> {
     capa: igdb?.capa ?? pt?.capa ?? en?.capa ?? null,
     arte: igdb?.arte ?? rawg?.arte ?? null,
     resumo,
-    ano: base?.ano ?? pt?.ano ?? en?.ano ?? null,
+    ano: ano ?? base?.ano ?? pt?.ano ?? en?.ano ?? null,
     generos: igdb?.generos?.length ? igdb.generos : rawg?.generos ?? [],
     fonte: (fonte?.fonte as InfoJogo["fonte"]) ?? null,
     link: fonte?.link ?? null,
   };
 }
 
-const emCache = unstable_cache(montar, ["sky-jogo-v3"], { revalidate: 7 * 24 * 60 * 60, tags: ["jogos"] });
+const emCache = unstable_cache(montar, ["sky-jogo-v4"], { revalidate: 7 * 24 * 60 * 60, tags: ["jogos"] });
 
 const VAZIO = (nome: string): InfoJogo => ({
   nome, capa: null, arte: null, resumo: null, ano: null, generos: [], fonte: null, link: null,
 });
 
 /** Ficha do jogo pelo título que o console mandou. Nunca falha: sem internet, volta só o nome. */
-export async function infoJogo(titulo: string | null | undefined, sistema: string | null | undefined): Promise<InfoJogo> {
+export async function infoJogo(titulo: string | null | undefined, sistema: string | null | undefined, ano?: number): Promise<InfoJogo> {
   const nome = limparNome(titulo ?? "");
   if (!nome) return VAZIO(titulo ?? "");
   if (process.env.SKY_SEM_BUSCA_JOGOS === "1") return VAZIO(nome);
   try {
-    return await emCache(nome, sistema ?? "");
+    return await emCache(nome, sistema ?? "", ano);
   } catch {
     return VAZIO(nome);
   }

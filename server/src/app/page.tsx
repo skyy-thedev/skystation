@@ -71,7 +71,7 @@ export default async function Inicio() {
         <div className="em-teste">
           <span className="apagado">Em teste:</span>
           {EM_BREVE.map((e) => (
-            <span key={e.sistema} className="chip-teste" title={e.emulador}>{e.nome}</span>
+            <span key={e.sistema} className="chip-teste" title={e.emulador}>{e.nome}{e.nota ? ` · ${e.nota}` : ""}</span>
           ))}
         </div>
       </section>

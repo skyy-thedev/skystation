@@ -240,7 +240,7 @@ export async function paginaJogo(sistema: string, jogoId: string, eu: { id: stri
   const vis = await perfisVisiveis(eu);
   const ids = [...vis.keys()];
   const [info, saves, presencas, trofeus] = await Promise.all([
-    infoJogo(titulo, sistema === "outro" ? "" : sistema),
+    infoJogo(titulo, catalogo?.sistema ?? (sistema === "outro" ? "" : sistema), catalogo?.ano),
     db.save.findMany({ where: { jogoId, perfilId: { in: ids } }, select: { perfilId: true, atualizadoEm: true } }),
     db.presenca.findMany({
       where: { jogoId, perfilId: { in: ids }, status: "jogando", vistoEm: { gte: new Date(Date.now() - OFFLINE_APOS_MS) } },

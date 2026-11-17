@@ -1,31 +1,238 @@
 {
   "_leia": "Jogos e emuladores comprovadamente testados no SkyStation. Para incluir um jogo, acrescente uma linha em 'jogos' (id único, nome como aparece nas lojas, sistema). 'situacao': perfeito | jogavel | com-falhas. 'nota' é opcional e aparece na ficha.",
   "emuladores": [
-    { "sistema": "ps1", "nome": "PlayStation", "emulador": "RetroArch · PCSX-ReARMed", "situacao": "funciona", "destaques": "Roda do disco, salvar/carregar estado, saves na nuvem" },
-    { "sistema": "snes", "nome": "Super Nintendo", "emulador": "RetroArch · Snes9x", "situacao": "funciona", "destaques": "Salvar/carregar estado, saves na nuvem" },
-    { "sistema": "ps2", "nome": "PlayStation 2", "emulador": "PCSX2", "situacao": "funciona", "destaques": "Roda do disco, perfis de desempenho, cartão de memória por perfil" },
-    { "sistema": "ps3", "nome": "PlayStation 3", "emulador": "RPCS3", "situacao": "funciona", "destaques": "Patches oficiais automáticos; pede PC com 6+ threads" },
-    { "sistema": "x360", "nome": "Xbox 360", "emulador": "Xenia Canary", "situacao": "funciona", "destaques": "Saves por perfil e na nuvem; pede PC forte" }
+    {
+      "sistema": "ps1",
+      "nome": "PlayStation",
+      "emulador": "RetroArch · PCSX-ReARMed",
+      "situacao": "funciona",
+      "destaques": "Roda do disco, salvar/carregar estado, saves na nuvem"
+    },
+    {
+      "sistema": "snes",
+      "nome": "Super Nintendo",
+      "emulador": "RetroArch · Snes9x",
+      "situacao": "funciona",
+      "destaques": "Salvar/carregar estado, saves na nuvem"
+    },
+    {
+      "sistema": "ps2",
+      "nome": "PlayStation 2",
+      "emulador": "PCSX2",
+      "situacao": "funciona",
+      "destaques": "Roda do disco, perfis de desempenho, cartão de memória por perfil"
+    },
+    {
+      "sistema": "psp",
+      "nome": "PSP",
+      "emulador": "RetroArch · PPSSPP",
+      "situacao": "funciona",
+      "destaques": "ISO e CSO, apoio em bios/psp"
+    },
+    {
+      "sistema": "ps3",
+      "nome": "PlayStation 3",
+      "emulador": "RPCS3",
+      "situacao": "funciona",
+      "destaques": "Patches oficiais automáticos; pede PC com 6+ threads"
+    },
+    {
+      "sistema": "x360",
+      "nome": "Xbox 360",
+      "emulador": "Xenia Canary",
+      "situacao": "funciona",
+      "destaques": "Saves por perfil e na nuvem; pede PC forte"
+    }
   ],
   "emBreve": [
-    { "sistema": "n64", "nome": "Nintendo 64", "emulador": "RetroArch · Mupen64Plus-Next" },
-    { "sistema": "psp", "nome": "PSP", "emulador": "RetroArch · PPSSPP" },
-    { "sistema": "gc", "nome": "GameCube e Wii", "emulador": "RetroArch · Dolphin" },
-    { "sistema": "nds", "nome": "DS e 3DS", "emulador": "RetroArch" },
-    { "sistema": "gba", "nome": "Game Boy / GBA", "emulador": "RetroArch" },
-    { "sistema": "md", "nome": "Mega Drive e NES", "emulador": "RetroArch" }
+    {
+      "sistema": "n64",
+      "nome": "Nintendo 64",
+      "emulador": "RetroArch · Mupen64Plus-Next",
+      "nota": "provavelmente jogável, falta confirmar"
+    },
+    {
+      "sistema": "gc",
+      "nome": "GameCube e Wii",
+      "emulador": "RetroArch · Dolphin"
+    },
+    {
+      "sistema": "nds",
+      "nome": "DS e 3DS",
+      "emulador": "RetroArch"
+    },
+    {
+      "sistema": "gba",
+      "nome": "Game Boy / GBA",
+      "emulador": "RetroArch"
+    },
+    {
+      "sistema": "md",
+      "nome": "Mega Drive e NES",
+      "emulador": "RetroArch"
+    }
   ],
   "jogos": [
-    { "id": "ps2-gta-san-andreas", "nome": "Grand Theft Auto: San Andreas", "sistema": "ps2", "situacao": "jogavel" },
-    { "id": "ps2-god-of-war", "nome": "God of War", "sistema": "ps2", "situacao": "jogavel" },
-    { "id": "ps2-god-of-war-2", "nome": "God of War II", "sistema": "ps2", "situacao": "jogavel" },
-    { "id": "ps2-resident-evil-4", "nome": "Resident Evil 4", "sistema": "ps2", "situacao": "jogavel" },
-    { "id": "ps2-pes-2013", "nome": "Pro Evolution Soccer 2013", "sistema": "ps2", "situacao": "jogavel" },
-    { "id": "ps3-gta-4", "nome": "Grand Theft Auto IV", "sistema": "ps3", "situacao": "jogavel" },
-    { "id": "ps3-metal-gear-rising", "nome": "Metal Gear Rising: Revengeance", "sistema": "ps3", "situacao": "jogavel" },
-    { "id": "ps3-resident-evil-5", "nome": "Resident Evil 5", "sistema": "ps3", "situacao": "jogavel" },
-    { "id": "x360-forza-4", "nome": "Forza Motorsport 4", "sistema": "x360", "situacao": "jogavel" },
-    { "id": "ps1-tomb-raider", "nome": "Tomb Raider", "sistema": "ps1", "situacao": "jogavel" },
-    { "id": "ps1-gran-turismo", "nome": "Gran Turismo", "sistema": "ps1", "situacao": "jogavel" }
+    {
+      "id": "ps1-tomb-raider",
+      "nome": "Tomb Raider",
+      "sistema": "ps1",
+      "ano": 1996,
+      "situacao": "perfeito"
+    },
+    {
+      "id": "ps1-tomb-raider-2",
+      "nome": "Tomb Raider II",
+      "sistema": "ps1",
+      "ano": 1997,
+      "situacao": "perfeito"
+    },
+    {
+      "id": "ps1-tomb-raider-3",
+      "nome": "Tomb Raider III: Adventures of Lara Croft",
+      "sistema": "ps1",
+      "ano": 1998,
+      "situacao": "perfeito"
+    },
+    {
+      "id": "ps1-tomb-raider-4",
+      "nome": "Tomb Raider: The Last Revelation",
+      "sistema": "ps1",
+      "ano": 1999,
+      "situacao": "perfeito"
+    },
+    {
+      "id": "ps1-tomb-raider-5",
+      "nome": "Tomb Raider Chronicles",
+      "sistema": "ps1",
+      "ano": 2000,
+      "situacao": "perfeito"
+    },
+    {
+      "id": "ps1-gran-turismo-2",
+      "nome": "Gran Turismo 2",
+      "sistema": "ps1",
+      "ano": 1999,
+      "situacao": "perfeito"
+    },
+    {
+      "id": "snes-mortal-kombat",
+      "nome": "Mortal Kombat",
+      "sistema": "snes",
+      "ano": 1993,
+      "situacao": "perfeito"
+    },
+    {
+      "id": "snes-mortal-kombat-2",
+      "nome": "Mortal Kombat II",
+      "sistema": "snes",
+      "ano": 1994,
+      "situacao": "perfeito"
+    },
+    {
+      "id": "snes-super-mario-all-stars",
+      "nome": "Super Mario All-Stars",
+      "sistema": "snes",
+      "ano": 1993,
+      "situacao": "perfeito",
+      "nota": "Traz Super Mario Bros. 1, 2, 3 e The Lost Levels."
+    },
+    {
+      "id": "ps2-gta-san-andreas",
+      "nome": "Grand Theft Auto: San Andreas",
+      "sistema": "ps2",
+      "ano": 2004,
+      "situacao": "perfeito"
+    },
+    {
+      "id": "ps2-god-of-war",
+      "nome": "God of War",
+      "sistema": "ps2",
+      "ano": 2005,
+      "situacao": "perfeito"
+    },
+    {
+      "id": "ps2-god-of-war-2",
+      "nome": "God of War II",
+      "sistema": "ps2",
+      "ano": 2007,
+      "situacao": "perfeito"
+    },
+    {
+      "id": "ps2-resident-evil-4",
+      "nome": "Resident Evil 4",
+      "sistema": "ps2",
+      "ano": 2005,
+      "situacao": "perfeito"
+    },
+    {
+      "id": "ps2-def-jam-fight-for-ny",
+      "nome": "Def Jam: Fight for NY",
+      "sistema": "ps2",
+      "ano": 2004,
+      "situacao": "perfeito"
+    },
+    {
+      "id": "ps2-pes-2013",
+      "nome": "Pro Evolution Soccer 2013",
+      "sistema": "ps2",
+      "ano": 2012,
+      "situacao": "jogavel"
+    },
+    {
+      "id": "ps3-resident-evil-5",
+      "nome": "Resident Evil 5",
+      "sistema": "ps3",
+      "ano": 2009,
+      "situacao": "perfeito",
+      "nota": "~60 FPS estáveis em mais de uma hora de jogo."
+    },
+    {
+      "id": "ps3-mortal-kombat-komplete",
+      "nome": "Mortal Kombat Komplete Edition",
+      "sistema": "ps3",
+      "ano": 2012,
+      "situacao": "perfeito",
+      "nota": "60 FPS, como no console."
+    },
+    {
+      "id": "ps3-naruto-storm-3",
+      "nome": "Naruto Shippuden: Ultimate Ninja Storm 3",
+      "sistema": "ps3",
+      "ano": 2013,
+      "situacao": "perfeito",
+      "nota": "30 FPS travados, como no console."
+    },
+    {
+      "id": "ps3-god-of-war-3",
+      "nome": "God of War III",
+      "sistema": "ps3",
+      "ano": 2010,
+      "situacao": "com-falhas",
+      "nota": "Roda a ~30 FPS, mas cai nas lutas grandes; o notebook chega ao limite de temperatura."
+    },
+    {
+      "id": "x360-metal-gear-rising",
+      "nome": "Metal Gear Rising: Revengeance",
+      "sistema": "x360",
+      "ano": 2013,
+      "situacao": "perfeito"
+    },
+    {
+      "id": "x360-forza-4",
+      "nome": "Forza Motorsport 4",
+      "sistema": "x360",
+      "ano": 2011,
+      "situacao": "jogavel",
+      "nota": "~55 FPS, com quedas para 40 em alguns trechos."
+    },
+    {
+      "id": "x360-gta-4",
+      "nome": "Grand Theft Auto IV",
+      "sistema": "x360",
+      "ano": 2008,
+      "situacao": "jogavel",
+      "nota": "~28 FPS, perto do Xbox 360 original."
+    }
   ]
 }

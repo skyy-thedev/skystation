@@ -4,12 +4,12 @@ import { infoJogo, type InfoJogo } from "./jogos";
 // Catálogo do SkyStation: o que já foi testado e funciona (catalogo.json).
 
 export type Situacao = "perfeito" | "jogavel" | "com-falhas";
-export type JogoCatalogo = { id: string; nome: string; sistema: string; situacao: Situacao; nota?: string };
+export type JogoCatalogo = { id: string; nome: string; sistema: string; ano?: number; situacao: Situacao; nota?: string };
 export type Emulador = { sistema: string; nome: string; emulador: string; situacao: string; destaques: string };
 
 export const JOGOS = dados.jogos as JogoCatalogo[];
 export const EMULADORES = dados.emuladores as Emulador[];
-export const EM_BREVE = dados.emBreve as { sistema: string; nome: string; emulador: string }[];
+export const EM_BREVE = dados.emBreve as { sistema: string; nome: string; emulador: string; nota?: string }[];
 
 export const SITUACOES: Record<Situacao, { rotulo: string; cor: string }> = {
   perfeito: { rotulo: "Perfeito", cor: "#54f0b8" },
@@ -29,7 +29,7 @@ export type JogoComFicha = JogoCatalogo & { info: InfoJogo };
 
 /** Todos os jogos do catálogo com capa e ficha (buscadas em paralelo; ficam no cache). */
 export async function catalogoComFichas(): Promise<JogoComFicha[]> {
-  return Promise.all(JOGOS.map(async (j) => ({ ...j, info: await infoJogo(j.nome, j.sistema) })));
+  return Promise.all(JOGOS.map(async (j) => ({ ...j, info: await infoJogo(j.nome, j.sistema, j.ano) })));
 }
 
 /** O destaque do banner muda a cada dia; prefere jogos com arte larga. */

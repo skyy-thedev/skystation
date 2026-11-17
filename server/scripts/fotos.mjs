@@ -73,7 +73,7 @@ try {
   await foto("inicio-logado", "/", { logado: true });
   await foto("inicio-celular", "/", { largura: 390, altura: 844, logado: true });
   await foto("jogo", "/jogo/ps2/ps2-gow2", { logado: true });
-  await foto("jogo-catalogo", "/jogo/ps2/ps2-god-of-war-2");
+  await foto("jogo-catalogo", "/jogo/ps2/ps2-god-of-war");
   await foto("entrar", "/entrar", { altura: 700 });
   await foto("criar-conta", "/criar-conta");
   await foto("perfil", `/u/${id}`, { logado: true });
