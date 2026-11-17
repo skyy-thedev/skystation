@@ -234,7 +234,7 @@ async function montar(nome: string, sistema: string): Promise<InfoJogo> {
   const seguro = <T,>(fonte: string, p: Promise<T>) =>
     p.catch((e: unknown) => {
       falhas++;
-      console.warn(`[jogos] ${fonte} falhou para "${nome}": ${e instanceof Error ? e.message.replace(/key=[^&\s]+/g, "key=…") : e}`);
+      console.warn(`[jogos] ${fonte} falhou para "${nome}": ${e instanceof Error ? e.message.replace(/(key|client_secret|client_id)=[^&\s]+/g, "$1=…") : e}`);
       return null;
     });
   const [igdb, rawg, pt] = await Promise.all([
