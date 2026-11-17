@@ -16,7 +16,10 @@ export const POST = rota(async (req) => {
   const { nome, convite } = await corpo(req, entrada);
   const esperado = process.env.SKY_CONVITE;
   if (!esperado) throw new Erro(503, "sem_convite", "O servidor está sem código de convite (SKY_CONVITE).");
-  if (!igual(convite, esperado)) throw new Erro(403, "convite_invalido", "Código de convite incorreto.");
+  // Sem diferenciar maiúsculas: o convite é digitado com o controle, no teclado da tela.
+  if (!igual(convite.trim().toLowerCase(), esperado.trim().toLowerCase())) {
+    throw new Erro(403, "convite_invalido", "Código de convite incorreto.");
+  }
 
   const maximo = Number(process.env.SKY_MAX_CONSOLES || 8);
   if ((await db.console.count()) >= maximo) {

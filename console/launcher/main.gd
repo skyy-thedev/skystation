@@ -152,6 +152,8 @@ var settings: Control = null
 var home_dir: String = OS.get_environment("HOME")
 var conf_dir: String = home_dir + "/.config/skystation"
 var run_dir: String = OS.get_environment("XDG_RUNTIME_DIR") + "/skystation"
+var net: Dictionary = {}        # Fase 10: o que o sky-net sabe da SkyNetwork (net.json)
+var net_sig: String = ""        # para só refazer o menu quando algo mudou de verdade
 
 var t: float = 0.0
 var intro_t: float = 0.0
@@ -797,6 +799,71 @@ func _toggle_fav(game_id: String) -> void:
 	_reload_games()
 
 
+func _nulo(v) -> String:
+	return "" if v == null else str(v)
+
+
+func _net_load() -> bool:
+	# Fase 10: lê o net.json (mantido pelo sky-net). Devolve true quando o conteúdo mudou.
+	var na_rede: bool = FileAccess.file_exists(conf_dir + "/rede.json")
+	var data = null
+	if na_rede and FileAccess.file_exists(run_dir + "/net.json"):
+		data = JSON.parse_string(_read_text(run_dir + "/net.json", "{}"))
+	var novo: Dictionary = {}
+	if typeof(data) == TYPE_DICTIONARY:
+		novo = data
+	novo.erase("t")   # a hora da última sincronização muda sempre; o resto é o que importa
+	novo["na_rede"] = na_rede
+	var sig: String = JSON.stringify(novo)
+	if sig == net_sig:
+		return false
+	net_sig = sig
+	net = novo
+	return true
+
+
+func _build_net_cat() -> Dictionary:
+	var c_net := {"id": "amigos", "title": "Amigos", "icon": "friends", "items": []}
+	if not net.get("na_rede", false):
+		c_net["items"].append(_act("Entrar na SkyNetwork", "Veja o que os amigos jogam, troque mensagens e guarde os saves na nuvem", "settings:4", "wifi"))
+		return c_net
+	if not net.get("online", false):
+		c_net["items"].append(_act("Sem conexão com a SkyNetwork", "Os amigos voltam a aparecer quando a internet voltar", "settings:4", "wifi"))
+	for p in net.get("pedidosRecebidos", []):
+		if typeof(p) == TYPE_DICTIONARY:
+			c_net["items"].append(_act("Pedido de amizade: " + _nulo(p.get("de", {}).get("apelido")), "Aperte A para aceitar ou recusar", "settings:4", "bell", accent))
+	var novas := {}
+	for m in net.get("mensagens", []):
+		if typeof(m) == TYPE_DICTIONARY and not m.get("lida", false):
+			var de: String = _nulo(m.get("de", {}).get("id"))
+			novas[de] = int(novas.get(de, 0)) + 1
+	var ordem := {"jogando": 0, "online": 1, "ausente": 2, "offline": 3}
+	var amigos: Array = net.get("amigos", []).duplicate()
+	amigos.sort_custom(func(x, y): return int(ordem.get(_nulo(x.get("status")), 9)) < int(ordem.get(_nulo(y.get("status")), 9)))
+	for a in amigos:
+		if typeof(a) != TYPE_DICTIONARY:
+			continue
+		var sit: String = _nulo(a.get("status"))
+		var sub: String = "Offline"
+		if sit == "jogando":
+			sub = "Jogando " + _nulo(a.get("jogo"))
+			if _nulo(a.get("sistema")) != "":
+				sub += "  ·  " + _nulo(a.get("sistema")).to_upper()
+		elif sit == "online":
+			sub = "Online"
+		elif sit == "ausente":
+			sub = "Ausente"
+		var n: int = int(novas.get(_nulo(a.get("id")), 0))
+		if n > 0:
+			sub += "  ·  %d mensagem(ns) nova(s)" % n
+		var cor: Color = Color(1, 1, 1, 0.25)
+		if sit != "offline" and sit != "":
+			cor = Color.from_string(_nulo(a.get("cor")), Color("4fd1ff"))
+		c_net["items"].append(_act(_nulo(a.get("apelido")), sub, "friend:" + _nulo(a.get("id")), "friends", cor))
+	c_net["items"].append(_act("Adicionar amigo", "Meu código de amigo: " + _nulo(net.get("eu", {}).get("codigo")), "settings:4", "search"))
+	return c_net
+
+
 func _act(title: String, sub: String, action: String, glyph: String, color: Color = Color(0, 0, 0, 0)) -> Dictionary:
 	return {"title": title, "sub": sub, "desc": "", "kind": "action", "action": action,
 		"glyph": glyph, "color": color, "cover": null}
@@ -823,6 +890,7 @@ func _build_cats() -> void:
 	var c_recent := {"id": "recentes", "title": "Recentes", "icon": "clock", "items": []}
 	var c_shots := {"id": "capturas", "title": "Capturas", "icon": "camera", "items": []}
 
+	_net_load()
 	favs = _load_favs()
 	for g in games:
 		var it := _game_item(g)
@@ -853,6 +921,7 @@ func _build_cats() -> void:
 		_act("Perfil: " + profile_name, "A troca para o próximo perfil. Cada um tem saves, favoritos e troféus próprios", "profile", "pad"),
 		_act("Wi-Fi", "Redes sem fio", "settings:0", "wifi"),
 		_act("Bluetooth", "Parear controles e fones", "settings:1", "bt"),
+		_act("SkyNetwork", "Amigos, mensagens e saves na nuvem", "settings:4", "wifi"),
 		_act("Volume", "Ajuste com ◀ ▶", "slider:volume", "sound"),
 		_act("Saída de som", audio_out_txt, "audio_out", "speaker"),
 		_act("Brilho da tela", "Ajuste com ◀ ▶", "slider:brilho", "sun"),
@@ -933,6 +1002,7 @@ func _build_cats() -> void:
 				tier.get(str(tr["nivel"]), WHITE) if got else Color(1, 1, 1, 0.25))
 			c_tro["items"].append(it)
 		cats.append(c_tro)
+	cats.append(_build_net_cat())
 	if not c_shots["items"].is_empty():
 		cats.append(c_shots)
 	cats.append(c_power)
@@ -1006,6 +1076,11 @@ func _activate() -> void:
 		_play("back")
 		return
 	_play("accept")
+	if action.begins_with("friend:"):
+		_open_settings(4)
+		if settings != null:
+			settings.call("abrir_amigo", action.substr(7))
+		return
 	if action.begins_with("settings:"):
 		_open_settings(int(action.split(":")[1]))
 		return
@@ -1188,6 +1263,7 @@ func _open_settings(section: int = -1) -> void:
 
 
 func _on_settings_closed() -> void:
+	status_t = 0.0   # entrou na rede, aceitou um amigo… o menu reflete na hora
 	cooldown = 0.35
 	hold_dir = _nav_dir()
 	_play("back")
@@ -1466,6 +1542,9 @@ func _refresh_status() -> void:
 	if theme_key == "auto" and not palette.is_empty() and palette != THEMES[_auto_theme()]:
 		_apply_theme(true)
 	_refresh_sys_items()
+	# Fase 10: amigo entrou, começou a jogar, mandou mensagem… refaz o menu (só depois da primeira montagem)
+	if _net_load() and not panel_open and not cats.is_empty() and cats[0].has("title"):
+		_build_cats()
 
 
 func _load_state() -> void:
@@ -1698,11 +1777,12 @@ func _poll_events() -> void:
 			_refresh_sys_items()
 		if Time.get_unix_time_from_system() - float(ev.get("t", 0)) > 20.0:
 			continue   # aviso antigo (chegou durante um jogo): não mostra fora de hora
-		var icons := {"central": "download", "controle": "pad", "usb": "usb", "pendrive": "drive", "jogo": "disc", "disco": "disc", "tv": "monitor", "trofeu": "trophy",
+		var icons := {"amigo": "friends", "mensagem": "bell", "nuvem": "download", "trofeu-amigo": "trophy",
+			"central": "download", "controle": "pad", "usb": "usb", "pendrive": "drive", "jogo": "disc", "disco": "disc", "tv": "monitor", "trofeu": "trophy",
 			"bateria": "battery", "energia": "battery", "calor": "thermo"}
 		_toast(text, 3.5, str(icons.get(kind, "info")))
-		if kind in ["controle", "energia", "bateria"]:
-			status_t = 0.0  # atualiza bateria/controles na tela já
+		if kind in ["controle", "energia", "bateria", "amigo", "mensagem"]:
+			status_t = 0.0  # atualiza bateria/controles/amigos na tela já
 
 
 func _fetch_covers() -> void:
@@ -3160,6 +3240,13 @@ func _icon(kind: String, c: Vector2, s: float, col: Color) -> void:
 		"thermo":
 			_rrect(Rect2(c.x - s * 0.08, c.y - s * 0.38, s * 0.16, s * 0.5), Color(0, 0, 0, 0), int(s * 0.08), col, int(lw))
 			draw_circle(c + Vector2(0, s * 0.22), s * 0.14, col, true, -1.0, true)
+		"friends":
+			# duas pessoas: a de trás menor e mais apagada
+			var tras := Color(col, col.a * 0.55)
+			draw_circle(c + Vector2(s * 0.20, -s * 0.20), s * 0.13, tras, true, -1.0, true)
+			_rrect(Rect2(c.x - s * 0.02, c.y - s * 0.02, s * 0.44, s * 0.30), tras, int(s * 0.13))
+			draw_circle(c + Vector2(-s * 0.12, -s * 0.14), s * 0.17, col, true, -1.0, true)
+			_rrect(Rect2(c.x - s * 0.40, c.y + s * 0.08, s * 0.56, s * 0.30), col, int(s * 0.14))
 		"bell":
 			draw_colored_polygon(PackedVector2Array([c + Vector2(-s * 0.30, s * 0.20), c + Vector2(-s * 0.22, s * 0.05),
 				c + Vector2(-s * 0.22, -s * 0.12), c + Vector2(-s * 0.12, -s * 0.28), c + Vector2(s * 0.12, -s * 0.28),
