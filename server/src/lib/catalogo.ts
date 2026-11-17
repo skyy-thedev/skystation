@@ -4,7 +4,7 @@ import { infoJogo, type InfoJogo } from "./jogos";
 // Catálogo do SkyStation: o que já foi testado e funciona (catalogo.json).
 
 export type Situacao = "perfeito" | "jogavel" | "com-falhas";
-export type JogoCatalogo = { id: string; nome: string; sistema: string; ano?: number; situacao: Situacao; nota?: string };
+export type JogoCatalogo = { id: string; nome: string; sistema: string; ano?: number; situacao: Situacao; nota?: string; capa?: string };
 export type Emulador = { sistema: string; nome: string; emulador: string; situacao: string; destaques: string };
 
 export const JOGOS = dados.jogos as JogoCatalogo[];
@@ -29,7 +29,11 @@ export type JogoComFicha = JogoCatalogo & { info: InfoJogo };
 
 /** Todos os jogos do catálogo com capa e ficha (buscadas em paralelo; ficam no cache). */
 export async function catalogoComFichas(): Promise<JogoComFicha[]> {
-  return Promise.all(JOGOS.map(async (j) => ({ ...j, info: await infoJogo(j.nome, j.sistema, j.ano) })));
+  return Promise.all(JOGOS.map(async (j) => {
+    const info = await infoJogo(j.nome, j.sistema, j.ano);
+    // "capa" no catalogo.json corrige à mão uma capa que a busca errou
+    return { ...j, info: j.capa ? { ...info, capa: j.capa } : info };
+  }));
 }
 
 /** O destaque do banner muda a cada dia; prefere jogos com arte larga. */

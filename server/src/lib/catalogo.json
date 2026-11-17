@@ -1,5 +1,5 @@
 {
-  "_leia": "Jogos e emuladores comprovadamente testados no SkyStation. Para incluir um jogo, acrescente uma linha em 'jogos' (id único, nome como aparece nas lojas, sistema). 'situacao': perfeito | jogavel | com-falhas. 'nota' é opcional e aparece na ficha.",
+  "_leia": "Jogos e emuladores comprovadamente testados no SkyStation. Para incluir um jogo, acrescente uma linha em 'jogos' (id único, nome como aparece nas lojas, sistema). 'situacao': perfeito | jogavel | com-falhas. 'nota' é opcional e aparece na ficha. 'ano' separa jogos de mesmo nome. 'capa' (link de imagem) corrige uma capa errada.",
   "emuladores": [
     {
       "sistema": "ps1",

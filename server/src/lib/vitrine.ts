@@ -239,7 +239,7 @@ export async function paginaJogo(sistema: string, jogoId: string, eu: { id: stri
 
   const vis = await perfisVisiveis(eu);
   const ids = [...vis.keys()];
-  const [info, saves, presencas, trofeus] = await Promise.all([
+  const [infoBuscada, saves, presencas, trofeus] = await Promise.all([
     infoJogo(titulo, catalogo?.sistema ?? (sistema === "outro" ? "" : sistema), catalogo?.ano),
     db.save.findMany({ where: { jogoId, perfilId: { in: ids } }, select: { perfilId: true, atualizadoEm: true } }),
     db.presenca.findMany({
@@ -252,6 +252,7 @@ export async function paginaJogo(sistema: string, jogoId: string, eu: { id: stri
       select: { perfilId: true, trofeu: true, nome: true, tipo: true, ganhoEm: true },
     }),
   ]);
+  const info = catalogo?.capa ? { ...infoBuscada, capa: catalogo.capa } : infoBuscada;
   const agora = new Set(
     presencas.map((p) => p.perfilId).filter((id) => !vis.get(id)!.invisivel || id === eu?.id),
   );

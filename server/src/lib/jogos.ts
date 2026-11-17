@@ -186,7 +186,9 @@ async function buscarWikipedia(nome: string, sistema: string, lingua: "pt" | "en
   const achados: { title: string }[] = (await json(`${base}/w/api.php?${q}`)).query?.search ?? [];
   const alvo = normalizar(nome);
   // títulos parecidos com o nome vêm primeiro ("God of War II" antes de "God of War (série)")
-  const ordem = [...achados].sort((a, b) => parecenca(b.title, alvo) - parecenca(a.title, alvo));
+  let ordem = [...achados].sort((a, b) => parecenca(b.title, alvo) - parecenca(a.title, alvo));
+  // havendo título idêntico ("Mortal Kombat (1992 video game)"), ignora os parecidos ("Mortal Kombat 3")
+  if (ordem.some((a) => parecenca(a.title, alvo) === 3)) ordem = ordem.filter((a) => parecenca(a.title, alvo) === 3);
   for (const { title } of ordem.slice(0, 4)) {
     if (parecenca(title, alvo) === 0) continue;
     const r = await json(`${base}/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, "_"))}`).catch(() => null);
@@ -270,7 +272,7 @@ async function montar(nome: string, sistema: string, ano?: number): Promise<Info
   };
 }
 
-const emCache = unstable_cache(montar, ["sky-jogo-v5"], { revalidate: 7 * 24 * 60 * 60, tags: ["jogos"] });
+const emCache = unstable_cache(montar, ["sky-jogo-v6"], { revalidate: 7 * 24 * 60 * 60, tags: ["jogos"] });
 
 const VAZIO = (nome: string): InfoJogo => ({
   nome, capa: null, arte: null, resumo: null, ano: null, generos: [], fonte: null, link: null,
