@@ -223,7 +223,22 @@ try:
     ok(A.sky("depois", *PS3)["message"] == "enviado", "PS3: as pastas de save do jogo sobem")
     ok(B.sky("antes", *PS3)["message"] == "baixado" and B.ler("ps3/BLUS30490-SAVE00/DATA.BIN") == A.ler("ps3/BLUS30490-SAVE00/DATA.BIN")
        and not os.path.exists(B.save("ps3/BLES00001-OUTRO")), "PS3: chegam inteiras, e só as daquele jogo")
-    ok(A.sky("antes", "x360-mgr", "Metal Gear Rising", "sky-emu x360 /roms/mgr.iso")["message"] == "nada a fazer", "sistema sem save sincronizável é ignorado")
+    # Xbox 360: só saves (00000001) e o perfil do Xbox (FFFE07D1); DLC e atualizações ficam no console
+    XB = "x360/0000000000000000/"
+    A.escrever(XB + "FFFE07D1/00010000/0000000000000000/Account", b"perfil do xbox")
+    A.escrever(XB + "4D5307E6/00000001/save-mgr/SAVEDATA", os.urandom(3000))
+    A.escrever(XB + "4D5307E6/00000002/dlc-gigante/DLC.bin", b"dlc nao sobe")
+    A.escrever(XB + "4D5307E6/000B0000/update/TU.bin", b"atualizacao nao sobe")
+    MGR = ("x360-mgr", "Metal Gear Rising", "sky-emu x360 /roms/mgr.iso")
+    ok(A.sky("depois", *MGR)["message"] == "enviado", "Xbox 360: os saves sobem")
+    B.escrever(XB + "4D5307E6/00000002/dlc-gigante/DLC.bin", b"dlc do console B")
+    ok(B.sky("antes", "x360-outro", "Outro jogo de 360", "sky-emu x360 /roms/outro.iso")["message"] == "baixado"
+       and B.ler(XB + "4D5307E6/00000001/save-mgr/SAVEDATA") == A.ler(XB + "4D5307E6/00000001/save-mgr/SAVEDATA")
+       and B.ler(XB + "FFFE07D1/00010000/0000000000000000/Account") == b"perfil do xbox",
+       "Xbox 360: save e perfil chegam no outro console")
+    ok(not os.path.exists(B.save(XB + "4D5307E6/000B0000/update/TU.bin")), "Xbox 360: atualização de jogo não vai para a nuvem")
+    ok(B.ler(XB + "4D5307E6/00000002/dlc-gigante/DLC.bin") == b"dlc do console B", "Xbox 360: a DLC do outro console fica intacta")
+    ok(A.sky("antes", "n64-x", "Jogo de terminal", "sky-run-terminal")["message"] == "nada a fazer", "comando que não é emulador é ignorado")
     ok(A.sky("nuvem", "off")["ok"] and A.sky("depois", *CRASH)["message"] == "nada a fazer" and A.sky("nuvem", "on")["ok"], "dá para desligar os saves na nuvem")
 
     # um .zip malicioso não escreve fora da pasta do jogo
@@ -233,6 +248,9 @@ try:
     u = nuvem.unidade(*CRASH)
     ok(nuvem.pertence(u, "ps1/Crash Bandicoot.srm") and not nuvem.pertence(u, "ps1/../../.bashrc")
        and not nuvem.pertence(u, "/etc/passwd") and not nuvem.pertence(u, "ps2/Mcd001.ps2"), "caminhos de fora da unidade são recusados")
+    ux = nuvem.unidade(*MGR)
+    ok(nuvem.pertence(ux, "x360/0000000000000000/4D5307E6/00000001/a/b") and not nuvem.pertence(ux, "x360/0000000000000000/4D5307E6/00000002/dlc"),
+       "Xbox 360: um .zip não consegue gravar DLC nem nada fora dos saves")
 
     # ------------------------------------------------------------ troféus e saída
     req = urllib.request.Request(URL + "/api/trofeus", headers={"Authorization": "Bearer " + A.token(), "X-Perfil": "p1"})

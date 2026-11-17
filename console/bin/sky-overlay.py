@@ -15,6 +15,7 @@ está aberto); ele manda para cá, pela entrada padrão, uma linha por comando:
     bri <0-100|-1>   -> brilho atual (-1 = sem controle de brilho)
     info {json}      -> bateria, controles, temperatura e hora
     msg <texto>      -> aviso rápido (ex.: "Estado salvo")
+    kb {json}        -> teclado virtual aberto (estado do skyteclado.Teclado.estado()); "kb" sozinho fecha
     quit             -> fechar
 Uso: sky-overlay.py <título do jogo> [foto da tela congelada]
 Teste sem tela:  SDL_VIDEODRIVER=dummy SKY_OVERLAY_PNG=/tmp/x.png sky-overlay.py "Jogo" < comandos
@@ -45,7 +46,8 @@ THEMES = {  # cores dos temas do launcher: (destaque, fundo escuro, fundo claro)
 SS = 4   # supersampling dos ícones e formas
 ACOES_ICONE = {"resume": "play", "save": "save", "load": "load", "shot": "camera", "close": "x",
                "suspend": "moon", "reboot": "refresh", "poweroff": "power", "limpar": "trash",
-               "volume": "speaker", "brilho": "sun"}
+               "volume": "speaker", "brilho": "sun", "amigo": "friends", "voltar_amigos": "friends",
+               "escrever": "bell", "rapida": "bell", "convidar": "pad"}
 
 
 def reader(q):
@@ -332,6 +334,129 @@ def shadow_text(screen, font, txt, color, pos, alpha=255):
     return sf.get_width()
 
 
+def quebrar(font, texto, largura):
+    """Quebra o texto em linhas que cabem na largura (por palavra; palavra enorme é cortada)."""
+    linhas, atual = [], ""
+    for palavra in str(texto).split():
+        while font.size(palavra)[0] > largura and len(palavra) > 1:
+            corte = len(palavra)
+            while corte > 1 and font.size(palavra[:corte])[0] > largura:
+                corte -= 1
+            if atual:
+                linhas.append(atual)
+                atual = ""
+            linhas.append(palavra[:corte])
+            palavra = palavra[corte:]
+        tentativa = (atual + " " + palavra).strip()
+        if font.size(tentativa)[0] <= largura:
+            atual = tentativa
+        else:
+            linhas.append(atual)
+            atual = palavra
+    if atual:
+        linhas.append(atual)
+    return linhas or [""]
+
+
+def desenhar_conversa(screen, msgs, x0, y0, x1, y1, s, accent, F):
+    """Fase 10: a conversa com um amigo, em balões, de baixo para cima (a mais nova embaixo)."""
+    f_msg, f_q = F(18), F(12)
+    largura = x1 - x0
+    screen.blit(rrect(largura, y1 - y0, int(20 * s), (0, 0, 0), 90, (*accent, 50), 1), (x0, y0))
+    pad = int(16 * s)
+    max_b = int(largura * 0.8)
+    y = y1 - pad
+    for m in reversed(msgs):
+        linhas = quebrar(f_msg, m.get("texto", ""), max_b - 2 * pad)[:6]
+        lh = f_msg.get_linesize()
+        bw = min(max_b, max(f_msg.size(l)[0] for l in linhas) + 2 * pad)
+        bh = len(linhas) * lh + int(16 * s)
+        quando = m.get("quando", "")
+        qh = f_q.get_linesize() if quando else 0
+        if y - bh - qh - int(10 * s) < y0 + pad:
+            break
+        y -= qh
+        if m.get("sistema"):
+            bx, cor_f, cor_t, alfa = x0 + (largura - bw) // 2, (255, 255, 255), MUTED, 0
+        elif m.get("minha"):
+            bx, cor_f, cor_t, alfa = x1 - pad - bw, accent, WHITE, 70
+        else:
+            bx, cor_f, cor_t, alfa = x0 + pad, (255, 255, 255), WHITE, 34
+        if quando:
+            q = render(f_q, quando, DIM)
+            screen.blit(q, (bx + (bw - q.get_width() if m.get("minha") else 0), y))
+        y -= bh
+        if alfa:
+            screen.blit(rrect(bw, bh, int(14 * s), cor_f, alfa), (bx, y))
+        for i, l in enumerate(linhas):
+            screen.blit(render(f_msg, l, cor_t), (bx + pad, y + int(8 * s) + i * lh))
+        y -= int(10 * s)
+
+
+def desenhar_teclado(screen, kb, W, H, s, accent, dark, F):
+    """Teclado virtual (Fase 10): painel na parte de baixo, com o texto em cima e as teclas embaixo."""
+    linhas = kb.get("linhas", [])
+    if not linhas:
+        return
+    f_tit, f_txt, f_key, f_cnt = F(16), F(26), F(22, True), F(13)
+    cols = max(len(r) for r in linhas)
+    kw, kh, gap = int(74 * s), int(54 * s), int(8 * s)
+    grid_w = cols * kw + (cols - 1) * gap
+    pad = int(26 * s)
+    campo_h = int(70 * s)
+    painel_w = grid_w + 2 * pad
+    painel_h = pad + int(22 * s) + campo_h + int(16 * s) + len(linhas) * (kh + gap) - gap + pad
+    px = (W - painel_w) // 2
+    py = H - painel_h - int(70 * s)
+    # escurece o menu atrás: o teclado é o foco
+    sombra = pygame.Surface((W, H), pygame.SRCALPHA)
+    sombra.fill((0, 0, 0, 120))
+    screen.blit(sombra, (0, 0))
+    screen.blit(rrect(painel_w, painel_h, int(22 * s), mix(dark, (0, 0, 0), 0.25), 235, (*accent, 120), 1), (px, py))
+    y = py + pad
+    screen.blit(render(f_tit, fit(f_tit, kb.get("titulo", ""), painel_w - 2 * pad), MUTED), (px + pad, y))
+    cnt = render(f_cnt, f"{len(kb.get('texto', ''))}/{kb.get('limite', 280)}", DIM)
+    screen.blit(cnt, (px + painel_w - pad - cnt.get_width(), y + int(3 * s)))
+    y += int(22 * s)
+    screen.blit(rrect(grid_w, campo_h, int(14 * s), (255, 255, 255), 22, (*accent, 90), 1), (px + pad, y))
+    texto = kb.get("texto", "")
+    # mostra o fim do texto (onde está o cursor) quando ele não cabe
+    vis = texto
+    while vis and f_txt.size(vis + "|")[0] > grid_w - int(36 * s):
+        vis = vis[1:]
+    piscando = int(time.monotonic() * 2) % 2 == 0
+    ts = render(f_txt, (("…" if vis != texto else "") + vis) + ("|" if piscando else " "), WHITE)
+    if not texto:
+        ts = render(f_txt, "Escreva com o controle…" if not piscando else "|", DIM)
+    screen.blit(ts, (px + pad + int(18 * s), y + (campo_h - ts.get_height()) // 2))
+    y += campo_h + int(16 * s)
+    r_sel, c_sel = kb.get("r", 0), kb.get("c", 0)
+    for r, row in enumerate(linhas):
+        n = len(row)
+        # linhas com menos teclas (a última) usam teclas mais largas, ocupando a mesma largura
+        w_k = (grid_w - (n - 1) * gap) / n
+        for c, k in enumerate(row):
+            x = px + pad + int(c * (w_k + gap))
+            on = r == r_sel and c == c_sel
+            especial = r == len(linhas) - 1
+            ativo = (k == "⇧" and kb.get("shift")) or (k == "ABC" and kb.get("simbolos"))
+            if on:
+                gl = glow(int(w_k), kh, accent, 70)
+                screen.blit(gl, (x - kh, y - kh))
+                fundo = rrect(int(w_k), kh, int(12 * s), accent, 255)
+                cor = dark
+            else:
+                fundo = rrect(int(w_k), kh, int(12 * s), (255, 255, 255), 46 if ativo else (20 if especial else 30))
+                cor = accent if ativo else (MUTED if especial else WHITE)
+            screen.blit(fundo, (x, y))
+            if k == "Enviar" and not on:
+                screen.blit(rrect(int(w_k), kh, int(12 * s), accent, 70), (x, y))
+                cor = WHITE
+            ks = render(f_key, k, cor)
+            screen.blit(ks, (x + (int(w_k) - ks.get_width()) // 2, y + (kh - ks.get_height()) // 2))
+        y += kh + gap
+
+
 def main():
     title = sys.argv[1] if len(sys.argv) > 1 else ""
     shot = sys.argv[2] if len(sys.argv) > 2 else ""
@@ -348,6 +473,15 @@ def main():
         display = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
     pygame.display.set_caption("SkyStation - Home")
     pygame.mouse.set_visible(False)
+    # Fase 9.3: no gamescope o menu precisa ser "overlay" para aparecer por cima do jogo congelado
+    if os.environ.get("SKY_COMPOSITOR") == "gamescope":
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import skygamescope
+            ok = skygamescope.marcar_overlay(pygame.display.get_wm_info().get("window"))
+            print("sky-overlay: overlay do gamescope " + ("marcado" if ok else "NÃO marcado"), file=sys.stderr, flush=True)
+        except Exception as e:
+            print(f"sky-overlay: não consegui marcar o overlay: {e!r}", file=sys.stderr, flush=True)
     W, H = display.get_size()
     # 8.1.1: no Wayland (cage) a tela do SDL tem canal alfa e o compositor RESPEITA esse alfa. Desenhando
     # direto nela, o texto e os brilhos viravam caixas (o alfa da tela caía para 0 em volta deles). Agora
@@ -371,6 +505,7 @@ def main():
     sc, si = 0, 0
     vol, muted, bri, info = -1, False, -1, {}
     msg, msg_t = "", 0.0
+    kb = None       # Fase 10: teclado virtual (dicionário do skyteclado) ou None
     t0 = last = time.monotonic()
     cam_x, cam_y = 0.0, 0.0
     sujo, minuto = True, ""
@@ -401,6 +536,8 @@ def main():
                     info = json.loads(rest)
                 elif head == "msg":
                     msg, msg_t = rest, time.monotonic()
+                elif head == "kb":
+                    kb = json.loads(rest) if rest.strip() else None
                 sujo = True
         except queue.Empty:
             pass
@@ -419,7 +556,7 @@ def main():
         if time.strftime("%H:%M") != minuto:
             minuto, sujo = time.strftime("%H:%M"), True
         animando = abs(cam_x - sc) > 0.003 or abs(cam_y - si) > 0.003 or appear < 1.0 \
-            or (msg and now - msg_t < 2.8)
+            or (msg and now - msg_t < 2.8) or kb is not None
         if not (sujo or animando):
             clock.tick(30)
             continue
@@ -495,7 +632,11 @@ def main():
         base_y = row_y + int(112 * s)
         gap = int(62 * s)
         ix = col_x - int(38 * s)
-        lw = int(640 * s)
+        conversa = cats[sc].get("conversa")
+        lw = int(640 * s) if conversa is None else int(430 * s)
+        if conversa is not None:
+            desenhar_conversa(screen, conversa, ix + lw + int(36 * s), int(118 * s), W - mx,
+                              H - int(84 * s), s, accent, F)
         hh = int(54 * s)
         for i, it in enumerate(items):
             # como no PS3: os itens antes do selecionado sobem para cima da fileira de categorias
@@ -564,7 +705,15 @@ def main():
 
         # ---- rodapé: botões no estilo do launcher (pílula com a tecla + ação)
         sel_kind = items[si].get("kind", "acao") if items else ""
-        if sel_kind == "slider":
+        sel_acao = items[si].get("acao", "") if items else ""
+        if kb:
+            hints = [("A", "Tecla"), ("B", "Apagar"), ("Y", "Espaço"), ("X", "Maiúscula"), ("Start", "Enviar"),
+                     ("Home", "Cancelar")]
+        elif sel_acao == "amigo":
+            hints = [("◀ ▶", "Categorias"), ("A", "Conversar"), ("B", "Voltar ao jogo")]
+        elif cats[sc].get("id") == "amigos" and sel_acao in ("voltar_amigos", "escrever", "rapida", "convidar", "nada"):
+            hints = [("A", "Escrever" if sel_acao == "escrever" else "Confirmar"), ("B", "Voltar aos amigos")]
+        elif sel_kind == "slider":
             hints = [("◀ ▶", "Ajustar"), ("L1 R1", "Categorias"), ("B", "Voltar ao jogo")]
         else:
             hints = [("◀ ▶", "Categorias"), ("A", "Apagar" if sel_kind == "notif" else "Confirmar"),
@@ -581,6 +730,9 @@ def main():
             screen.blit(rrect(pw, int(24 * s), int(12 * s), (255, 255, 255), 40), (x, yb - int(12 * s)))
             screen.blit(ks, (x + (pw - ks.get_width()) // 2, yb - ks.get_height() // 2))
             x -= int(26 * s)
+
+        if kb:
+            desenhar_teclado(screen, kb, W, H, s, accent, dark, F)
 
         if msg and now - msg_t < 2.5:
             fade = min(1.0, (2.5 - (now - msg_t)) / 0.3)

@@ -1,0 +1,93 @@
+name: Console (Python)
+
+# Confere os scripts do console antes de chegarem ao SkyStation: sintaxe de tudo, o menu Home
+# com o controle simulado (conversa e teclado), o desenho do menu e os avisos por cima do jogo
+# (sky-toast) num X11 virtual. As imagens ficam nos artefatos da execução.
+on:
+  push:
+    paths: ["console/**", ".github/workflows/console.yml"]
+  pull_request:
+    paths: ["console/**", ".github/workflows/console.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  conferir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Pacotes (pygame, evdev, GTK 4, X11 virtual)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3-pygame python3-evdev python3-gi python3-gi-cairo gir1.2-gtk-4.0 xvfb x11-utils imagemagick fonts-dejavu >/dev/null
+      - name: Sintaxe (Python e bash)
+        run: |
+          set -e
+          for f in console/bin/* console/session.sh console/tests/*; do
+            [ -f "$f" ] || continue
+            case "$(head -c 40 "$f")" in
+              *python*) /usr/bin/python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$f" && echo "ok  $f" ;;
+              *bash*|*/sh*) bash -n "$f" && echo "ok  $f" ;;
+            esac
+          done
+          for f in console/bin/*.py; do /usr/bin/python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$f"; done
+      - name: Menu Home e teclado (controle simulado)
+        run: /usr/bin/python3 console/tests/teste-home.py
+      - name: Desenho do menu (conversa e teclado)
+        run: |
+          mkdir -p imagens
+          /usr/bin/python3 - <<'PY'
+          import json, os, subprocess, sys, time
+          sys.path.insert(0, "console/bin")
+          import skyteclado
+          t = skyteclado.Teclado("Mensagem para Bart")
+          for ch in "Bora jogar inF": t.digitar(ch)
+          cats = [{"id": "jogo", "title": "Jogo", "icon": "pad", "items": [{"t": "Voltar ao jogo", "acao": "resume"}]},
+                  {"id": "amigos", "title": "Bart", "icon": "friends", "conversa": [
+                      {"texto": "Bora jogar?", "minha": False, "quando": "há 12 min"},
+                      {"texto": "Já volto, tô terminando uma missão aqui no inFamous", "minha": True, "quando": "agora"}],
+                   "items": [{"t": "Voltar aos amigos", "acao": "voltar_amigos"},
+                             {"t": "Escrever mensagem…", "acao": "escrever", "sub": "Teclado na tela, com o controle"},
+                             {"t": "Enviar: GG!", "acao": "rapida"}, {"t": "Convidar para inFamous", "acao": "convidar"}]}]
+          for nome, extra in (("menu-conversa", []), ("menu-teclado", ["kb " + json.dumps(t.estado(), ensure_ascii=False)])):
+              env = dict(os.environ, SDL_VIDEODRIVER="dummy", SKY_OVERLAY_PNG=f"imagens/{nome}.png")
+              p = subprocess.Popen([sys.executable, "console/bin/sky-overlay.py", "inFamous", ""], stdin=subprocess.PIPE, text=True, env=env)
+              for c in ["cats " + json.dumps(cats, ensure_ascii=False), "sel 1 1"] + extra:
+                  p.stdin.write(c + "\n")
+              p.stdin.flush(); time.sleep(3); p.stdin.write("quit\n"); p.stdin.close()
+              assert p.wait(30) == 0, nome
+              assert os.path.getsize(f"imagens/{nome}.png") > 20000, f"{nome}: imagem vazia"
+              print("ok", nome)
+          PY
+      - name: Avisos por cima do jogo (sky-toast num X11 virtual)
+        run: |
+          export DISPLAY=:99 GDK_BACKEND=x11 SKY_COMPOSITOR=gamescope XDG_RUNTIME_DIR=$(mktemp -d)
+          Xvfb :99 -screen 0 1280x720x24 >/dev/null 2>&1 &
+          sleep 2
+          mkdir -p "$XDG_RUNTIME_DIR/skystation"
+          sleep 600 & echo $! >"$XDG_RUNTIME_DIR/skystation/game.pid"    # finge um jogo aberto
+          /usr/bin/python3 console/bin/sky-toast >toast.log 2>&1 &
+          sleep 4
+          /usr/bin/python3 console/bin/sky-toast teste "Troféu de ouro: Maratonista"
+          sleep 1.2
+          import -window root imagens/toast.png
+          touch "$XDG_RUNTIME_DIR/skystation/menu.aberto"                 # com o menu Home aberto, nada de aviso
+          /usr/bin/python3 console/bin/sky-toast teste "Este aviso não pode aparecer"
+          sleep 1.2
+          import -window root imagens/toast-com-menu.png
+          cat toast.log
+          grep -q "overlay marcado" toast.log
+          # o aviso é desenhado no canto superior direito: lá tem que ter pixel claro (texto)…
+          brilho() { convert "$1" -crop 520x80+740+20 -colorspace Gray -format "%[fx:maxima]" info:; }
+          echo "canto com aviso: $(brilho imagens/toast.png)  ·  com o menu aberto: $(brilho imagens/toast-com-menu.png)"
+          awk -v v="$(brilho imagens/toast.png)" 'BEGIN { exit !(v > 0.6) }'
+          # …e com o menu Home aberto o aviso não pode aparecer
+          awk -v v="$(brilho imagens/toast-com-menu.png)" 'BEGIN { exit !(v < 0.2) }' 
+          kill %1 %2 %3 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: imagens-do-console
+          path: imagens/

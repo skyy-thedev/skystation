@@ -130,7 +130,19 @@ x360)
         fail "Xbox 360 precisa de um processador com 6+ threads (este tem $(nproc)). Dê boot com o pendrive num PC mais forte."
     fi
     cd "$(dirname "$XENIA")" || fail "Pasta do Xenia inacessível."
-    exec "$XENIA" --fullscreen=true --gpu=vulkan "$ROM"
+    # Fase 9.4: os saves do Xenia ficam na pasta do perfil (~/skystation/saves/x360), como os dos
+    # outros emuladores: cada perfil tem os seus e a nuvem (sky-cloud) os encontra. Na primeira vez,
+    # traz o que já existia no lugar padrão do Xenia (só copia: o original continua lá).
+    X360="$SKY/saves/x360"
+    if [ -z "$(ls -A "$X360" 2>/dev/null)" ]; then
+        for velho in "${XDG_DATA_HOME:-$HOME/.local/share}/Xenia/content" "$(dirname "$XENIA")/content"; do
+            if [ -d "$velho" ] && [ -n "$(ls -A "$velho" 2>/dev/null)" ]; then
+                cp -a "$velho/." "$X360/" && echo "sky-emu: saves do Xenia copiados de $velho" >&2
+                break
+            fi
+        done
+    fi
+    exec "$XENIA" --fullscreen=true --gpu=vulkan --content_root="$X360" "$ROM"
     ;;
 ps3)
     # O sky-ps3 desliga as telas de aviso do RPCS3, configura o controle ligado agora, instala o

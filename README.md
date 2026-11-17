@@ -123,6 +123,17 @@ No console:
 - **Em segundo plano** (`sky-net`): sincroniza a cada 30 s e na hora em que um jogo abre/fecha; avisa
   amigo online, amigo começou a jogar, mensagem, convite, pedido de amizade e troféu de amigo.
 - Teste do lado do console contra um servidor de verdade: `console/tests/teste-rede.py`.
+- **Dentro do jogo** (menu Home → Amigos): A num amigo abre a conversa em balões, com mensagens
+  rápidas, convite para o jogo aberto e **teclado na tela** (A tecla, B apaga, Y espaço, X maiúscula,
+  Select símbolos e acentos, Start envia, Home cancela; um teclado de verdade também digita).
+- **Avisos por cima do jogo** (Fase 9.3, experimental): Sistema → "Avisos por cima do jogo" troca o
+  compositor cage pelo gamescope e reabre o menu. Os avisos aparecem num cartão no canto da tela sem
+  pausar o jogo (`sky-toast`). Se o gamescope sair com erro, a sessão volta sozinha ao cage e o motivo
+  fica em `~/.config/skystation/compositor.falhou` (log completo em `gamescope.log`). No gamescope o
+  menu Home abre sem a foto do jogo congelado ao fundo, e o Modo TV não troca de tela sozinho.
+- Saves do **Xbox 360** também vão para a nuvem: o Xenia passa a guardar os saves na pasta do perfil
+  (`saves/x360`; na primeira vez copia os que já existiam). Só saves e o perfil do Xbox; DLC e
+  atualizações de jogo ficam no console.
 
 ## Patches automáticos do PS3 (Fase 8.3)
 
