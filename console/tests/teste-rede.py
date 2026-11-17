@@ -301,14 +301,16 @@ finally:
             pass
     for usuario, senha in CONTAS:   # contas sobrevivem ao console: exclui pelo site
         try:
-            import http.cookiejar
-            jar = http.cookiejar.CookieJar()
-            op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
             cab = {"Content-Type": "application/json"}
-            op.open(urllib.request.Request(URL + "/api/web/entrar", data=json.dumps({"usuario": usuario, "senha": senha}).encode(),
-                                           headers=cab, method="POST"), timeout=20)
-            op.open(urllib.request.Request(URL + "/api/web/eu", data=json.dumps({"senha": senha}).encode(),
-                                           headers=cab, method="DELETE"), timeout=20)
+            r = urllib.request.urlopen(urllib.request.Request(
+                URL + "/api/web/entrar", data=json.dumps({"usuario": usuario, "senha": senha}).encode(),
+                headers=cab, method="POST"), timeout=20)
+            # o cookie é "Secure" (só HTTPS); o teste roda em HTTP local, então vai à mão
+            cookie = r.headers.get("Set-Cookie", "").split(";")[0]
+            urllib.request.urlopen(urllib.request.Request(
+                URL + "/api/web/eu", data=json.dumps({"senha": senha}).encode(),
+                headers={**cab, "Cookie": cookie}, method="DELETE"), timeout=20)
         except Exception as e:
-            print("aviso: não consegui excluir a conta de teste", usuario, e)
+            print("FALHOU: não consegui excluir a conta de teste", usuario, e)
+            sys.exit(1)
     shutil.rmtree(RAIZ, ignore_errors=True)
