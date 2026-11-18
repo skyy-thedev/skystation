@@ -150,16 +150,31 @@ PS1, SNES, N64, NES, Mega Drive e Game Boy: o netplay do RetroArch com convite p
 - `sky-netplay hospedar|entrar|sala` faz o trabalho; o `sky-emu` deixa todo jogo de RetroArch pronto para virar sala.
 - PS1 e N64 podem perder a sincronia em alguns jogos (limitação dos núcleos); SNES, NES e Mega Drive são os mais estáveis.
 
-## Zona Morta — primeiro jogo oficial (protótipo 0.1)
+## Zona Morta — primeiro jogo oficial (versão 0.2)
 
-RPG de sobrevivência zumbi visto de cima, em Godot (`console/games/zona-morta`), sem arquivos de arte:
-tudo é desenhado pelo código. Cidade nova a cada partida (prédios com porta, praças, estacionamentos e
-carros abandonados), dia e noite (a noite é escura, só a sua lanterna ilumina, e os zumbis aumentam),
-caixas para revirar (balas, bandagens, comida), fome, fôlego, nível e recorde.
-- **Controle:** L analógico anda, R analógico mira, **R2** atira (mira assistida), **R1** golpe, **□** recarrega,
-  **△** bandagem, **L1** come, **L2** corre, **✕** revira caixa (segure), **Options** pausa. Teclado: WASD, mouse, Espaço, E, R, H, F, Shift.
-- Tiro e corrida fazem barulho e atraem os zumbis; a cada dia eles ficam mais fortes, e aparecem os corredores.
-- Testar no PC: `godot --path console/games/zona-morta`. No console aparece em Jogos depois do `skystation-atualizar`.
+RPG de sobrevivência zumbi em **2.5D** (Godot, `console/games/zona-morta`), sem arquivos de arte: tudo é
+desenhado pelo código. Paredes, móveis, carros e árvores têm altura; o mundo é ordenado pelo Y e a parede
+fica transparente quando alguém passa atrás dela. À noite, só a lanterna (cone com sombras), a tocha e as
+fogueiras iluminam, e luz acesa no escuro faz os zumbis te verem de mais longe.
+- **História — Capítulo 1 "O Sinal":** Davi (e Lia no coop) ouvem a Estação Norte no rádio. Revirar a casa,
+  usar o rádio da delegacia (falar a verdade ou mentir para a Marta), encher um galão, achar um carro que pegue,
+  dirigir até a ponte e negociar com o Tião (arma, gasolina ou ameaça). A Nina aparece pedindo ajuda.
+  As escolhas aparecem no fim e vão pesar no Capítulo 2. Também tem o modo **Sobrevivência** (sem fim).
+- **Mundo:** cidade nova a cada partida: casas (armário, geladeira, cama), mercado, delegacia (arsenal e
+  viaturas), posto (bomba de gasolina), garagens (caixas de ferramentas) e praças com árvores para lenha.
+- **Escassez:** munição pouca (9mm, cartuchos, rifle); armas em armários, porta-malas, viaturas e no arsenal.
+- **Sobreviver:** fome, fôlego, vida e nível; comida em casas (carne crua passa mal: asse na fogueira).
+  **Acampar:** barricade todas as portas de uma casa (2 madeira cada; zumbis socam até cair) e durma na cama
+  para pular a noite.
+- **Criar (△ → Criar):** tocha, bandagem, fogueira, molotov (garrafa + pano + 2 L de gasolina), faca, machado.
+  Machado corta lenha das árvores.
+- **Carros:** os que funcionam piscam o farol; abasteça com o galão (posto ou tanque de carro quebrado) e dirija
+  (R2 acelera, L2 freia, □ buzina, ✕ sai). Atropelar funciona; o motor faz barulho.
+- **Coop local:** segundo controle aperta Options e a Lia entra; câmera mostra os dois; caído = o outro reanima.
+- **Controle:** L anda, R mira, R2 arma, R1 golpe, L2 corre, L1 molotov, ✕ usar (segure), □ recarrega,
+  ○ bandagem, △ mochila/criar, ←→ arma, ↑ lanterna, ↓ tocha, Options pausa. Teclado: WASD, mouse, E, R, H, Tab, F, T, G.
+- **Testes:** `console/tests/zona-morta/roteiro.gd` joga o capítulo inteiro (rádio, posto, carro, coop, dormir,
+  ponte) e `controles.gd` aperta os botões de verdade; os dois rodam no CI do launcher.
 
 ## SkyStore (Fase 12, etapa 1: servidor)
 
