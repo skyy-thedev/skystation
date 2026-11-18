@@ -150,6 +150,22 @@ PS1, SNES, N64, NES, Mega Drive e Game Boy: o netplay do RetroArch com convite p
 - `sky-netplay hospedar|entrar|sala` faz o trabalho; o `sky-emu` deixa todo jogo de RetroArch pronto para virar sala.
 - PS1 e N64 podem perder a sincronia em alguns jogos (limitação dos núcleos); SNES, NES e Mega Drive são os mais estáveis.
 
+## SkyStore (Fase 12, etapa 1: servidor)
+
+Loja de apps, jogos, temas e emuladores para o console. Só a equipe publica; cada pacote é **assinado**
+(Ed25519) no PC de quem publica e o console confere a assinatura antes de instalar.
+- **Configurar (1x):** `cd server && node scripts/loja.mjs chave` cria a chave privada em
+  `~/.config/skystation-loja/` (guarde uma cópia; nunca vai para o GitHub) e mostra a pública. Na Vercel:
+  `SKY_LOJA_CHAVE_PUBLICA=<pública>` e `SKY_ADMIN=sky` (IDs SkyNetwork que podem publicar, separados por vírgula).
+- **Publicar:** `node scripts/loja.mjs item objeto-7 --tipo jogo --nome "OBJETO 7" --oficial`, depois
+  `node scripts/loja.mjs enviar pacote.skypkg objeto-7 1.0 --notas "lançamento" --publicar`. O arquivo vai
+  direto para o armazenamento (R2), sem passar pela Vercel. `lista`, `publicar`/`despublicar` versões.
+- **Painel:** `/admin/loja` no site (só para quem está em `SKY_ADMIN`): dados do item, vitrine, versões.
+- **API:** `GET /api/loja` (vitrine), `GET /api/loja/:slug`, `POST /api/loja/:slug/baixar` (console registrado:
+  endereço temporário + sha256 + assinatura). Texto assinado: `skystation-loja-v1\nslug\nversao\nsha256\ntamanho`.
+- Etapas seguintes: `sky-store` no console (baixar, conferir, instalar) e a categoria SkyStore no menu;
+  vitrine no site com "Enviar para o console".
+
 ## Online do PS3 pelo RPCN (Fase 11.5)
 
 O RPCS3 tem um servidor próprio no lugar da PSN, o **RPCN** (`np.rpcs3.net`): partidas online, salas e

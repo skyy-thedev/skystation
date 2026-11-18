@@ -43,6 +43,9 @@ jobs:
       DATABASE_URL: postgresql://postgres:sky@localhost:5432/skynetwork
       SKY_CONVITE: convite-do-teste
       CRON_SECRET: segredo-do-teste
+      # SkyStore: conta de admin do teste e a chave pública da chave de teste fixa do teste.mjs
+      SKY_ADMIN: lojateste
+      SKY_LOJA_CHAVE_PUBLICA: 6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=
       S3_ENDPOINT: http://localhost:5000
       S3_REGION: us-east-1
       S3_BUCKET: skycloud

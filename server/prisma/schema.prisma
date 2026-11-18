@@ -190,3 +190,42 @@ model TrofeuGanho {
   @@unique([perfilId, jogoId, trofeu])
   @@index([criadoEm])
 }
+
+/// SkyStore (Fase 12): um app, jogo, tema ou emulador que o console pode baixar.
+/// Os arquivos ficam no armazenamento (R2); aqui só os dados e a assinatura de cada versão.
+model LojaItem {
+  id           String       @id @default(cuid())
+  slug         String       @unique // sky-tema-noite, objeto-7… (vira o nome da pasta no console)
+  tipo         String       // app | jogo | tema | emulador
+  nome         String
+  resumo       String       @default("") // uma linha, para a vitrine
+  descricao    String       @default("")
+  autor        String       @default("SkyStation")
+  oficial      Boolean      @default(false) // feito pela SkyStation (selo na vitrine)
+  capa         String?      // endereço da imagem
+  publicado    Boolean      @default(false) // aparece na vitrine
+  downloads    Int          @default(0)
+  criadoEm     DateTime     @default(now())
+  atualizadoEm DateTime     @updatedAt
+
+  versoes LojaVersao[]
+}
+
+/// Uma versão de um item: o pacote assinado com a chave da SkyStore (Ed25519, guardada só no PC do Sky).
+model LojaVersao {
+  id         String   @id @default(cuid())
+  itemId     String
+  item       LojaItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  versao     String   // 1.0.0
+  notas      String   @default("") // o que mudou
+  chave      String   // caminho no armazenamento
+  tamanho    BigInt
+  sha256     String
+  assinatura String   // Ed25519 de "skystation-loja-v1\nslug\nversao\nsha256\ntamanho", em base64
+  enviada    Boolean  @default(false) // o arquivo chegou ao armazenamento e foi conferido
+  publicada  Boolean  @default(false) // os consoles podem baixar
+  criadaEm   DateTime @default(now())
+
+  @@unique([itemId, versao])
+  @@index([itemId, criadaEm])
+}

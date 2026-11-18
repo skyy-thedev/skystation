@@ -3,7 +3,7 @@
 //   1) suba o servidor (npm run dev)   2) npm run teste
 // Usa SKY_URL (padrão http://localhost:3000) e SKY_CONVITE (ou o do .env).
 import "dotenv/config";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createPrivateKey, randomBytes, sign } from "node:crypto";
 
 const BASE = (process.env.SKY_URL || "http://localhost:3000").replace(/\/$/, "");
 const CONVITE = process.env.SKY_CONVITE;
@@ -327,6 +327,64 @@ try {
 
   // excluir conta
   ok((await nB("DELETE", "/api/web/eu", { senha: "errada" })).status === 401, "excluir conta pede a senha certa");
+
+  // ---------------------------------------------------------------- SkyStore (Fase 12)
+  // chave de teste fixa: a pública correspondente está em SKY_LOJA_CHAVE_PUBLICA no CI
+  const privLoja = createPrivateKey({ key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), Buffer.alloc(32, 7)]), format: "der", type: "pkcs8" });
+  const assinar = (slug, versao, sha, tam, chave = privLoja) =>
+    sign(null, Buffer.from(`skystation-loja-v1\n${slug}\n${versao}\n${sha}\n${tam}`), chave).toString("base64");
+  const ADM = process.env.SKY_ADMIN_TESTE || "lojateste";
+  const nAdm = navegador();
+  let rAdm = await nAdm("POST", "/api/web/registrar", { usuario: ADM, senha: "segredo-loja", apelido: "Loja", convite: CONVITE });
+  if (rAdm.status === 409) rAdm = await nAdm("POST", "/api/web/entrar", { usuario: ADM, senha: "segredo-loja" });
+  ok(rAdm.status === 200 || rAdm.status === 201, "loja: conta de admin de teste");
+  contas.push([nAdm, "segredo-loja"]);
+  const slugL = `teste-${sufixo}`.replace(/_/g, "-");
+  ok((await nA("POST", "/api/admin/loja", { slug: slugL, tipo: "jogo", nome: "X" })).status === 403, "loja: quem não é admin não publica");
+  ok((await anonimo("GET", "/api/admin/loja")).status === 401, "loja: painel sem sessão = 401");
+  ok((await nAdm("POST", "/api/admin/loja", { slug: "Ruim Slug", tipo: "jogo", nome: "X" })).status === 400, "loja: slug inválido = 400");
+  ok((await nAdm("POST", "/api/admin/loja", { slug: slugL, tipo: "jogo", nome: "Jogo de Teste", resumo: "Só um teste", oficial: true, capa: "http://inseguro" })).status === 400, "loja: capa só https");
+  const it = await nAdm("POST", "/api/admin/loja", { slug: slugL, tipo: "jogo", nome: "Jogo de Teste", resumo: "Só um teste", oficial: true });
+  ok(it.status === 200 && it.dados.item.publicado === false, "loja: admin cria o item (escondido)");
+  const pacote = randomBytes(3000);
+  const shaP = createHash("sha256").update(pacote).digest("hex");
+  const outra = createPrivateKey({ key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), Buffer.alloc(32, 9)]), format: "der", type: "pkcs8" });
+  ok((await nAdm("POST", "/api/admin/loja/versoes", { slug: slugL, versao: "1.0", sha256: shaP, tamanho: pacote.length, assinatura: assinar(slugL, "1.0", shaP, pacote.length, outra) })).status === 400, "loja: assinatura de outra chave é recusada");
+  ok((await nAdm("POST", "/api/admin/loja/versoes", { slug: slugL, versao: "1.0", sha256: shaP, tamanho: pacote.length, assinatura: assinar(slugL, "2.0", shaP, pacote.length) })).status === 400, "loja: assinatura de outra versão é recusada");
+  const iv = await nAdm("POST", "/api/admin/loja/versoes", { slug: slugL, versao: "1.0", notas: "primeira", sha256: shaP, tamanho: pacote.length, assinatura: assinar(slugL, "1.0", shaP, pacote.length) });
+  ok(iv.status === 201 && iv.dados.url, "loja: versão 1.0 registrada, endereço de envio");
+  ok((await nAdm("POST", "/api/admin/loja/versoes/confirmar", { id: iv.dados.versaoId })).status === 409, "loja: confirmar sem o arquivo = 409");
+  ok((await nAdm("PATCH", "/api/admin/loja/versoes", { id: iv.dados.versaoId, publicada: true })).status === 409, "loja: não publica o que não chegou");
+  ok((await fetch(iv.dados.url, { method: "PUT", body: pacote })).ok, "loja: pacote enviado direto ao armazenamento");
+  const cf = await nAdm("POST", "/api/admin/loja/versoes/confirmar", { id: iv.dados.versaoId, publicar: true });
+  ok(cf.status === 200 && cf.dados.versao.enviada && cf.dados.versao.publicada, "loja: confirmada e publicada");
+  ok(!(await anonimo("GET", "/api/loja")).dados.itens.some((i) => i.slug === slugL), "loja: item escondido não aparece na vitrine");
+  await nAdm("POST", "/api/admin/loja", { slug: slugL, tipo: "jogo", nome: "Jogo de Teste", publicado: true });
+  const vit = await anonimo("GET", "/api/loja");
+  const naVit = vit.dados.itens.find((i) => i.slug === slugL);
+  ok(naVit && naVit.versao.versao === "1.0" && naVit.oficial && naVit.versao.tamanho === pacote.length, "loja: na vitrine com a versão 1.0");
+  ok((await anonimo("GET", `/api/loja/${slugL}`)).dados.versoes.length === 1, "loja: página do item");
+  ok((await api("POST", `/api/loja/${slugL}/baixar`, { corpo: {} })).status === 401, "loja: baixar só com console registrado");
+  const bx = await api("POST", `/api/loja/${slugL}/baixar`, { token: A.token, corpo: {} });
+  ok(bx.status === 200 && bx.dados.sha256 === shaP && bx.dados.assinatura, "loja: console recebe endereço, sha256 e assinatura");
+  const baixado = Buffer.from(await (await fetch(bx.dados.url)).arrayBuffer());
+  ok(baixado.equals(pacote), "loja: o arquivo baixado é o mesmo enviado");
+  ok((await nAdm("POST", "/api/admin/loja/versoes", { slug: slugL, versao: "1.0", sha256: shaP, tamanho: pacote.length, assinatura: assinar(slugL, "1.0", shaP, pacote.length) })).status === 409, "loja: não reaproveita número de versão");
+  // 1.10 é mais nova que 1.9; uma versão enviada mas não publicada não vale para os consoles
+  for (const ver of ["1.9", "1.10"]) {
+    const r = await nAdm("POST", "/api/admin/loja/versoes", { slug: slugL, versao: ver, sha256: shaP, tamanho: pacote.length, assinatura: assinar(slugL, ver, shaP, pacote.length) });
+    await fetch(r.dados.url, { method: "PUT", body: pacote });
+    await nAdm("POST", "/api/admin/loja/versoes/confirmar", { id: r.dados.versaoId, publicar: ver === "1.10" });
+  }
+  ok((await api("POST", `/api/loja/${slugL}/baixar`, { token: A.token, corpo: {} })).dados.versao === "1.10", "loja: a mais nova publicada é a 1.10 (não a 1.9)");
+  ok((await api("POST", `/api/loja/${slugL}/baixar`, { token: A.token, corpo: { versao: "1.9" } })).status === 404, "loja: versão não publicada não baixa");
+  const adm = await nAdm("GET", "/api/admin/loja");
+  const itA = adm.dados.itens.find((i) => i.slug === slugL);
+  ok(itA.versoes.map((v) => v.versao).join() === "1.10,1.9,1.0" && itA.downloads === 2, "loja: painel lista as versões e conta os downloads");
+  ok((await nAdm("GET", "/admin/loja")).status === 200 && (await nA("GET", "/admin/loja")).status === 404, "loja: página do painel só para admin");
+  for (const v of itA.versoes) await nAdm("DELETE", "/api/admin/loja/versoes", { id: v.id });
+  ok(!(await anonimo("GET", "/api/loja")).dados.itens.some((i) => i.slug === slugL), "loja: sem versões sai da vitrine");
+  ok((await nAdm("DELETE", "/api/admin/loja", { slug: slugL })).status === 200 && (await anonimo("GET", `/api/loja/${slugL}`)).status === 404, "loja: item apagado");
 
   // ---------------------------------------------------------------- desfazer amizade
   ok((await api("DELETE", `/api/amigos/${ped.dados.amizadeId}`, { ...B })).status === 200, "B desfaz a amizade");

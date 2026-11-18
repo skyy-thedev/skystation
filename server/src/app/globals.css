@@ -339,3 +339,14 @@ textarea { resize: vertical; min-height: 70px; }
   .abas-pilula button { padding: 9px 14px; font-size: 14px; flex: none; }
   .faixa-mes { padding-top: 50px; }
 }
+
+/* SkyStore · painel (Fase 12) */
+.form-loja { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin-top: 18px; }
+.form-loja label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--suave); }
+.form-loja .largo { grid-column: 1 / -1; }
+.form-loja .marcar { flex-direction: row; align-items: center; gap: 8px; color: var(--texto); }
+.form-loja .marcar input { width: auto; }
+.selo-oficial { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--destaque); color: #04122b; vertical-align: middle; }
+.tabela-versoes { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 14px; }
+.tabela-versoes td { padding: 9px 8px; border-top: 1px solid var(--borda); }
+@media (max-width: 640px) { .form-loja { grid-template-columns: 1fr; } }
