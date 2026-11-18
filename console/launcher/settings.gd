@@ -16,6 +16,8 @@ const DIM := Color("5a6891")
 const PANEL := Color("121a3a")
 const INK := Color("06091a")
 const SECTIONS := ["Wi-Fi", "Bluetooth", "Som", "Sistema", "SkyNetwork"]
+const SECTION_DESC := ["Redes sem fio e conexão com a internet", "Parear controles, fones e outros aparelhos",
+	"Volume do sistema", "Hardware, versão e armazenamento", "Conta, amigos, mensagens, saves na nuvem e online"]
 const SKY_CLOUD := "/opt/skystation/bin/sky-cloud"
 const SKY_PS3 := "/opt/skystation/bin/sky-ps3"
 const NET_RAPIDAS := ["Bora jogar?", "Entra aí!", "GG!", "Já volto", "Agora não dá"]
@@ -26,6 +28,7 @@ const KB_SPECIAL := ["Maiúsc", "Símbolos", "Espaço", "Apagar", "OK"]
 
 var section: int = 0
 var column: int = 0  # 0 = lista de seções, 1 = itens da seção
+var direto: bool = false  # aberto por um item do menu: ○ fecha em vez de voltar à lista de seções
 var item: int = 0
 var items: Array = []
 var status: String = ""
@@ -73,8 +76,12 @@ func _ready() -> void:
 func open(start_section: int = -1) -> void:
 	visible = true
 	column = 0
+	direto = false
 	if start_section >= 0 and start_section < SECTIONS.size():
 		section = start_section
+		# como no PS3: o item do menu abre direto a tela dele, e ○ volta ao menu
+		column = 1
+		direto = true
 	kb_open = false
 	net_amigo = ""
 	net_msg = ""
@@ -214,8 +221,6 @@ func _command(c: String) -> void:
 		if not items.is_empty():
 			column = 1
 			item = clamp(item, 0, items.size() - 1)
-	elif c == "left":
-		column = 0
 	elif c == "a":
 		_activate()
 	elif c == "y" and column == 1 and not items.is_empty() and items[item]["action"] == "bt_dev":
@@ -224,7 +229,11 @@ func _command(c: String) -> void:
 		items[item] = opts
 		_activate()
 	elif c == "b":
-		if column == 1:
+		if column == 1 and net_amigo != "":
+			_activate_acao({"action": "net_voltar"})
+		elif column == 1 and not items.is_empty() and items[0]["action"] == "bt_back":
+			_load_section()   # sub-tela (opções do aparelho, online do PS3): volta à lista da seção
+		elif column == 1 and not direto:
 			column = 0
 		else:
 			_close()
@@ -305,7 +314,7 @@ func _activate_acao(it: Dictionary) -> void:
 				_async(["bt", "remove", it["arg"]], _on_result.bind(section))
 			else:
 				it["confirm"] = true
-				it["text"] = "Confirmar: esquecer %s?  (aperte A de novo)" % it["name"]
+				it["text"] = "Confirmar: esquecer %s?  (confirme de novo)" % it["name"]
 		"vol_up":
 			_set_volume(volume + 10)
 		"vol_down":
@@ -341,7 +350,7 @@ func _activate_acao(it: Dictionary) -> void:
 				_async_net(["rpcn-sair"], _on_net_result.bind(section), "", SKY_PS3)
 			else:
 				it["confirm"] = true
-				it["text"] = "Confirmar: desligar o online do PS3?  (aperte A de novo)"
+				it["text"] = "Confirmar: desligar o online do PS3?  (confirme de novo)"
 		"net_conta_criar", "net_conta_entrar":
 			_kb_start(("Escolha o seu ID SkyNetwork: 3 a 16 letras minúsculas, números ou _" if it["action"] == "net_conta_criar"
 				else "O seu ID SkyNetwork"), "")
@@ -379,7 +388,7 @@ func _activate_acao(it: Dictionary) -> void:
 				_async_net(it["arg"], _on_net_result.bind(section))
 			else:
 				it["confirm"] = true
-				it["text"] = "Confirmar: " + str(it["text"]) + "?  (aperte A de novo)"
+				it["text"] = "Confirmar: " + str(it["text"]) + "?  (confirme de novo)"
 
 
 func _on_wifi(data: Dictionary, sec: int) -> void:
@@ -421,7 +430,7 @@ func _on_bt(data: Dictionary, sec: int) -> void:
 		# Fase 8.1: aparelho já pareado abre as opções (desconectar, esquecer…); novo vai direto parear
 		items.append({"text": t, "action": "bt_dev" if d["paired"] else "bt_pair", "arg": d["mac"],
 			"name": str(d["name"]), "connected": d.get("connected", false)})
-	status = "%d dispositivo(s)  ·  A conecta/desconecta  ·  Triângulo (Y): opções e esquecer" % (items.size() - 1)
+	status = "%d dispositivo(s)" % (items.size() - 1)
 	item = clamp(item, 0, items.size() - 1)
 
 
@@ -507,7 +516,7 @@ func _on_net(data: Dictionary, sec: int) -> void:
 			items.append({"text": "%s   ·   Meu código de amigo:  %s   (crie um ID para ser achado pelo nome)" % [
 				_nulo(eu.get("apelido")), _nulo(eu.get("codigo"))], "action": "info"})
 		grade_atual = _nulo(eu.get("avatar"))
-		items.append({"text": "Ícone do perfil: %s   (A abre a grade)" % _nome_avatar(grade_atual), "action": "net_icones"})
+		items.append({"text": "Ícone do perfil: %s" % _nome_avatar(grade_atual), "action": "net_icones"})
 		if conta == "":
 			items.append({"text": "Criar conta SkyNetwork  (ID e senha para o site e outros consoles)", "action": "net_conta_criar"})
 			items.append({"text": "Já tenho conta: entrar com ID e senha", "action": "net_conta_entrar"})
@@ -561,7 +570,7 @@ func _on_net(data: Dictionary, sec: int) -> void:
 func _net_itens_amigo(a: Dictionary) -> void:
 	var id: String = str(a.get("id", ""))
 	var nome: String = _nulo(a.get("apelido"))
-	items = [{"text": "← Voltar à SkyNetwork", "action": "net_voltar"}]
+	items = [{"text": "← Voltar à SkyNetwork", "action": "net_voltar", "titulo": nome}]
 	for m in NET_RAPIDAS:
 		items.append({"text": "Enviar:  " + m, "action": "net_cmd", "arg": ["mensagem", id, m]})
 	items.append({"text": "Escrever mensagem…", "action": "net_escrever", "arg": id, "name": nome})
@@ -727,31 +736,29 @@ func _grade_command(c: String) -> void:
 func _draw_grade() -> void:
 	var w := size.x
 	var h := size.y
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.65))
-	var cel := 116.0
-	var gap := 18.0
 	var cols := GRADE_COLS
 	var rows := int(ceil(grade_lista.size() / float(cols)))
+	var gap := 18.0
+	var cel: float = min(116.0, (h * 0.76 - 120 - (rows - 1) * gap) / max(1, rows))
 	var gw := cols * cel + (cols - 1) * gap
 	var x0 := (w - gw) / 2.0
-	var y0 := (h - rows * (cel + gap)) / 2.0 + 10.0
-	_text("Ícone do perfil", Vector2(x0, y0 - 64), 30, WHITE)
+	var y0 := h * 0.115 + 80.0
 	var nome := str(grade_lista[grade_sel].get("nome", "")) if grade_sel < grade_lista.size() else ""
-	_text(nome, Vector2(x0, y0 - 26), 20, CYAN, gw)
+	_text(nome, Vector2(0, y0 - 30), 20, WHITE, w, HORIZONTAL_ALIGNMENT_CENTER)
 	for i in grade_lista.size():
 		var r := Rect2(x0 + (i % cols) * (cel + gap), y0 + int(i / cols) * (cel + gap), cel, cel)
 		var id := str(grade_lista[i].get("id", ""))
 		var on := i == grade_sel
 		if on:
-			draw_rect(r.grow(7), Color(CYAN, 0.9))
+			draw_rect(r.grow(8), Color(CYAN.lerp(WHITE, 0.4), 0.35))
+			draw_rect(r.grow(6), Color(WHITE, 0.95), false, 2.5)
 		elif id == grade_atual:
-			draw_rect(r.grow(4), Color(WHITE, 0.35))
+			draw_rect(r.grow(4), Color(WHITE, 0.35), false, 1.5)
 		var tex := _grade_tex(id)
 		if tex != null:
 			draw_texture_rect(tex, r, false)
 		else:
 			draw_rect(r, Color.from_string(str(grade_lista[i].get("cor", "#4fd1ff")), CYAN))
-	_text("Direcional  escolher      ✕  usar este ícone      ○  voltar", Vector2(x0, y0 + rows * (cel + gap) + 30), 16, DIM)
 
 
 # ---------------------------------------------------------------- teclado virtual
@@ -896,72 +903,178 @@ func _text(t: String, pos: Vector2, fsize: int, color: Color, width: float = -1.
 
 
 func _draw() -> void:
+	# Fase 11.6: telas no padrão do PS3: o fundo de ondas inteiro, título no alto com uma linha fina,
+	# lista no centro com a faixa de brilho no item escolhido e os botões do controle no rodapé
 	var w := size.x
 	var h := size.y
-	# translúcida: o fundo de ondas do launcher continua aparecendo atrás
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.01, 0.02, 0.06, 0.62))
-	draw_rect(Rect2(0, 0, 300, size.y), Color(0, 0, 0, 0.3))
-	_text("Configurações", Vector2(48, 70), 32, WHITE)
-
-	for i in SECTIONS.size():
-		var y := 140 + i * 54
-		var on := i == section
-		if on:
-			draw_rect(Rect2(36, y - 34, 236, 48), Color(CYAN, 0.2 if column == 0 else 0.08))
-		_text(SECTIONS[i], Vector2(56, y), 22, CYAN if on else MUTED)
-
-	draw_line(Vector2(296, 110), Vector2(296, h - 110), Color(DIM, 0.6), 1.0)
-	var x0 := 330.0
-	var rows_fit := int((h - 260) / 46.0)
-	var first: int = clamp(item - rows_fit + 1, 0, max(0, items.size() - rows_fit))
-	for i in range(first, min(items.size(), first + rows_fit)):
-		var y := 140 + (i - first) * 46
-		var it: Dictionary = items[i]
-		var on := column == 1 and i == item
-		if on:
-			draw_rect(Rect2(x0 - 14, y - 32, w - x0 - 30, 44), Color(CYAN, 0.18))
-		var col := MUTED if it["action"] == "info" else WHITE
-		if on:
-			col = CYAN
-		_text(str(it["text"]), Vector2(x0, y), 20, col, w - x0 - 60)
-
-	var st := status
-	if not threads.is_empty():
-		st = "…  " + st
-	_text(st, Vector2(x0, h - 120), 18, MUTED, w - x0 - 60)
-	var dica := "Direcional  navegar      A  escolher      B  voltar"
-	if section == 4 and column == 1 and net_amigo == "" and not items.is_empty() and items[item]["action"] == "net_amigo":
-		dica = "A  mensagens e opções deste amigo      B  voltar"
-	if section == 1 and column == 1 and not items.is_empty() and items[item]["action"] == "bt_dev":
-		dica = "A  conectar/desconectar      Triângulo (Y)  opções e esquecer      B  voltar"
-	_text(dica, Vector2(48, h - 44), 16, DIM)
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.30))
+	var titulo := "Configurações"
+	if column == 1:
+		titulo = SECTIONS[section]
+		if section == 4 and net_amigo != "" and not items.is_empty():
+			titulo = "SkyNetwork  ›  " + str(items[0].get("titulo", "Amigo"))
+	var dicas := [["cruz", "Confirmar"], ["bola", "Voltar"]]
+	if column == 1 and not items.is_empty() and items[item]["action"] == "bt_dev":
+		dicas = [["cruz", "Conectar / desconectar"], ["triangulo", "Opções"], ["bola", "Voltar"]]
+	if kb_open:
+		titulo = "Teclado"
+		dicas = [["cruz", "Digitar"], ["quadrado", "Apagar"], ["triangulo", "Símbolos"], ["L2", "Maiúsculas"],
+			["R1", "Espaço"], ["R2", "Concluir"], ["bola", "Cancelar"]]
+	elif grade_open:
+		titulo = "Ícone do perfil"
+		dicas = [["cruz", "Usar este ícone"], ["bola", "Voltar"]]
+	_moldura(titulo, dicas)
 
 	if kb_open:
 		_draw_keyboard()
-	elif grade_open:
+		return
+	if grade_open:
 		_draw_grade()
+		return
+
+	var lista: Array = []
+	var sel := item
+	if column == 0:
+		for s in SECTIONS:
+			lista.append({"text": s, "action": "secao"})
+		sel = section
+	else:
+		lista = items
+	_draw_lista(lista, sel)
+
+	var st := status
+	if not threads.is_empty():
+		st = "Aguarde…  " + st
+	if column == 0:
+		st = SECTION_DESC[section]
+	_text(st, Vector2(0, h * 0.875 - 22), 17, Color(WHITE, 0.7), w, HORIZONTAL_ALIGNMENT_CENTER)
+
+
+func _moldura(titulo: String, dicas: Array) -> void:
+	var w := size.x
+	var h := size.y
+	var m := w * 0.045
+	var topo := h * 0.115
+	var base := h * 0.875
+	# ícone pequeno antes do título, como as telas de ajuste do PS3
+	var c := Vector2(m + 10, topo - 22)
+	draw_arc(c, 9, 0, TAU, 28, Color(WHITE, 0.85), 1.6, true)
+	draw_circle(c, 3.0, Color(WHITE, 0.85))
+	_text(titulo, Vector2(m + 30, topo - 14), 22, WHITE)
+	draw_line(Vector2(m - 14, topo), Vector2(w - m + 14, topo), Color(WHITE, 0.55), 1.4, true)
+	draw_line(Vector2(m - 14, base), Vector2(w - m + 14, base), Color(WHITE, 0.55), 1.4, true)
+	# botões espalhados pelo rodapé (no PS3: à esquerda, no meio e à direita)
+	var n := dicas.size()
+	var larg: float = (w - 2 * m) / maxi(1, n)
+	for i in n:
+		var d: Array = dicas[i]
+		var tw := font.get_string_size(str(d[1]), HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 30.0
+		var x: float = m + i * larg
+		if n > 1 and n <= 3:
+			x = m + (w - 2 * m - tw) * i / float(n - 1)
+		var y := base + 34
+		_botao(str(d[0]), Vector2(x + 9, y - 6))
+		_text(str(d[1]), Vector2(x + 26, y), 16, Color(WHITE, 0.85))
+
+
+func _botao(qual: String, c: Vector2) -> void:
+	# os símbolos do controle desenhados à mão (a fonte padrão não tem ✕ ○ □ △)
+	var cor := Color(WHITE, 0.9)
+	match qual:
+		"cruz":
+			draw_line(c + Vector2(-6, -6), c + Vector2(6, 6), cor, 2.0, true)
+			draw_line(c + Vector2(6, -6), c + Vector2(-6, 6), cor, 2.0, true)
+		"bola":
+			draw_arc(c, 6.5, 0, TAU, 24, cor, 2.0, true)
+		"quadrado":
+			draw_rect(Rect2(c - Vector2(6, 6), Vector2(12, 12)), cor, false, 2.0)
+		"triangulo":
+			draw_polyline(PackedVector2Array([c + Vector2(0, -7), c + Vector2(7, 6), c + Vector2(-7, 6), c + Vector2(0, -7)]), cor, 2.0, true)
+		_:
+			_text(qual, c + Vector2(-9, 5), 13, cor)
+
+
+func _draw_lista(lista: Array, sel: int) -> void:
+	var w := size.x
+	var h := size.y
+	var topo := h * 0.115
+	var base := h * 0.875
+	var rh := 50.0
+	var area := base - topo - 90.0
+	var cabe := maxi(1, int(area / rh))
+	var first: int = clamp(sel - cabe + 1, 0, max(0, lista.size() - cabe))
+	var n: int = min(cabe, lista.size() - first)
+	var y0: float = topo + 40.0 + max(0.0, (area - n * rh) / 2.0)
+	var x0 := w * 0.22
+	var x1 := w * 0.78
+	for k in n:
+		var i := first + k
+		var it: Dictionary = lista[i]
+		var y := y0 + k * rh
+		var on := i == sel
+		var info: bool = it["action"] == "info"
+		if on:
+			_faixa(Rect2(x0 - 60, y, x1 - x0 + 120, rh - 6))
+		var tam := 22 if on else (18 if info else 20)
+		var cor := WHITE if on else (Color(WHITE, 0.5) if info else Color(WHITE, 0.78))
+		var txt := str(it["text"])
+		# "Nome: valor" vira duas colunas, como as listas de ajustes do PS3
+		var dois := txt.find(": ")
+		if dois > 0 and dois < 28 and not info and not txt.begins_with("Confirmar") and not txt.contains("http"):
+			var xv := x0 + (x1 - x0) * 0.58
+			_text(txt.substr(0, dois), Vector2(x0, y + rh * 0.62), tam, cor, xv - x0 - 20)
+			_text(txt.substr(dois + 2).strip_edges(), Vector2(xv, y + rh * 0.62), tam, cor.lerp(Color(CYAN.lerp(WHITE, 0.55), cor.a), 0.6), x1 - xv)
+		else:
+			_text(txt, Vector2(x0, y + rh * 0.62), tam, cor, x1 - x0)
+	# setas quando a lista continua acima ou abaixo
+	var cx := w / 2.0
+	if first > 0:
+		draw_polyline(PackedVector2Array([Vector2(cx - 9, y0 - 8), Vector2(cx, y0 - 16), Vector2(cx + 9, y0 - 8)]), Color(WHITE, 0.6), 2.0, true)
+	if first + n < lista.size():
+		var yb := y0 + n * rh + 6
+		draw_polyline(PackedVector2Array([Vector2(cx - 9, yb), Vector2(cx, yb + 8), Vector2(cx + 9, yb)]), Color(WHITE, 0.6), 2.0, true)
+
+
+func _faixa(r: Rect2) -> void:
+	# o brilho do item escolhido: some nas pontas, com fios finos em cima e embaixo
+	var meio := r.position.x + r.size.x / 2.0
+	var a := Color(WHITE, 0.0)
+	var b := Color(WHITE, 0.16)
+	var t := r.position.y
+	var u := r.end.y
+	draw_polygon(PackedVector2Array([Vector2(r.position.x, t), Vector2(meio, t), Vector2(meio, u), Vector2(r.position.x, u)]),
+		PackedColorArray([a, b, b, a]))
+	draw_polygon(PackedVector2Array([Vector2(meio, t), Vector2(r.end.x, t), Vector2(r.end.x, u), Vector2(meio, u)]),
+		PackedColorArray([b, a, a, b]))
+	var la := Color(CYAN, 0.0)
+	var lb := Color(CYAN.lerp(WHITE, 0.5), 0.7)
+	for yy in [t, u]:
+		draw_polyline_colors(PackedVector2Array([Vector2(r.position.x, yy), Vector2(meio, yy), Vector2(r.end.x, yy)]),
+			PackedColorArray([la, lb, la]), 1.2, true)
 
 
 func _draw_keyboard() -> void:
 	var w := size.x
 	var h := size.y
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.6))
 	var kw := 64.0
 	var kh := 52.0
 	var gap := 8.0
 	var total_w := 10 * kw + 9 * gap
 	var x0 := (w - total_w) / 2.0
-	var y0 := h - (5 * kh + 4 * gap) - 80
-	draw_rect(Rect2(x0, y0 - 124, total_w, 104), PANEL)
-	_text(kb_title, Vector2(x0 + 20, y0 - 88), 18, MUTED, total_w - 40)
-	_text(("•".repeat(kb_text.length()) if kb_mascara else kb_text) + "_", Vector2(x0 + 20, y0 - 44), 28, WHITE, total_w - 40)
+	var y0 := h * 0.875 - (5 * kh + 4 * gap) - 40
+	_text(kb_title, Vector2(0, h * 0.115 + 56), 18, Color(WHITE, 0.75), w, HORIZONTAL_ALIGNMENT_CENTER)
+	# campo de texto: faixa clara com o cursor, como o teclado do PS3
+	var campo := Rect2(x0, h * 0.115 + 76, total_w, 56)
+	draw_rect(campo, Color(WHITE, 0.10))
+	draw_rect(campo, Color(WHITE, 0.45), false, 1.2)
+	_text(("•".repeat(kb_text.length()) if kb_mascara else kb_text) + "_", campo.position + Vector2(18, 38), 26, WHITE, total_w - 36)
 
 	var rows := _kb_rows()
 	for r in 4:
 		for c in 10:
 			var rect := Rect2(x0 + c * (kw + gap), y0 + r * (kh + gap), kw, kh)
 			var on := kb_row == r and kb_col == c
-			draw_rect(rect, CYAN if on else PANEL)
+			_tecla(rect, on)
 			var ch: String = rows[r][c]
 			if kb_shift and not kb_symbols:
 				ch = ch.to_upper()
@@ -975,8 +1088,15 @@ func _draw_keyboard() -> void:
 			label = "MAIÚSC"
 		if c == 1 and kb_symbols:
 			label = "Letras"
-		draw_rect(rect, CYAN if on else PANEL.lightened(0.08))
+		_tecla(rect, on)
 		_text(label, rect.position + Vector2(0, kh * 0.66), 18, INK if on else WHITE, rect.size.x,
 			HORIZONTAL_ALIGNMENT_CENTER)
-	_text("✕ digitar    □ apagar    △ símbolos    L2 maiúsculas    R1 espaço    R2 concluir    ○ cancelar",
-		Vector2(x0, y0 + 5 * (kh + gap) + 22), 15, MUTED, total_w)
+
+
+func _tecla(r: Rect2, on: bool) -> void:
+	if on:
+		draw_rect(r.grow(2), Color(CYAN.lerp(WHITE, 0.4), 0.5))
+		draw_rect(r, Color(WHITE, 0.92))
+	else:
+		draw_rect(r, Color(WHITE, 0.08))
+		draw_rect(r, Color(WHITE, 0.28), false, 1.0)
