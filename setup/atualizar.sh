@@ -38,6 +38,17 @@ if [ -d /opt/skystation/launcher ]; then
     fi
 fi
 
+# Jogos feitos no Godot (ex.: Zona Morta) também gravam o cache .godot/ na própria pasta.
+for proj in /opt/skystation/games/*/project.godot; do
+    [ -f "$proj" ] || continue
+    d="$(dirname "$proj")"
+    chown -R "$USER_NAME:$USER_NAME" "$d"
+    if command -v godot >/dev/null 2>&1; then
+        echo "==> Preparando o cache de $(basename "$d") (Godot --import)"
+        sudo -u "$USER_NAME" godot --headless --path "$d" --import >/dev/null 2>&1 || true
+    fi
+done
+
 # Comandos do sistema (skystation-*) sempre na versão mais nova do projeto.
 for pair in skystation-atualizar.sh:skystation-atualizar expandir.sh:skystation-expandir \
             diag.sh:skystation-diag marca.sh:skystation-marca diag-controle.sh:skystation-diag-controle \

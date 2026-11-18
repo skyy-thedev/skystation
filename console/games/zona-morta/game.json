@@ -1,0 +1,9 @@
+{
+  "title": "Zona Morta",
+  "type": "autoral",
+  "exec": "godot --path . --rendering-driver opengl3",
+  "cover": "cover.png",
+  "color": "#d9534f",
+  "order": 5,
+  "description": "RPG de sobrevivência zumbi (protótipo 0.1). Revire caixas, aguente as noites e suba de nível. Primeiro jogo oficial da SkyStation."
+}

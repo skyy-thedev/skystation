@@ -150,6 +150,17 @@ PS1, SNES, N64, NES, Mega Drive e Game Boy: o netplay do RetroArch com convite p
 - `sky-netplay hospedar|entrar|sala` faz o trabalho; o `sky-emu` deixa todo jogo de RetroArch pronto para virar sala.
 - PS1 e N64 podem perder a sincronia em alguns jogos (limitação dos núcleos); SNES, NES e Mega Drive são os mais estáveis.
 
+## Zona Morta — primeiro jogo oficial (protótipo 0.1)
+
+RPG de sobrevivência zumbi visto de cima, em Godot (`console/games/zona-morta`), sem arquivos de arte:
+tudo é desenhado pelo código. Cidade nova a cada partida (prédios com porta, praças, estacionamentos e
+carros abandonados), dia e noite (a noite é escura, só a sua lanterna ilumina, e os zumbis aumentam),
+caixas para revirar (balas, bandagens, comida), fome, fôlego, nível e recorde.
+- **Controle:** L analógico anda, R analógico mira, **R2** atira (mira assistida), **R1** golpe, **□** recarrega,
+  **△** bandagem, **L1** come, **L2** corre, **✕** revira caixa (segure), **Options** pausa. Teclado: WASD, mouse, Espaço, E, R, H, F, Shift.
+- Tiro e corrida fazem barulho e atraem os zumbis; a cada dia eles ficam mais fortes, e aparecem os corredores.
+- Testar no PC: `godot --path console/games/zona-morta`. No console aparece em Jogos depois do `skystation-atualizar`.
+
 ## SkyStore (Fase 12, etapa 1: servidor)
 
 Loja de apps, jogos, temas e emuladores para o console. Só a equipe publica; cada pacote é **assinado**

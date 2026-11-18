@@ -4,9 +4,9 @@ name: Launcher (GDScript)
 # oficial confere os scripts do launcher a cada mudança, antes de chegarem ao console.
 on:
   push:
-    paths: ["console/launcher/**", ".github/workflows/launcher.yml"]
+    paths: ["console/launcher/**", "console/games/**/*.gd", ".github/workflows/launcher.yml"]
   pull_request:
-    paths: ["console/launcher/**", ".github/workflows/launcher.yml"]
+    paths: ["console/launcher/**", "console/games/**/*.gd", ".github/workflows/launcher.yml"]
 
 permissions:
   contents: read
@@ -39,4 +39,15 @@ jobs:
             ./godot --headless --path console/launcher --check-only --script "res://$f" 2>&1 | tee "/tmp/$f.log"
             test "${PIPESTATUS[0]}" = 0
             ! grep -E "SCRIPT ERROR|Parse Error|Compile Error" "/tmp/$f.log"
+          done
+      - name: Confere os jogos feitos no Godot (Zona Morta…)
+        run: |
+          for proj in console/games/*/project.godot; do
+            d="$(dirname "$proj")"
+            for f in "$d"/*.gd; do
+              echo "== $f"
+              ./godot --headless --path "$d" --check-only --script "res://$(basename "$f")" 2>&1 | tee /tmp/jogo.log
+              test "${PIPESTATUS[0]}" = 0
+              ! grep -E "SCRIPT ERROR|Parse Error|Compile Error" /tmp/jogo.log
+            done
           done
