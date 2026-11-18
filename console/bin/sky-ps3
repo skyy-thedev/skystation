@@ -5,6 +5,9 @@
     sky-ps3 preparar          deixa o RPCS3 pronto para abrir um jogo: telas de aviso desligadas, controle
                               configurado, firmware instalado, saves do perfil. Imprime {"ok", "user", "error"}
     sky-ps3 controles         só mostra como o controle seria configurado (diagnóstico)
+    sky-ps3 rpcn              conta RPCN (a "PSN" do RPCS3) deste console: {"ok", "conta", "npid"}
+    sky-ps3 rpcn-entrar ID TOKEN   guarda a conta RPCN (senha em SKY_SENHA) e liga o online do PS3
+    sky-ps3 rpcn-sair         apaga a conta RPCN deste console e desliga o online do PS3
 
 Onde ficam os jogos: ~/skystation/roms/ps3 e SKYROMS/ps3. Cada jogo é uma PASTA (cópia do disco, com
 PS3_GAME dentro) ou um arquivo .iso. Firmware: PS3UPDAT.PUP (site oficial da PlayStation) em
@@ -378,6 +381,144 @@ def garantir_ini(path, valores):
         f.write("\n".join(linhas) + "\n")
 
 
+# ------------------------------------------------------------------ online do PS3 (RPCN, Fase 11.5)
+# O RPCS3 tem um servidor próprio no lugar da PSN, o RPCN (np.rpcs3.net): partidas online, salas,
+# lista de amigos e placares dos jogos que usam a PSN. A conta é criada UMA vez pelo RPCS3 com
+# interface (Configuração > RPCN): ele pede ID, senha e e-mail, e manda um código de 16 letras
+# (o "token") por e-mail. Aqui só guardamos ID, senha e token no rpcn.yml, que o RPCS3 lê ao abrir.
+RPCN_HOSTS = "Official RPCN Server|np.rpcs3.net"
+RE_NPID = re.compile(r"^[A-Za-z0-9_-]{3,16}$")
+RE_TOKEN = re.compile(r"^[0-9A-Z]{16}$")
+
+
+def _yml_str(v):
+    # aspas duplas no estilo JSON também são YAML válido (a senha pode ter : # ' etc.)
+    return json.dumps(v)
+
+
+def _yml_val(v):
+    v = v.strip()
+    if v[:1] == '"':
+        try:
+            return json.loads(v)
+        except ValueError:
+            return v.strip('"')
+    if v[:1] == "'":
+        return v[1:-1].replace("''", "'")
+    return v
+
+
+def ler_rpcn():
+    """rpcn.yml -> {"NPID": …, "Password": …, "Token": …, …} (só chaves de 1º nível)."""
+    d = {}
+    try:
+        with open(os.path.join(RP, "rpcn.yml")) as f:
+            for linha in f:
+                if linha[:1] not in (" ", "\t", "#") and ":" in linha:
+                    k, v = linha.split(":", 1)
+                    d[k.strip()] = _yml_val(v)
+    except OSError:
+        pass
+    return d
+
+
+def tem_rpcn():
+    d = ler_rpcn()
+    return bool(d.get("NPID") and d.get("Password") and d.get("Token"))
+
+
+def garantir_yml(path, secao, valores):
+    """Ajusta chaves de uma seção do config.yml do RPCS3 sem apagar o resto."""
+    try:
+        with open(path) as f:
+            linhas = f.read().splitlines()
+    except OSError:
+        linhas = []
+    cab = secao + ":"
+    novas = [f"  {k}: {v}" for k, v in valores.items()]
+    if cab not in linhas:
+        linhas += [cab] + novas
+    else:
+        i = linhas.index(cab) + 1
+        fim = i
+        while fim < len(linhas) and (linhas[fim].startswith(" ") or not linhas[fim].strip()):
+            fim += 1
+        for k, v in valores.items():
+            for j in range(i, fim):
+                if linhas[j].startswith("  ") and not linhas[j].startswith("   ") and \
+                        linhas[j].strip().split(":", 1)[0] == k:
+                    linhas[j] = f"  {k}: {v}"
+                    break
+            else:
+                linhas.insert(fim, f"  {k}: {v}")
+                fim += 1
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write("\n".join(linhas) + "\n")
+
+
+def garantir_net():
+    """Com conta RPCN: internet e "PSN" ligadas no RPCS3. Sem conta: nunca deixa o RPCS3 tentando
+    entrar no RPCN (ele mostraria um erro no meio do jogo)."""
+    cfg = os.path.join(RP, "config.yml")
+    if tem_rpcn():
+        garantir_yml(cfg, "Net", {"Internet enabled": "Connected", "PSN status": "RPCN"})
+        return
+    try:
+        with open(cfg) as f:
+            ligado = re.search(r"^  PSN status: RPCN\s*$", f.read(), re.M)
+    except OSError:
+        ligado = None
+    if ligado:
+        garantir_yml(cfg, "Net", {"Internet enabled": "Disconnected", "PSN status": "Disconnected"})
+
+
+def salvar_rpcn(npid, senha, token):
+    d = ler_rpcn()
+    linhas = ["Version: %s" % (d.get("Version") or 2),
+              "Host: " + _yml_str(d.get("Host") or "np.rpcs3.net"),
+              "NPID: " + _yml_str(npid),
+              "Password: " + _yml_str(senha),
+              "Token: " + _yml_str(token),
+              "Hosts: " + _yml_str(d.get("Hosts") or RPCN_HOSTS)]
+    if "Experimental IPv6 support" in d:
+        linhas.append("Experimental IPv6 support: " + (d["Experimental IPv6 support"] or "false"))
+    os.makedirs(RP, exist_ok=True)
+    path = os.path.join(RP, "rpcn.yml")
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)   # tem senha: só o dono lê
+    with os.fdopen(fd, "w") as f:
+        f.write("\n".join(linhas) + "\n")
+    os.replace(tmp, path)
+
+
+def rpcn_estado():
+    d = ler_rpcn()
+    out({"ok": True, "conta": tem_rpcn(), "npid": d.get("NPID", "") if tem_rpcn() else ""})
+
+
+def rpcn_entrar(npid, token):
+    npid, token = npid.strip(), token.strip().upper().replace(" ", "").replace("-", "")
+    senha = os.environ.get("SKY_SENHA", "")
+    if not RE_NPID.match(npid):
+        return out({"ok": False, "error": "ID do RPCN inválido: 3 a 16 letras, números, - ou _"})
+    if not senha:
+        return out({"ok": False, "error": "Falta a senha da conta RPCN"})
+    if not RE_TOKEN.match(token):
+        return out({"ok": False, "error": "Token inválido: são 16 letras maiúsculas ou números (chega por e-mail)"})
+    salvar_rpcn(npid, senha, token)
+    garantir_net()
+    out({"ok": True, "conta": True, "npid": npid, "message": f"Online do PS3 ligado: RPCN como {npid}"})
+
+
+def rpcn_sair():
+    d = ler_rpcn()
+    if d:
+        salvar_rpcn("", "", "")
+    garantir_net()
+    out({"ok": True, "conta": False, "npid": "", "message": "Online do PS3 desligado neste console"})
+
+
 def user_id():
     """Cada perfil do SkyStation vira um usuário do RPCS3 (saves e troféus separados)."""
     try:
@@ -413,6 +554,7 @@ def preparar(rom=""):
     ajustes_por_jogo()
     ligados = patches(rom)
     write_if_missing(os.path.join(RP, "config.yml"), CONFIG_YML)
+    garantir_net()
     yml, players = input_yaml()
     if not players:
         return out({"ok": False, "error": "Nenhum controle ligado: conecte o controle antes de abrir o jogo de PS3."})
@@ -447,8 +589,14 @@ def main():
     elif a[:1] == ["controles"]:
         yml, players = input_yaml()
         print(yml)
+    elif a[:1] == ["rpcn"]:
+        rpcn_estado()
+    elif a[:1] == ["rpcn-entrar"] and len(a) == 3:
+        rpcn_entrar(a[1], a[2])
+    elif a[:1] == ["rpcn-sair"]:
+        rpcn_sair()
     else:
-        out({"ok": False, "error": "uso: sky-ps3 listar | preparar | controles"})
+        out({"ok": False, "error": "uso: sky-ps3 listar | preparar | controles | rpcn | rpcn-entrar ID TOKEN | rpcn-sair"})
 
 
 if __name__ == "__main__":

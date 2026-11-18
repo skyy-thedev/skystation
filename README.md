@@ -150,6 +150,17 @@ PS1, SNES, N64, NES, Mega Drive e Game Boy: o netplay do RetroArch com convite p
 - `sky-netplay hospedar|entrar|sala` faz o trabalho; o `sky-emu` deixa todo jogo de RetroArch pronto para virar sala.
 - PS1 e N64 podem perder a sincronia em alguns jogos (limitação dos núcleos); SNES, NES e Mega Drive são os mais estáveis.
 
+## Online do PS3 pelo RPCN (Fase 11.5)
+
+O RPCS3 tem um servidor próprio no lugar da PSN, o **RPCN** (`np.rpcs3.net`): partidas online, salas e
+placares dos jogos de PS3 que usavam a PSN (cada jogo funciona ou não; a lista é da comunidade do RPCS3).
+- **Criar a conta (uma vez):** no RPCS3 com interface, em qualquer PC: Configuração → RPCN → Criar conta.
+  Ele pede ID, senha e e-mail e manda um **token** de 16 letras por e-mail. A SkyNetwork não cria essa conta.
+- **No console:** categoria **SkyNetwork → Online do PS3 (RPCN)**: digite ID, senha e token. Pronto: ao abrir
+  qualquer jogo de PS3, o `sky-ps3` liga a internet e o RPCN no RPCS3. **Online do PS3: <ID> → Desligar** apaga a conta.
+- `sky-ps3 rpcn | rpcn-entrar ID TOKEN | rpcn-sair` (a senha vai em `SKY_SENHA`). A conta fica em
+  `~/.config/rpcs3/rpcn.yml` (só o dono lê); sem conta, o RPCS3 nunca fica tentando entrar no RPCN.
+
 ## Patches automáticos do PS3 (Fase 8.3)
 
 Ao abrir um jogo de PS3, o `sky-ps3` baixa (1x por semana) a base oficial de patches do RPCS3 e liga

@@ -1030,6 +1030,7 @@ func _build_net_cat() -> Dictionary:
 	if not net.get("na_rede", false):
 		c_net["items"].append(_act("Entrar na SkyNetwork", "Digite o código de convite: amigos, mensagens, troféus e saves na nuvem", "net:net_entrar", "wifi"))
 		c_net["items"].append(_act("Já tenho um ID SkyNetwork", "Primeiro entre na rede com o convite; depois use o seu ID e a senha", "settings:4", "search"))
+		_rpcn_item(c_net)
 		return c_net
 	var eu: Dictionary = net.get("eu", {}) if typeof(net.get("eu")) == TYPE_DICTIONARY else {}
 	var conta: String = _nulo(eu.get("usuario"))
@@ -1090,8 +1091,36 @@ func _build_net_cat() -> Dictionary:
 		c_net["items"].append(_act(_nulo(a.get("apelido")), sub, "friend:" + _nulo(a.get("id")), glifo, cor))
 	c_net["items"].append(_act("Adicionar amigo", "Pelo ID SkyNetwork dele (ou o código de amigo)", "net:net_add", "search"))
 	c_net["items"].append(_act("Ícone do perfil", "Escolha numa grade, como no site", "net:net_icones", glifo_eu))
+	_rpcn_item(c_net)
 	c_net["items"].append(_act("Opções da SkyNetwork", "Saves na nuvem, invisível, senha, usar o perfil em outro console, sair", "settings:4", "gear"))
 	return c_net
+
+
+func _rpcn_npid() -> String:
+	# Fase 11.5: conta RPCN (a "PSN" do RPCS3) guardada pelo sky-ps3 em ~/.config/rpcs3/rpcn.yml
+	var f := FileAccess.open(OS.get_environment("HOME") + "/.config/rpcs3/rpcn.yml", FileAccess.READ)
+	if f == null:
+		return ""
+	var npid := ""
+	var tem_token := false
+	while not f.eof_reached():
+		var l := f.get_line()
+		var v := l.split(":", true, 1)[1].strip_edges().trim_prefix("\"").trim_suffix("\"").trim_prefix("'").trim_suffix("'") if l.contains(":") else ""
+		if l.begins_with("NPID:"):
+			npid = v
+		elif l.begins_with("Token:"):
+			tem_token = v != ""
+	return npid if tem_token else ""
+
+
+func _rpcn_item(c_net: Dictionary) -> void:
+	if not FileAccess.file_exists("/opt/rpcs3/AppRun"):
+		return   # sem o emulador de PS3 não há o que ligar
+	var npid := _rpcn_npid()
+	if npid != "":
+		c_net["items"].append(_act("Online do PS3: " + npid, "Conta RPCN ligada: partidas online nos jogos de PS3  ·  A: trocar ou desligar", "net:ps3_rpcn_opcoes", "pad"))
+	else:
+		c_net["items"].append(_act("Online do PS3 (RPCN)", "Jogue online nos jogos de PS3: digite o ID, a senha e o token da sua conta RPCN", "net:ps3_rpcn", "pad"))
 
 
 func _titulo_normal(t: String) -> String:

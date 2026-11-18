@@ -17,6 +17,7 @@ const PANEL := Color("121a3a")
 const INK := Color("06091a")
 const SECTIONS := ["Wi-Fi", "Bluetooth", "Som", "Sistema", "SkyNetwork"]
 const SKY_CLOUD := "/opt/skystation/bin/sky-cloud"
+const SKY_PS3 := "/opt/skystation/bin/sky-ps3"
 const NET_RAPIDAS := ["Bora jogar?", "Entra aí!", "GG!", "Já volto", "Agora não dá"]
 
 const KB_LETTERS := ["1234567890", "qwertyuiop", "asdfghjkl@", "zxcvbnm.-_"]
@@ -45,6 +46,7 @@ var kb_mode: String = "wifi"   # o que o OK do teclado faz: wifi | net_entrar | 
 var net_amigo: String = ""     # id do amigo aberto (submenu de mensagens); "" = tela principal
 var net_msg: String = ""       # resultado da última ação: continua na tela depois de recarregar a lista
 var net_conta_id: String = ""  # Fase 10.5: ID digitado, esperando a senha (criar/entrar na conta)
+var net_rpcn_senha: String = ""  # Fase 11.5: senha RPCN digitada, esperando o token
 var kb_mascara: bool = false   # teclado mostra • no lugar do texto (senhas)
 
 # Grade de ícones de perfil (como no site): 16 ícones, A escolhe, B volta
@@ -87,9 +89,9 @@ func abrir_acao(acao: String) -> void:
 	column = 1
 	acao_pendente = ""
 	match acao:
-		"net_add", "net_conta_criar", "net_conta_entrar", "net_entrar", "net_conta_senha":
+		"net_add", "net_conta_criar", "net_conta_entrar", "net_entrar", "net_conta_senha", "ps3_rpcn":
 			_activate_acao({"action": acao})
-		"net_icones":
+		"net_icones", "ps3_rpcn_opcoes":
 			acao_pendente = acao   # a grade precisa do ícone atual: abre quando o estado chegar
 
 
@@ -319,6 +321,27 @@ func _activate_acao(it: Dictionary) -> void:
 			kb_mode = "net_amigo"
 		"net_icones":
 			_grade_abrir()
+		"ps3_rpcn":
+			# Fase 11.5: a conta RPCN é criada uma vez no RPCS3 com interface (ele manda o token por
+			# e-mail); aqui só digitamos ID, senha e token, nessa ordem
+			_kb_start("ID da sua conta RPCN (criada no RPCS3: Configuração > RPCN)", "")
+			kb_mode = "rpcn_id"
+		"ps3_rpcn_opcoes":
+			items = [
+				{"text": "← Voltar", "action": "bt_back"},
+				{"text": "Trocar a conta RPCN", "action": "ps3_rpcn"},
+				{"text": "Desligar o online do PS3 neste console", "action": "ps3_rpcn_sair"},
+			]
+			item = 1
+			status = "Online do PS3 (RPCN)"
+			column = 1
+		"ps3_rpcn_sair":
+			if it.get("confirm", false):
+				status = "Desligando…"
+				_async_net(["rpcn-sair"], _on_net_result.bind(section), "", SKY_PS3)
+			else:
+				it["confirm"] = true
+				it["text"] = "Confirmar: desligar o online do PS3?  (aperte A de novo)"
 		"net_conta_criar", "net_conta_entrar":
 			_kb_start(("Escolha o seu ID SkyNetwork: 3 a 16 letras minúsculas, números ou _" if it["action"] == "net_conta_criar"
 				else "O seu ID SkyNetwork"), "")
@@ -451,6 +474,10 @@ func _on_net(data: Dictionary, sec: int) -> void:
 		return
 	items = []
 	status = net_msg
+	if acao_pendente == "ps3_rpcn_opcoes":   # vale com ou sem SkyNetwork: o RPCN é outra rede
+		acao_pendente = ""
+		_activate_acao({"action": "ps3_rpcn_opcoes"})
+		return
 	if not data.get("ok", false):
 		status = str(data.get("error", "Não consegui consultar a SkyNetwork"))
 		return
@@ -581,20 +608,20 @@ func _on_net_result(data: Dictionary, sec: int) -> void:
 		status = net_msg
 
 
-func _async_net(args: Array, cb: Callable, senha: String = "") -> void:
+func _async_net(args: Array, cb: Callable, senha: String = "", prog: String = SKY_CLOUD) -> void:
 	var th := Thread.new()
 	threads.append(th)
-	th.start(_worker_net.bind(args, cb, th, senha))
+	th.start(_worker_net.bind(args, cb, th, senha, prog))
 
 
-func _worker_net(args: Array, cb: Callable, th: Thread, senha: String = "") -> void:
+func _worker_net(args: Array, cb: Callable, th: Thread, senha: String = "", prog: String = SKY_CLOUD) -> void:
 	var output := []
 	var code: int
 	if senha != "":
 		# a senha vai por variável de ambiente (na linha de comando qualquer programa a veria)
-		code = OS.execute("/usr/bin/env", PackedStringArray(["SKY_SENHA=" + senha, SKY_CLOUD] + args), output, false)
+		code = OS.execute("/usr/bin/env", PackedStringArray(["SKY_SENHA=" + senha, prog] + args), output, false)
 	else:
-		code = OS.execute(SKY_CLOUD, PackedStringArray(args), output, false)
+		code = OS.execute(prog, PackedStringArray(args), output, false)
 	var data = null
 	if output.size() > 0:
 		var linhas: PackedStringArray = str(output[0]).strip_edges().split("\n")
@@ -836,6 +863,24 @@ func _kb_ok() -> void:
 			status = "Criando a conta…" if modo == "net_conta_criar" else "Entrando na conta…"
 			_async_net(["conta-criar" if modo == "net_conta_criar" else "conta-entrar", net_conta_id],
 				_on_net_result.bind(section), kb_text)
+		"rpcn_id":
+			if texto == "":
+				return
+			net_conta_id = texto
+			_kb_start("Senha da conta RPCN %s" % texto, "")
+			kb_mode = "rpcn_senha"
+			kb_mascara = true
+		"rpcn_senha":
+			if kb_text == "":
+				return
+			net_rpcn_senha = kb_text
+			_kb_start("Token da conta RPCN (16 letras e números que chegaram por e-mail)", "")
+			kb_mode = "rpcn_token"
+			kb_shift = true
+		"rpcn_token":
+			status = "Ligando o online do PS3…"
+			_async_net(["rpcn-entrar", net_conta_id, texto], _on_net_result.bind(section), net_rpcn_senha, SKY_PS3)
+			net_rpcn_senha = ""
 		"net_conta_senha":
 			status = "Trocando a senha…"
 			_async_net(["conta-senha"], _on_net_result.bind(section), kb_text)

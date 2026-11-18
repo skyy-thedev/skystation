@@ -46,6 +46,8 @@ jobs:
           PY
       - name: Menu Home e teclado (controle simulado)
         run: /usr/bin/python3 console/tests/teste-home.py
+      - name: Online do PS3 (conta RPCN e config do RPCS3)
+        run: /usr/bin/python3 console/tests/teste-ps3.py
       - name: Desenho do menu (conversa e teclado)
         run: |
           mkdir -p imagens
