@@ -10,6 +10,7 @@ const ITENS := {
 	"agua": {"nome": "Garrafa d'água", "tipo": "comida", "fome": 8, "cura": 4},
 	"bandagem": {"nome": "Bandagem", "tipo": "cura", "cura": 35},
 	"kit_medico": {"nome": "Kit médico", "tipo": "cura", "cura": 100},
+	"iodo": {"nome": "Pílulas de iodo", "tipo": "cura", "rad": 45, "dica": "Tira radiação do corpo"},
 	"madeira": {"nome": "Madeira", "tipo": "material"},
 	"pano": {"nome": "Pano", "tipo": "material"},
 	"sucata": {"nome": "Sucata", "tipo": "material"},
@@ -49,7 +50,7 @@ const RECEITAS := [
 ## loot: [chance, item, mín, máx]. "arma:x" dá a arma. Munição é escassa de propósito.
 const LOOT := {
 	"armario": [[0.40, "pano", 1, 2], [0.22, "enlatado", 1, 1], [0.15, "salgadinho", 1, 2], [0.14, "bandagem", 1, 1],
-		[0.18, "garrafa", 1, 1], [0.10, "pilhas", 1, 1], [0.12, "agua", 1, 1], [0.05, "balas_9mm", 1, 3],
+		[0.18, "garrafa", 1, 1], [0.10, "pilhas", 1, 1], [0.12, "agua", 1, 1], [0.06, "iodo", 1, 1], [0.05, "balas_9mm", 1, 3],
 		[0.04, "arma:taco", 1, 1], [0.04, "arma:faca", 1, 1]],
 	"geladeira": [[0.45, "carne_crua", 1, 2], [0.35, "enlatado", 1, 2], [0.25, "agua", 1, 2], [0.15, "salgadinho", 1, 1]],
 	"prateleira": [[0.45, "enlatado", 1, 2], [0.35, "salgadinho", 1, 2], [0.25, "agua", 1, 1], [0.15, "garrafa", 1, 2],
@@ -59,7 +60,8 @@ const LOOT := {
 	"viatura": [[0.45, "balas_9mm", 2, 5], [0.28, "cartuchos", 1, 3], [0.12, "arma:espingarda", 1, 1],
 		[0.15, "bandagem", 1, 1], [0.12, "pilhas", 1, 1]],
 	"arsenal": [[0.55, "balas_9mm", 3, 7], [0.40, "cartuchos", 2, 4], [0.22, "balas_rifle", 2, 5],
-		[0.18, "arma:espingarda", 1, 1], [0.12, "arma:rifle", 1, 1], [0.12, "arma:pistola", 1, 1], [0.18, "kit_medico", 1, 1]],
+		[0.18, "arma:espingarda", 1, 1], [0.12, "arma:rifle", 1, 1], [0.12, "arma:pistola", 1, 1], [0.18, "kit_medico", 1, 1], [0.2, "iodo", 1, 2]],
+	"tambor": [[0.5, "iodo", 1, 1], [0.3, "sucata", 1, 2]],
 	"ferramentas": [[0.30, "arma:machado", 1, 1], [0.50, "sucata", 1, 3], [0.22, "galao", 1, 1], [0.20, "pano", 1, 1]],
 }
 

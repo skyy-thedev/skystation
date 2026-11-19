@@ -15,8 +15,8 @@ const AMARELO := Color("ffd166")
 const VERMELHO := Color("e85d5d")
 const VERDE := Color("7ff0c4")
 const AZUL := Color("9db4ff")
-const CORES_FALA := {"Davi": Color("8fb8e8"), "Lia": Color("f0a07a"), "Rádio": Color("b0b0b0"), "Marta": Color("c7a6ff"),
-	"Nina": Color("d38fe0"), "Tião": Color("e0c070")}
+const CORES_FALA := {"Corvo": Color("8fb8e8"), "Iara": Color("8fe0b0"), "Lia": Color("f0a07a"), "Rádio": Color("b0b0b0"),
+	"Helena": Color("c7a6ff"), "Rocha": Color("c9b48a"), "Nina": Color("d38fe0"), "Tião": Color("e0c070")}
 
 
 func _ready() -> void:
@@ -120,6 +120,11 @@ func _jogador(j: Node, w: float, h: float) -> void:
 	_barra(Vector2(x, 80), 180, j.estamina / 100.0, Color("4fd1ff"), "Fôlego")
 	_barra(Vector2(x, 112), 180, j.fome / 100.0, Color("f0a35e"), "Fome")
 	_barra(Vector2(x, 144), 180, float(j.xp) / j.xp_proximo(), AMARELO, "Experiência")
+	if j.rad > 0.5:
+		_barra(Vector2(x, 176), 180, j.rad / 100.0, Color("b8e04a"), "Radiação %d%s" % [int(j.rad), "  (tome iodo!)" if j.rad > 50 else ""])
+	var vip = main.vip
+	if vip and j.n == 1:
+		_barra(Vector2(x, 208 if j.rad > 0.5 else 176), 180, vip.hp / vip.hp_max, Color("8fe0b0"), "Iara%s" % ("  (esperando)" if vip.esperar else ""))
 	# arma e munição (embaixo)
 	var bx := w - 300.0 if (not dir and main.jogadores.size() == 1) or dir else 30.0
 	if main.jogadores.size() > 1:
@@ -211,6 +216,13 @@ func _prompts() -> void:
 func _conversa(w: float, h: float) -> void:
 	var f: Dictionary = main.historia.fala_atual()
 	if f.is_empty():
+		return
+	if f["quem"] == "":
+		# narração: tela escura, texto no meio (como abertura de filme)
+		draw_rect(Rect2(0, 0, w, h), Color(0, 0, 0, 0.82))
+		draw_multiline_string(fonte, Vector2(w * 0.15, h * 0.45), f["txt"], HORIZONTAL_ALIGNMENT_CENTER, w * 0.7, 24, 4, Color(1, 1, 1, 0.92))
+		_botao("cruz", Vector2(w - 150, h - 46))
+		_txt("Continuar", Vector2(w - 136, h - 40), 14, Color(1, 1, 1, 0.6))
 		return
 	var ops: Array = f.get("opcoes", [])
 	var alt := 150.0 + ops.size() * 34.0
@@ -324,20 +336,21 @@ func _controles(p: Vector2) -> void:
 func _titulo(w: float, h: float) -> void:
 	draw_rect(Rect2(0, 0, w, h), Color(0, 0, 0, 0.55))
 	_txt("ZONA MORTA", Vector2(0, h * 0.24), 72, VERMELHO, w, HORIZONTAL_ALIGNMENT_CENTER)
-	_txt("Versão 0.2 · Jogo oficial da SkyStation", Vector2(0, h * 0.24 + 40), 17, Color(1, 1, 1, 0.6), w, HORIZONTAL_ALIGNMENT_CENTER)
-	var ops := ["História: Capítulo 1 — O Sinal", "Sobrevivência (sem fim)", "Sair"]
+	_txt("Versão 0.3 · Jogo oficial da SkyStation · Brasil, 2033", Vector2(0, h * 0.24 + 40), 17, Color(1, 1, 1, 0.6), w, HORIZONTAL_ALIGNMENT_CENTER)
+	var ops: Array = main.opcoes_titulo()
 	for i in ops.size():
-		var y := h * 0.42 + i * 44
+		var y := h * 0.40 + i * 44
 		var sel: bool = i == main.menu_sel
 		if sel:
-			draw_rect(Rect2(w / 2 - 230, y - 30, 460, 42), Color(1, 1, 1, 0.12))
-		_txt(ops[i], Vector2(0, y), 22, Color.WHITE if sel else Color(1, 1, 1, 0.55), w, HORIZONTAL_ALIGNMENT_CENTER)
-	var coop := "Segundo controle conectado: Lia (jogador 2) entra junto!" if Input.get_connected_joypads().has(1) \
-		else "Coop: conecte um segundo controle e aperte Options para a Lia entrar."
-	_txt(coop, Vector2(0, h * 0.42 + 150), 15, AZUL, w, HORIZONTAL_ALIGNMENT_CENTER)
+			draw_rect(Rect2(w / 2 - 280, y - 30, 560, 42), Color(1, 1, 1, 0.12))
+		_txt(ops[i]["txt"], Vector2(0, y), 21, Color.WHITE if sel else Color(1, 1, 1, 0.55), w, HORIZONTAL_ALIGNMENT_CENTER)
+	var y2 := h * 0.40 + ops.size() * 44 + 12
+	var coop := "Segundo controle conectado: no coop o jogador 2 é a Iara!" if Input.get_connected_joypads().has(1) \
+		else "Coop: conecte um segundo controle e aperte Options para jogar com a Iara."
+	_txt(coop, Vector2(0, y2), 15, AZUL, w, HORIZONTAL_ALIGNMENT_CENTER)
 	if main.recorde["dias"] > 0:
-		_txt("Recorde: %d dias · %d zumbis · nível %d" % [main.recorde["dias"], main.recorde["mortes"], main.recorde["nivel"]],
-			Vector2(0, h * 0.42 + 176), 15, AMARELO, w, HORIZONTAL_ALIGNMENT_CENTER)
+		_txt("Recorde na sobrevivência: %d dias · %d zumbis · nível %d" % [main.recorde["dias"], main.recorde["mortes"], main.recorde["nivel"]],
+			Vector2(0, y2 + 26), 15, AMARELO, w, HORIZONTAL_ALIGNMENT_CENTER)
 	_controles(Vector2(w / 2 - 380, h * 0.80))
 
 
@@ -356,12 +369,23 @@ func _pausa(w: float, h: float) -> void:
 func _fim(w: float, h: float) -> void:
 	draw_rect(Rect2(0, 0, w, h), Color(0.12, 0, 0, 0.75))
 	var nivel: int = main.jogadores[0].nivel
-	_txt("VOCÊS MORRERAM" if main.jogadores.size() > 1 else "VOCÊ MORREU", Vector2(0, h * 0.36), 56, VERMELHO, w, HORIZONTAL_ALIGNMENT_CENTER)
+	var titulo := "VOCÊS MORRERAM" if main.jogadores.size() > 1 else "VOCÊ MORREU"
+	if main.motivo_fim != "":
+		titulo = "MISSÃO FRACASSADA"
+		_txt(main.motivo_fim, Vector2(0, h * 0.36 - 64), 20, Color(1, 1, 1, 0.8), w, HORIZONTAL_ALIGNMENT_CENTER)
+	_txt(titulo, Vector2(0, h * 0.36), 56, VERMELHO, w, HORIZONTAL_ALIGNMENT_CENTER)
 	_txt("Sobreviveu %d dia(s) · %d zumbis · nível %d" % [main.dia, main.mortes, nivel], Vector2(0, h * 0.36 + 50), 21, Color.WHITE, w, HORIZONTAL_ALIGNMENT_CENTER)
 	if main.novo_recorde:
 		_txt("Novo recorde!", Vector2(0, h * 0.36 + 84), 20, AMARELO, w, HORIZONTAL_ALIGNMENT_CENTER)
-	_botao("cruz", Vector2(w / 2 - 70, h * 0.62 - 6))
-	_txt("Voltar ao título", Vector2(w / 2 - 56, h * 0.62), 18)
+	if main.tem_save():
+		_botao("cruz", Vector2(w / 2 - 190, h * 0.62 - 6))
+		_txt("Voltar à última cama", Vector2(w / 2 - 176, h * 0.62), 18)
+		_botao("bola", Vector2(w / 2 + 60, h * 0.62 - 6))
+		_txt("Título", Vector2(w / 2 + 76, h * 0.62), 18)
+	else:
+		_botao("cruz", Vector2(w / 2 - 70, h * 0.62 - 6))
+		_txt("Voltar ao título", Vector2(w / 2 - 56, h * 0.62), 18)
+		_txt("Dica: dormir numa cama (casa barricada, à noite) salva o jogo.", Vector2(0, h * 0.62 + 40), 15, Color(1, 1, 1, 0.55), w, HORIZONTAL_ALIGNMENT_CENTER)
 	if fade > 0.0:
 		draw_rect(Rect2(0, 0, w, h), Color(0, 0, 0, fade))
 
@@ -371,16 +395,20 @@ func _capitulo(w: float, h: float) -> void:
 	if so_fade:
 		_txt(fade_texto, Vector2(0, h * 0.5), 24, Color(1, 1, 1, 0.8), w, HORIZONTAL_ALIGNMENT_CENTER)
 		return
-	_txt("CAPÍTULO 1 CONCLUÍDO", Vector2(0, h * 0.2), 44, AMARELO, w, HORIZONTAL_ALIGNMENT_CENTER)
-	_txt("O Sinal", Vector2(0, h * 0.2 + 38), 20, Color(1, 1, 1, 0.6), w, HORIZONTAL_ALIGNMENT_CENTER)
-	var y := h * 0.36
+	_txt("CAPÍTULO 1 CONCLUÍDO", Vector2(0, h * 0.16), 44, AMARELO, w, HORIZONTAL_ALIGNMENT_CENTER)
+	_txt("A Carga · Sumaré", Vector2(0, h * 0.16 + 38), 20, Color(1, 1, 1, 0.6), w, HORIZONTAL_ALIGNMENT_CENTER)
+	var y := h * 0.29
 	_txt("Suas escolhas:", Vector2(0, y), 18, Color(1, 1, 1, 0.7), w, HORIZONTAL_ALIGNMENT_CENTER)
 	for l in main.historia.resumo():
-		y += 34
-		_txt(l, Vector2(0, y), 18, Color.WHITE, w, HORIZONTAL_ALIGNMENT_CENTER)
-	y += 60
-	_txt("O portão range. Do outro lado, vinte quilômetros de estrada e a Estação Norte.", Vector2(0, y), 17, AZUL, w, HORIZONTAL_ALIGNMENT_CENTER)
-	_txt("Capítulo 2 — Estação Norte: em breve.", Vector2(0, y + 30), 17, AZUL, w, HORIZONTAL_ALIGNMENT_CENTER)
+		y += 30
+		_txt(l, Vector2(0, y), 17, Color.WHITE, w, HORIZONTAL_ALIGNMENT_CENTER)
+	y += 50
+	if main.historia.vendeu():
+		_txt("Sozinho na Anhanguera. O pagamento do Tião pesa no banco do carona, vazio.", Vector2(0, y), 17, VERMELHO, w, HORIZONTAL_ALIGNMENT_CENTER)
+		_txt("Este caminho termina aqui. Ou não?", Vector2(0, y + 30), 17, VERMELHO, w, HORIZONTAL_ALIGNMENT_CENTER)
+	else:
+		_txt("A cancela sobe. À frente, a Anhanguera e, depois dela, São Paulo — por baixo da terra.", Vector2(0, y), 17, AZUL, w, HORIZONTAL_ALIGNMENT_CENTER)
+		_txt("Capítulo 2 — São Paulo: o metrô. Em breve.", Vector2(0, y + 30), 17, AZUL, w, HORIZONTAL_ALIGNMENT_CENTER)
 	_txt("%d dia(s) · %d zumbis · nível %d" % [main.dia, main.mortes, main.jogadores[0].nivel], Vector2(0, y + 70), 15, Color(1, 1, 1, 0.6), w, HORIZONTAL_ALIGNMENT_CENTER)
 	_botao("cruz", Vector2(w / 2 - 70, h * 0.88 - 6))
 	_txt("Voltar ao título", Vector2(w / 2 - 56, h * 0.88), 18)

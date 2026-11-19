@@ -9,6 +9,7 @@ const MAPA := 72
 const QUADRA := 18
 const CICLO := 300.0      # dia 180 s, entardecer 20 s, noite 85 s, amanhecer 15 s
 const RECORDE := "user://recorde.json"
+const SAVE := "user://save.json"
 
 enum { TITULO, JOGANDO, PAUSA, FIM, CONVERSA, MOCHILA, CAPITULO }
 
@@ -25,6 +26,11 @@ var locais := {}
 var manchas: Array = []
 var fogos: Array = []         # molotov queimando {pos, t, luz}
 var avisos: Array = []
+var radiacao: Array = []      # zonas quentes {pos, raio, forca}
+var vip: Node2D = null        # a Iara (IA) no jogo solo da história
+var semente := 0
+var n_gerados := 0            # objetos criados pela cidade (o save conta por índice)
+var motivo_fim := ""
 
 var tempo := 40.0
 var dia := 1
@@ -46,6 +52,7 @@ var cam: Camera2D
 var escuro: CanvasModulate
 var hud: Control
 var historia: Node
+var sons: Node
 var tex_luz: Texture2D
 var tex_cone: Texture2D
 
@@ -68,6 +75,10 @@ func _ready() -> void:
 	cam.position_smoothing_enabled = true
 	cam.position_smoothing_speed = 6.0
 	add_child(cam)
+	sons = Node.new()
+	sons.set_script(preload("res://sons.gd"))
+	sons.main = self
+	add_child(sons)
 	_nova_partida()
 	estado = TITULO
 
@@ -183,14 +194,16 @@ func _limpar() -> void:
 		mundo = null
 	if escuro:
 		escuro.queue_free()
-	for lista in [jogadores, zumbis, objetos, carros, npcs, predios, bloqueios, manchas, fogos, avisos]:
+	for lista in [jogadores, zumbis, objetos, carros, npcs, predios, bloqueios, manchas, fogos, avisos, radiacao]:
 		lista.clear()
+	vip = null
+	motivo_fim = ""
 	locais = {}
 	if historia:
 		historia.queue_free()
 
 
-func _nova_partida(p_modo := "historia") -> void:
+func _nova_partida(p_modo := "historia", p_semente := -1) -> void:
 	_limpar()
 	modo = p_modo
 	tempo = 40.0
@@ -198,7 +211,9 @@ func _nova_partida(p_modo := "historia") -> void:
 	mortes = 0
 	avisou_noite = false
 	novo_recorde = false
-	rng.randomize()
+	# a mesma semente gera a mesma cidade: é assim que o save reconstrói o mapa
+	semente = p_semente if p_semente >= 0 else randi() % 1000000000
+	rng.seed = semente
 
 	historia = Node.new()
 	historia.set_script(preload("res://historia.gd"))
@@ -222,8 +237,17 @@ func _nova_partida(p_modo := "historia") -> void:
 	add_child(escuro)
 
 	preload("res://cidade.gd").new().gerar(self)
+	n_gerados = objetos.size()
+	rng.seed = semente + 7     # daqui para frente o sorteio não precisa repetir
 
 	_novo_jogador(1, locais["inicio"])
+	_npc("rocha", locais["rocha"])
+	if modo == "historia":
+		vip = CharacterBody2D.new()
+		vip.set_script(preload("res://vip.gd"))
+		vip.main = self
+		vip.position = locais["iara"]
+		mundo.add_child(vip)
 	cam.limit_left = 0
 	cam.limit_top = -12 * T
 	cam.limit_right = MAPA * T
@@ -245,7 +269,14 @@ func _novo_jogador(n: int, p: Vector2) -> Node2D:
 	j.set_script(preload("res://jogador.gd"))
 	j.main = self
 	j.n = n
-	if n == 2:
+	if n == 2 and modo == "historia":
+		j.nome = "Iara"              # no coop, o jogador 2 é a carga
+		j.vip = true
+		j.hp_max = 80.0
+		j.hp = 80.0
+		j.cor_roupa = Color("2f6b4f")
+		j.cor_cabelo = Color("1b1410")
+	elif n == 2:
 		j.nome = "Lia"
 		j.cor_roupa = Color("b5523a")
 		j.cor_cabelo = Color("7a3b1a")
@@ -267,9 +298,14 @@ func _entrar_p2() -> void:
 	if jogadores.size() >= 2 or not Input.get_connected_joypads().has(1):
 		return
 	var p1: Node2D = jogadores[0]
-	var j := _novo_jogador(2, p1.global_position + Vector2(40, 10))
+	var onde := p1.global_position + Vector2(40, 10)
+	if vip:
+		onde = vip.global_position
+		vip.queue_free()
+		vip = null
+	var j := _novo_jogador(2, onde)
 	j.luz_on = p1.luz_on
-	aviso("Lia entrou no jogo (coop)!", Color("ffd166"))
+	aviso("%s entrou no jogo (coop)!" % j.nome, Color("ffd166"))
 
 
 func _npc(id: String, p: Vector2) -> Node2D:
@@ -284,6 +320,10 @@ func _npc(id: String, p: Vector2) -> Node2D:
 			n.cabelo = Color("9a9a9a")
 		"nina":
 			n.nome = "Nina"
+		"rocha":
+			n.nome = "Comandante Rocha"
+			n.roupa = Color("3d4a2e")
+			n.cabelo = Color("2a2a2a")
 	n.position = p
 	mundo.add_child(n)
 	npcs.append(n)
@@ -306,7 +346,31 @@ func interativos() -> Array:
 	for j in jogadores:
 		if j.caido:
 			r.append(j)
+	if vip:
+		r.append(vip)
 	return r
+
+
+func alvos() -> Array:
+	## quem os zumbis podem morder: os jogadores e a Iara
+	var r: Array = jogadores.duplicate()
+	if vip:
+		r.append(vip)
+	return r
+
+
+func vip_morreu() -> void:
+	motivo_fim = "A Iara morreu. A missão acabou."
+	fim_de_jogo()
+
+
+func radiacao_em(p: Vector2) -> float:
+	var n := 0.0
+	for z in radiacao:
+		var dist: float = p.distance_to(z["pos"])
+		if dist < z["raio"]:
+			n = maxf(n, (1.0 - dist / z["raio"]) * z["forca"])
+	return n
 
 
 # ---------------------------------------------------------------- zumbis
@@ -340,7 +404,9 @@ func _nascer_zumbi(onde := Vector2.ZERO, tipo := "") -> void:
 	if tipo == "":
 		var s := rng.randf()
 		tipo = "andarilho"
-		if dia >= 3 and s < 0.08:
+		if radiacao_em(p) > 0.15 and s < 0.6:
+			tipo = "irradiado"
+		elif dia >= 3 and s < 0.08:
 			tipo = "brutamontes"
 		elif dia >= 2 and s < 0.08 + minf(0.04 + dia * 0.03, 0.3):
 			tipo = "corredor"
@@ -353,6 +419,10 @@ func _nascer_zumbi(onde := Vector2.ZERO, tipo := "") -> void:
 			z.hp_max = 180.0 + dia * 20.0
 			z.vel = 58.0
 			z.dano = 22.0
+		"irradiado":
+			z.hp_max = 75.0 + dia * 8.0
+			z.vel = rng.randf_range(55, 75)
+			z.dano = 12.0
 		_:
 			z.hp_max = 40.0 + (dia - 1) * 6.0
 			z.vel = rng.randf_range(60, 86) + (dia - 1) * 3.0
@@ -363,6 +433,8 @@ func _nascer_zumbi(onde := Vector2.ZERO, tipo := "") -> void:
 
 
 func _ocupado(p: Vector2) -> bool:
+	if locais.has("bunker") and predios.size() > locais["bunker"] and predios[locais["bunker"]]["r"].grow(80).has_point(p):
+		return true
 	for b in bloqueios:
 		if b.grow(10).has_point(p):
 			return true
@@ -433,6 +505,7 @@ func molotov(p: Vector2) -> void:
 	l.position = p
 	mundo.add_child(l)
 	fogos.append({"pos": p, "t": 5.0, "luz": l})
+	sons.tocar("molotov", p)
 	barulho(p, 500.0)
 	tremer(5.0)
 
@@ -503,18 +576,27 @@ func dormir(cama: Node, j: Node) -> void:
 		if o != j and not r.has_point(o.global_position) and not o.caido:
 			aviso("Espere %s entrar na casa." % o.nome, Color("ff9f43"))
 			return
+	if vip and not r.has_point(vip.global_position):
+		if vip.global_position.distance_to(j.global_position) < 450.0:
+			vip.global_position = cama.global_position + Vector2(70, 0)
+		else:
+			aviso("Espere a Iara entrar na casa.", Color("ff9f43"))
+			return
 	# a noite passa: as barricadas aguentam (ou não)
 	estado = CAPITULO
 	hud.fade = 1.0
 	hud.fade_texto = "Vocês dormem com um olho aberto…" if jogadores.size() > 1 else "Você dorme com um olho aberto…"
 	hud.so_fade = true
 	await get_tree().create_timer(2.2).timeout
-	tempo = CICLO - 1.0
+	tempo = 2.0
+	dia += 1
+	avisou_noite = false
 	for porta in p["portas"]:
 		if rng.randf() < 0.15 * dia:
 			porta.bater(60.0)
-	for o in jogadores:
+	for o in alvos():
 		o.hp = minf(o.hp_max, o.hp + 35.0)
+	for o in jogadores:
 		o.fome = maxf(10.0, o.fome - 25.0)
 		o.estamina = 100.0
 	for z in zumbis:
@@ -524,7 +606,130 @@ func dormir(cama: Node, j: Node) -> void:
 	hud.so_fade = false
 	hud.fade = 0.0
 	estado = JOGANDO
-	aviso("Sobreviveram à noite. +35 de vida.", Color("7ff0c4"))
+	aviso("Dia %d. Sobreviveram à noite: +35 de vida." % dia, Color("7ff0c4"))
+	# dormir salva: esta cama vira o ponto de retorno
+	salvar(cama.global_position)
+	aviso("Progresso salvo. Esta cama é o seu ponto de retorno.", Color("ffd166"))
+	sons.tocar("salvo", null, -6.0)
+
+
+# ---------------------------------------------------------------- salvar e carregar
+
+func tem_save() -> bool:
+	return FileAccess.file_exists(SAVE)
+
+
+func ler_save() -> Dictionary:
+	if not tem_save():
+		return {}
+	var d = JSON.parse_string(FileAccess.get_file_as_string(SAVE))
+	return d if typeof(d) == TYPE_DICTIONARY else {}
+
+
+func salvar(spawn: Vector2) -> void:
+	var js: Array = []
+	for j in jogadores:
+		js.append({"n": j.n, "hp": j.hp, "hp_max": j.hp_max, "estamina": j.estamina, "fome": j.fome, "nivel": j.nivel,
+			"xp": j.xp, "forca": j.forca, "mochila": j.mochila, "armas": j.armas, "arma": j.arma, "pentes": j.pentes,
+			"gasolina": j.gasolina, "bateria": j.bateria, "rad": j.rad})
+	var obs: Array = []
+	for i in mini(n_gerados, objetos.size()):
+		var o = objetos[i]
+		if not is_instance_valid(o):
+			continue
+		if o.aberto or o.tabuas or o.madeira < 4 or o.usos < 3:
+			obs.append({"i": i, "aberto": o.aberto, "tabuas": o.tabuas != null, "vida": o.vida, "madeira": o.madeira, "usos": o.usos})
+	var cs: Array = []
+	for i in carros.size():
+		var c = carros[i]
+		cs.append({"i": i, "x": c.global_position.x, "y": c.global_position.y, "angulo": c.angulo, "combustivel": c.combustivel,
+			"tanque": c.tanque, "saqueado": c.saqueado})
+	var ns: Array = []
+	for n in npcs:
+		if is_instance_valid(n) and n.id == "nina" and not n.sumir:
+			ns.append({"id": n.id, "x": n.global_position.x, "y": n.global_position.y})
+	var dados := {
+		"versao": 1, "modo": modo, "semente": semente, "dia": dia, "tempo": tempo, "mortes": mortes,
+		"spawn": [spawn.x, spawn.y], "historia": historia.estado_salvo(), "jogadores": js,
+		"vip": {"hp": vip.hp} if vip else null, "objetos": obs, "carros": cs, "npcs": ns,
+		"objetivo": historia.objetivo(),
+	}
+	var f := FileAccess.open(SAVE, FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(dados))
+
+
+func carregar() -> bool:
+	var d := ler_save()
+	if d.is_empty():
+		return false
+	_nova_partida(d.get("modo", "historia"), int(d["semente"]))
+	dia = int(d["dia"])
+	tempo = float(d["tempo"])
+	mortes = int(d.get("mortes", 0))
+	historia.restaurar(d.get("historia", {}))
+	var spawn := Vector2(d["spawn"][0], d["spawn"][1])
+	var js: Array = d.get("jogadores", [])
+	for dj in js:
+		if int(dj["n"]) == 2:
+			if not Input.get_connected_joypads().has(1):
+				continue
+			_entrar_p2()
+		var j = jogadores[int(dj["n"]) - 1] if jogadores.size() >= int(dj["n"]) else null
+		if j == null:
+			continue
+		for k in ["hp", "hp_max", "estamina", "fome", "forca", "gasolina", "bateria", "rad"]:
+			j.set(k, float(dj[k]))
+		j.nivel = int(dj["nivel"])
+		j.xp = int(dj["xp"])
+		j.mochila = {}
+		for k in dj["mochila"]:
+			j.mochila[k] = int(dj["mochila"][k])
+		j.armas = Array(dj["armas"])
+		j.arma = dj["arma"]
+		j.pentes = {}
+		for k in dj["pentes"]:
+			j.pentes[k] = int(dj["pentes"][k])
+		j.global_position = spawn + Vector2(60 * (int(dj["n"]) - 1), 40)
+	if vip:
+		vip.global_position = spawn + Vector2(-60, 40)
+		if d.get("vip") != null:
+			vip.hp = float(d["vip"]["hp"])
+	for o in d.get("objetos", []):
+		var i := int(o["i"])
+		if i >= objetos.size():
+			continue
+		var ob = objetos[i]
+		ob.aberto = o["aberto"]
+		ob.madeira = int(o["madeira"])
+		ob.usos = int(o["usos"])
+		if o["tabuas"] and not ob.tabuas:
+			ob.barricar()
+			ob.vida = float(o["vida"])
+		ob.queue_redraw()
+	for c in d.get("carros", []):
+		var i := int(c["i"])
+		if i >= carros.size():
+			continue
+		var car = carros[i]
+		car.global_position = Vector2(c["x"], c["y"])
+		car.angulo = float(c["angulo"])
+		car.combustivel = float(c["combustivel"])
+		car.tanque = float(c["tanque"])
+		car.saqueado = c["saqueado"]
+		car.queue_redraw()
+	for n in d.get("npcs", []):
+		_npc(n["id"], Vector2(n["x"], n["y"]))
+	# zumbis recomeçam longe da cama
+	for z in zumbis:
+		z.queue_free()
+	zumbis.clear()
+	cam.global_position = spawn
+	cam.reset_smoothing()
+	_ciclo()
+	estado = JOGANDO
+	aviso("Você acorda na cama. Dia %d." % dia, Color("ffd166"))
+	return true
 
 
 # ---------------------------------------------------------------- laço
@@ -557,10 +762,13 @@ func _process(d: float) -> void:
 		MOCHILA:
 			_menu_mochila()
 		FIM, CAPITULO:
-			if not hud.so_fade and hud.fade <= 0.05 and apertou("interagir"):
-				_nova_partida(modo)
-				estado = TITULO
-				menu_sel = 0
+			if not hud.so_fade and hud.fade <= 0.05:
+				if estado == FIM and tem_save() and apertou("interagir"):
+					carregar()                       # volta para a última cama
+				elif apertou("interagir") or (estado == FIM and apertou("voltar")):
+					_nova_partida(modo)
+					estado = TITULO
+					menu_sel = 0
 	for a in avisos:
 		a["t"] -= d
 	avisos = avisos.filter(func(a): return a["t"] > 0.0)
@@ -568,23 +776,41 @@ func _process(d: float) -> void:
 	hud.queue_redraw()
 
 
+func opcoes_titulo() -> Array:
+	var ops: Array = []
+	var d := ler_save()
+	if not d.is_empty():
+		var o: String = d.get("objetivo", "")
+		ops.append({"id": "continuar", "txt": "Continuar — dia %d%s" % [int(d["dia"]), (" · " + o) if o != "" else " · sobrevivência"]})
+	ops.append({"id": "historia", "txt": "Nova história: Capítulo 1 — A Carga"})
+	ops.append({"id": "sobrevivencia", "txt": "Sobrevivência (sem fim)"})
+	ops.append({"id": "sair", "txt": "Sair"})
+	return ops
+
+
 func _menu_titulo() -> void:
-	var ops := ["História: Capítulo 1 — O Sinal", "Sobrevivência (sem fim)", "Sair"]
+	var ops := opcoes_titulo()
+	menu_sel = clampi(menu_sel, 0, ops.size() - 1)
 	if apertou("m_cima"):
 		menu_sel = wrapi(menu_sel - 1, 0, ops.size())
+		sons.tocar("ui", null, -10.0)
 	elif apertou("m_baixo"):
 		menu_sel = wrapi(menu_sel + 1, 0, ops.size())
+		sons.tocar("ui", null, -10.0)
 	elif apertou("interagir"):
-		match menu_sel:
-			0, 1:
-				var m := "historia" if menu_sel == 0 else "sobrevivencia"
-				if m != modo:
+		sons.tocar("ui_ok", null, -8.0)
+		match ops[menu_sel]["id"]:
+			"continuar":
+				carregar()
+			"historia", "sobrevivencia":
+				var m: String = ops[menu_sel]["id"]
+				if m != modo or historia.etapa > 0:
 					_nova_partida(m)
 				estado = JOGANDO
 				if Input.get_connected_joypads().has(1):
 					_entrar_p2()
 				historia.iniciar()
-			2:
+			"sair":
 				get_tree().quit()
 
 
@@ -696,6 +922,7 @@ func _jogar(d: float) -> void:
 		for j in jogadores:
 			j.ganhar_xp(25)
 		aviso("Amanheceu. Dia %d: os zumbis estão mais fortes." % dia, Color("ffd166"))
+	historia.checar_saida()
 	if antes < 175.0 and tempo >= 175.0 and not avisou_noite:
 		avisou_noite = true
 		aviso("Está escurecendo. Ache um lugar seguro, acenda a lanterna (↑).", Color("ff9f43"))
@@ -863,7 +1090,17 @@ func _desenhar_chao() -> void:
 	for i in 500:
 		var p := Vector2(r2.randf() * lado, r2.randf() * lado)
 		n.draw_line(p, p + Vector2(r2.randf_range(-30, 30), r2.randf_range(-30, 30)), Color(0, 0, 0, 0.18), 2)
-	# piso das construções
+	# zonas de radiação: chão manchado e plantas mortas
+	for z in radiacao:
+		var c: Vector2 = z["pos"]
+		var raio: float = z["raio"]
+		for k in 6:
+			n.draw_circle(c, raio * (1.0 - k * 0.15), Color(0.55, 0.6, 0.1, 0.05))
+		r2.seed = int(c.x + c.y)
+		for k in 40:
+			var p := c + Vector2.from_angle(r2.randf() * TAU) * r2.randf() * raio
+			n.draw_circle(p, r2.randf_range(4, 14), Color(0.35, 0.4, 0.05, 0.35))
+		# piso das construções
 	for p in predios:
 		var r: Rect2 = p["r"]
 		n.draw_rect(r, p["piso"])

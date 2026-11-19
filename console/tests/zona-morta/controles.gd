@@ -32,12 +32,12 @@ func _process(_d: float) -> bool:
 			_ok(j.luz_on, "↑ liga a lanterna")
 		85:
 			j.arma = "pistola"; j.pentes["pistola"] = 3; j.mochila["balas_9mm"] = 2
-			j.global_position = Vector2(38 * 64, 2 * 64)
+			j.global_position = Vector2(38 * 64, -5 * 64)   # na ponte: corredor sem carro nem tambor
 			for zz in m.zumbis.duplicate(): zz.queue_free()
 			m.zumbis.clear()
-			m._nascer_zumbi(j.global_position + Vector2(160, 0))
+			m._nascer_zumbi(j.global_position + Vector2(0, 160))
 			z = m.zumbis[-1] if not m.zumbis.is_empty() else null
-			j.mira = Vector2.RIGHT
+			j.mira = Vector2.DOWN
 		87: Input.action_press("p1_atirar")
 		110:
 			Input.action_release("p1_atirar")

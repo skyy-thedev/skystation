@@ -19,6 +19,7 @@ var vida := 220.0
 var t_pisca := 0.0
 var farol: PointLight2D
 var t_buzina := 0.0
+var motor: AudioStreamPlayer2D
 
 const TAM := Vector2(118, 58)
 
@@ -37,6 +38,10 @@ func _ready() -> void:
 	farol = main.nova_luz(Color(1.0, 0.95, 0.8), 2.4, true, true)
 	farol.visible = false
 	add_child(farol)
+	motor = AudioStreamPlayer2D.new()
+	motor.max_distance = 1400.0
+	motor.volume_db = -6.0
+	add_child(motor)
 
 
 func alcance() -> float:
@@ -122,6 +127,8 @@ func sair(j: Node) -> void:
 func _physics_process(d: float) -> void:
 	t_pisca += d
 	if motorista == null:
+		if motor.playing:
+			motor.stop()
 		vel = move_toward(vel, 0.0, 400.0 * d)
 		if absf(vel) > 1.0:
 			_mover(d)
@@ -129,7 +136,16 @@ func _physics_process(d: float) -> void:
 			queue_redraw()   # farol piscando: "este funciona"
 		return
 	if not main.jogando():
+		if motor.playing:
+			motor.stream_paused = true
 		return
+	motor.stream_paused = false
+	if not motor.playing and combustivel > 0.0:
+		motor.stream = main.sons.bancos["motor"][0]
+		motor.play()
+	if combustivel <= 0.0 and motor.playing:
+		motor.stop()
+	motor.pitch_scale = 0.75 + absf(vel) / 520.0 * 1.3
 	var c: Dictionary = motorista.controle()
 	var acel: float = c["acelera"]
 	var freio: float = c["freia"]
@@ -150,7 +166,7 @@ func _physics_process(d: float) -> void:
 	if c["buzina"] and t_buzina <= 0.0:
 		t_buzina = 1.0
 		main.barulho(global_position, 1400.0)
-		main.aviso("BIIII!", Color("ffd166"))
+		main.sons.tocar("buzina", global_position)
 	t_buzina -= d
 	queue_redraw()
 
@@ -164,6 +180,7 @@ func _mover(d: float) -> void:
 		if outro and outro.has_method("levar_dano"):
 			if absf(vel) > 90.0:
 				outro.levar_dano(absf(vel) * 0.35, Vector2.from_angle(angulo) * absf(vel) * 1.4)
+				main.sons.tocar("acerto", global_position, 0.0, 0.7)
 				main.tremer(3.0)
 				vel *= 0.85
 		else:

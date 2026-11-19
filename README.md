@@ -150,31 +150,29 @@ PS1, SNES, N64, NES, Mega Drive e Game Boy: o netplay do RetroArch com convite p
 - `sky-netplay hospedar|entrar|sala` faz o trabalho; o `sky-emu` deixa todo jogo de RetroArch pronto para virar sala.
 - PS1 e N64 podem perder a sincronia em alguns jogos (limitação dos núcleos); SNES, NES e Mega Drive são os mais estáveis.
 
-## Zona Morta — primeiro jogo oficial (versão 0.2)
+## Zona Morta — primeiro jogo oficial (versão 0.3)
 
-RPG de sobrevivência zumbi em **2.5D** (Godot, `console/games/zona-morta`), sem arquivos de arte: tudo é
-desenhado pelo código. Paredes, móveis, carros e árvores têm altura; o mundo é ordenado pelo Y e a parede
-fica transparente quando alguém passa atrás dela. À noite, só a lanterna (cone com sombras), a tocha e as
-fogueiras iluminam, e luz acesa no escuro faz os zumbis te verem de mais longe.
-- **História — Capítulo 1 "O Sinal":** Davi (e Lia no coop) ouvem a Estação Norte no rádio. Revirar a casa,
-  usar o rádio da delegacia (falar a verdade ou mentir para a Marta), encher um galão, achar um carro que pegue,
-  dirigir até a ponte e negociar com o Tião (arma, gasolina ou ameaça). A Nina aparece pedindo ajuda.
-  As escolhas aparecem no fim e vão pesar no Capítulo 2. Também tem o modo **Sobrevivência** (sem fim).
-- **Mundo:** cidade nova a cada partida: casas (armário, geladeira, cama), mercado, delegacia (arsenal e
-  viaturas), posto (bomba de gasolina), garagens (caixas de ferramentas) e praças com árvores para lenha.
-- **Escassez:** munição pouca (9mm, cartuchos, rifle); armas em armários, porta-malas, viaturas e no arsenal.
-- **Sobreviver:** fome, fôlego, vida e nível; comida em casas (carne crua passa mal: asse na fogueira).
-  **Acampar:** barricade todas as portas de uma casa (2 madeira cada; zumbis socam até cair) e durma na cama
-  para pular a noite.
-- **Criar (△ → Criar):** tocha, bandagem, fogueira, molotov (garrafa + pano + 2 L de gasolina), faca, machado.
-  Machado corta lenha das árvores.
-- **Carros:** os que funcionam piscam o farol; abasteça com o galão (posto ou tanque de carro quebrado) e dirija
-  (R2 acelera, L2 freia, □ buzina, ✕ sai). Atropelar funciona; o motor faz barulho.
-- **Coop local:** segundo controle aperta Options e a Lia entra; câmera mostra os dois; caído = o outro reanima.
-- **Controle:** L anda, R mira, R2 arma, R1 golpe, L2 corre, L1 molotov, ✕ usar (segure), □ recarrega,
-  ○ bandagem, △ mochila/criar, ←→ arma, ↑ lanterna, ↓ tocha, Options pausa. Teclado: WASD, mouse, E, R, H, Tab, F, T, G.
-- **Testes:** `console/tests/zona-morta/roteiro.gd` joga o capítulo inteiro (rádio, posto, carro, coop, dormir,
-  ponte) e `controles.gd` aperta os botões de verdade; os dois rodam no CI do launcher.
+RPG de sobrevivência zumbi em **2.5D** (Godot, `console/games/zona-morta`), sem arquivos de arte nem de som:
+tudo é desenhado e sintetizado pelo código. A bíblia da história e o roteiro dos capítulos estão no projeto
+(`claude/zona-morta.md`).
+- **História:** 2032, um acidente no reator experimental de Angra dos Reis transforma quem respirou a nuvem em
+  zumbi. Um ano depois, o mercenário **Corvo** é contratado para levar a "carga" — a **Iara** — do Bunker de Sumaré
+  ao Bunker do Rio. Ela é imune; no Rio, um hospital quer estudá-la. **Capítulo 1 "A Carga"**: Comandante Rocha,
+  equipamento do bunker, rádio com a Dra. Helena, a mordida que revela a imunidade, Nina (e o Saci), galão, carro
+  e o pedágio do Tião (arma, gasolina, ameaça… ou vender a Iara). Também tem o modo **Sobrevivência**.
+- **Iara:** no solo ela anda sozinha (segue, foge dos zumbis, entra no carro; ✕ perto dela = "espera aqui");
+  se cair, levante-a a tempo. No **coop**, o jogador 2 é a Iara (mordida não transforma, radiação não pega).
+- **Salvar:** dormir numa cama (à noite, casa com todas as portas barricadas; no bunker, a porta de aço trancada)
+  salva o jogo e a cama vira o ponto de retorno. Morreu? ✕ volta para a última cama. No título: **Continuar**.
+  A cidade é refeita pela mesma semente, então o que foi revirado continua revirado.
+- **Sons** (sintetizados ao abrir o jogo, ~0,4 s): gemidos, rosnados e gritos dos zumbis (posicionais), tiros,
+  golpes, passos, recarga, mordida, motor (tom muda com a velocidade), buzina, fogo, vento, chiado do rádio,
+  contador geiger e coração com vida baixa. Sem música por enquanto.
+- **Radiação:** zonas quentes com tambores vazando e zumbis irradiados (brilham verde, aguentam mais); o geiger
+  acelera perto; acima de 50 a radiação tira vida; **pílulas de iodo** baixam.
+- O resto da 0.2 continua: luz e sombra (lanterna, tocha, fogueira), escassez, crafting, barricadas, carros, coop.
+- **Testes:** `console/tests/zona-morta/roteiro.gd` joga o capítulo inteiro (31 checagens, inclusive salvar e
+  carregar) e `controles.gd` aperta os botões; os dois rodam no CI do launcher.
 
 ## SkyStore (Fase 12, etapa 1: servidor)
 

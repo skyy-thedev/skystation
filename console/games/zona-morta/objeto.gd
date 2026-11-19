@@ -4,7 +4,7 @@ extends Node2D
 ## A origem do nó é o "pé" do objeto: o Godot ordena pelo Y e quem está mais embaixo é desenhado na frente (2.5D).
 
 const D := preload("res://dados.gd")
-const LOOT := ["armario", "geladeira", "prateleira", "arsenal", "ferramentas", "mochila"]
+const LOOT := ["armario", "geladeira", "prateleira", "arsenal", "ferramentas", "mochila", "tambor"]
 
 var main: Node2D
 var tipo := "armario"
@@ -14,6 +14,7 @@ var casa := -1                # índice da construção (camas e portas)
 var horiz := true             # portas: o vão é horizontal?
 var largura := 96.0           # portas: tamanho do vão
 var madeira := 4              # árvores: quantas vezes ainda dá para cortar
+var aco := false              # porta de aço do bunker: tranca sem madeira e aguenta muito mais
 var usos := 3                 # bomba do posto: litros acabam
 var vida := 0.0               # barricada / fogueira (segundos)
 var tabuas: StaticBody2D      # a barricada em si
@@ -31,6 +32,12 @@ func _ready() -> void:
 			_corpo(Vector2(36, 20))
 		"bomba":
 			_corpo(Vector2(30, 30))
+		"tambor":
+			_corpo_redondo(14)
+			luz = main.nova_luz(Color(0.5, 1.0, 0.35), 0.9, false)
+			luz.position = Vector2(0, -30)
+			luz.energy = 0.7
+			add_child(luz)
 		"arvore":
 			_corpo_redondo(13)
 		"fogueira":
@@ -38,6 +45,12 @@ func _ready() -> void:
 			luz = main.nova_luz(Color(1.0, 0.62, 0.3), 1.9, false)
 			luz.position = Vector2(0, -10)
 			add_child(luz)
+			var som := AudioStreamPlayer2D.new()
+			som.stream = main.sons.bancos["fogo"][0]
+			som.max_distance = 900.0
+			som.volume_db = -8.0
+			som.autoplay = true
+			add_child(som)
 
 
 func _corpo(tam: Vector2) -> void:
@@ -77,12 +90,12 @@ func alcance() -> float:
 
 func rotulo(j: Node) -> String:
 	match tipo:
-		"armario", "geladeira", "prateleira", "arsenal", "ferramentas", "mochila":
+		"armario", "geladeira", "prateleira", "arsenal", "ferramentas", "mochila", "tambor":
 			if aberto:
 				return ""
 			return {"armario": "Revirar armário", "geladeira": "Abrir geladeira", "prateleira": "Revirar prateleira",
-				"arsenal": "Abrir armário da polícia", "ferramentas": "Abrir caixa de ferramentas",
-				"mochila": "Revirar mochila"}[tipo]
+				"arsenal": "Abrir armário de equipamento", "ferramentas": "Abrir caixa de ferramentas",
+				"mochila": "Revirar mochila", "tambor": "Revirar o tambor (radioativo!)"}[tipo]
 		"arvore":
 			if madeira <= 0:
 				return ""
@@ -94,6 +107,8 @@ func rotulo(j: Node) -> String:
 				return "Precisa de um galão"
 			return "Encher o galão" if j.gasolina < 10.0 else "Galão já está cheio"
 		"porta":
+			if aco:
+				return "Destrancar a porta de aço" if tabuas else "Trancar a porta de aço"
 			if tabuas:
 				return "Desmontar barricada (+1 madeira)"
 			return "Barricar a porta (2 madeira)" if j.qtd("madeira") >= 2 else "Barricar: precisa de 2 madeira"
@@ -129,8 +144,9 @@ func tempo(_j: Node) -> float:
 
 func usar(j: Node) -> void:
 	match tipo:
-		"armario", "geladeira", "prateleira", "arsenal", "ferramentas", "mochila":
+		"armario", "geladeira", "prateleira", "arsenal", "ferramentas", "mochila", "tambor":
 			aberto = true
+			main.sons.tocar("abrir", global_position, -6.0)
 			var achou: Array = garantido.duplicate()
 			if not has_meta("so_garantido"):
 				achou.append_array(D.sortear("armario" if tipo == "mochila" else tipo, main.rng))
@@ -138,11 +154,14 @@ func usar(j: Node) -> void:
 				main.aviso("Nada útil aqui.", Color(1, 1, 1, 0.7))
 			for a in achou:
 				j.receber(a[0], a[1])
-			main.historia.evento("revirou", {"tipo": tipo})
+			if tipo == "tambor":
+				j.rad = minf(100.0, j.rad + 18.0)
+			main.historia.evento("revirou", {"tipo": tipo, "obj": self})
 			main.barulho(global_position, 120.0)
 		"arvore":
 			madeira -= 2
 			j.receber("madeira", 2)
+			main.sons.tocar("machado", global_position)
 			main.barulho(global_position, 260.0)
 			main.tremer(2.0)
 		"bomba":
@@ -152,7 +171,14 @@ func usar(j: Node) -> void:
 			main.aviso("Galão cheio: %.0f L de gasolina" % q, Color("ffd166"))
 			main.historia.evento("gasolina", {})
 		"porta":
-			if tabuas:
+			main.sons.tocar("martelo", global_position)
+			if aco:
+				if tabuas:
+					tabuas.queue_free()
+					tabuas = null
+				else:
+					barricar()
+			elif tabuas:
 				tabuas.queue_free()
 				tabuas = null
 				j.receber("madeira", 1)
@@ -171,7 +197,7 @@ func usar(j: Node) -> void:
 
 
 func barricar() -> void:
-	vida = 160.0
+	vida = 600.0 if aco else 160.0
 	tabuas = StaticBody2D.new()
 	tabuas.collision_layer = 1
 	var f := CollisionShape2D.new()
@@ -190,6 +216,7 @@ func bater(q: float) -> void:
 		return
 	vida -= q
 	main.tremer(1.0)
+	main.sons.tocar("martelo", global_position, -8.0, 0.7)
 	if vida <= 0.0:
 		tabuas.queue_free()
 		tabuas = null
@@ -264,6 +291,12 @@ func _draw() -> void:
 			draw_line(Vector2(10, -60), Vector2(18, -84), Color(0.7, 0.7, 0.7), 2)
 			var pisca: bool = sin(fase) > 0.0 and main.historia.radio_ativo()
 			draw_circle(Vector2(-8, -48), 3, Color(1, 0.2, 0.2) if pisca else Color(0.3, 0.1, 0.1))
+		"tambor":
+			draw_circle(Vector2(0, 0), 26, Color(0.4, 1.0, 0.3, 0.12))
+			_caixa(Vector2(28, 18), 38, Color("8a7a1a") if not aberto else Color("4a4210"), Color("b0a030"))
+			draw_rect(Rect2(-14, -26, 28, 6), Color(0.1, 0.1, 0.1))
+			draw_circle(Vector2(0, -14), 5, Color(0.1, 0.1, 0.1))
+			draw_circle(Vector2(0, -56), 4, Color(0.5, 1, 0.3, 0.6))
 		"bomba":
 			_caixa(Vector2(30, 26), 52, Color("c0392b"), Color("e74c3c"))
 			draw_rect(Rect2(-10, -66, 20, 12), Color(0.1, 0.1, 0.1))
@@ -284,6 +317,13 @@ func _draw() -> void:
 			draw_circle(Vector2(-12, -84), 28, Color(0.22, 0.40, 0.19, al))
 			draw_circle(Vector2(14, -66), 22, Color(0.18, 0.34, 0.16, al))
 		"porta":
+			if aco:
+				var cor := Color("6a7078") if tabuas else Color(0.3, 0.32, 0.35, 0.5)
+				if horiz:
+					draw_rect(Rect2(-largura / 2, -56, largura, 56), cor)
+				else:
+					draw_rect(Rect2(-8, -largura / 2 - 40, 16, largura), cor)
+				return
 			if tabuas:
 				var n := 4
 				var a := clampf(vida / 160.0, 0.3, 1.0)

@@ -33,13 +33,13 @@ func gerar(main: Node2D) -> void:
 	var delegacia: Vector2i = longe[rng.randi_range(0, longe.size() - 1)]
 	var papeis := ["mercado", "posto", "garagem", "garagem", "praca", "praca", "praca",
 		"casas", "casas", "casas", "casas", "casas", "casas", "casas"]
-	papeis.shuffle()
+	_embaralhar(papeis)
 	for by in n:
 		for bx in n:
 			var b := Vector2i(bx, by)
 			var r := Rect2((bx * QUADRA + 4) * T, (by * QUADRA + 4) * T, (QUADRA - 4) * T, (QUADRA - 4) * T)
 			if b == inicio:
-				_casas(r, true)
+				_bunker(r)
 			elif b == delegacia:
 				_delegacia(r)
 			else:
@@ -62,6 +62,16 @@ func gerar(main: Node2D) -> void:
 		var c := _carro(p, PI / 2 if vertical else 0.0, rng.randf() < 0.1, funcionais > 0 and rng.randf() < 0.06)
 		if c and c.funciona:
 			funcionais -= 1
+	_radiacao(n, inicio)
+
+
+func _embaralhar(a: Array) -> void:
+	## embaralha com o rng da partida (o shuffle() do Godot usa outro sorteio e quebraria o save)
+	for i in range(a.size() - 1, 0, -1):
+		var j := rng.randi_range(0, i)
+		var x = a[i]
+		a[i] = a[j]
+		a[j] = x
 
 
 # ---------------------------------------------------------------- peças
@@ -124,7 +134,7 @@ func _construcao(r: Rect2, tipo: String, portas: int, cor: Color, topo: Color, p
 	m.predios.append({"r": r, "tipo": tipo, "piso": piso, "portas": []})
 	var e := 14.0
 	var lados := [0, 1, 2, 3]
-	lados.shuffle()
+	_embaralhar(lados)
 	var com_porta := lados.slice(0, portas)
 	for lado in 4:
 		var horiz := lado == 0 or lado == 2
@@ -279,3 +289,52 @@ func _ponte() -> void:
 	_parede_v(Rect2(40 * T, -12 * T, 14, 12 * T), true, cor, topo)
 	_parede_h(Rect2(36 * T, -8 * T, 4 * T, 18), true, Color("5a3d22"), Color("7a5a3a"))   # portão
 	m.locais["ponte"] = Vector2(38 * T, -6.4 * T)
+
+
+func _bunker(b: Rect2) -> void:
+	## Bunker de Sumaré: concreto, porta de aço, o Comandante Rocha, o armário do equipamento e as camas
+	var r := Rect2(b.position + Vector2(2 * T, 3 * T), Vector2(10 * T, 7 * T))
+	var idx := _construcao(r, "bunker", 1, Color("3b3e42"), Color("5c6066"), Color("2f3236"), 1.6)
+	m.predios[idx]["nome"] = "Bunker Sumaré"
+	for p in m.predios[idx]["portas"]:
+		p.aco = true
+	m.locais["bunker"] = idx
+	m.locais["inicio"] = r.position + Vector2(4.5 * T, 4 * T)
+	m.locais["rocha"] = r.position + Vector2(7.5 * T, 2.2 * T)
+	m.locais["iara"] = r.position + Vector2(5.5 * T, 4.3 * T)
+	m.locais["saida_bunker"] = (m.predios[idx]["portas"][0] as Node2D).position
+	m.locais["casa_inicial"] = idx
+	_objeto("cama", r.position + Vector2(60, 140), {"casa": idx})
+	_objeto("cama", r.position + Vector2(140, 140), {"casa": idx})
+	var arm := _objeto("arsenal", r.position + Vector2(r.size.x - 70, r.size.y - 40),
+		{"garantido": [["balas_9mm", 6], ["bandagem", 2], ["pilhas", 1], ["iodo", 2], ["arma:faca", 1]]})
+	arm.set_meta("so_garantido", true)
+	m.locais["armario_bunker"] = arm.position
+	_objeto("geladeira", r.position + Vector2(r.size.x - 150, r.size.y - 40), {"garantido": [["enlatado", 2], ["agua", 2]]})
+	_objeto("radio", r.position + Vector2(r.size.x - 90, 70), {})
+	# fora do bunker, umas casas para começar a revirar
+	var lote := Rect2(b.position + Vector2(0, 10.5 * T), Vector2(b.size.x, 3.5 * T))
+	for i in 3:
+		_arvore(lote.position + Vector2(rng.randf_range(80, lote.size.x - 80), rng.randf_range(60, lote.size.y - 40)))
+
+
+func _radiacao(n: int, inicio: Vector2i) -> void:
+	## zonas quentes: tambores vazando, um caminhão tombado. O contador geiger avisa antes.
+	var feitas := 0
+	var tentativas := 0
+	while feitas < 4 and tentativas < 40:
+		tentativas += 1
+		var bx := rng.randi_range(0, n - 1)
+		var by := rng.randi_range(0, n - 1)
+		if absi(bx - inicio.x) + absi(by - inicio.y) < 2:
+			continue
+		# no cruzamento das ruas ou no meio de uma quadra
+		var c := Vector2((bx * QUADRA + 2) * T, (by * QUADRA + 2) * T) if rng.randf() < 0.5 \
+			else Vector2((bx * QUADRA + 11) * T, (by * QUADRA + 11) * T)
+		var raio := rng.randf_range(260.0, 420.0)
+		m.radiacao.append({"pos": c, "raio": raio, "forca": rng.randf_range(0.6, 1.0)})
+		for k in rng.randi_range(3, 5):
+			var p := c + Vector2.from_angle(rng.randf() * TAU) * rng.randf_range(20.0, raio * 0.5)
+			if not m._ocupado(p):
+				_objeto("tambor", p)
+		feitas += 1

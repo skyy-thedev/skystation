@@ -8,7 +8,9 @@ const VEL_CORRENDO := 295.0
 
 var main: Node2D
 var n := 1
-var nome := "Davi"
+var nome := "Corvo"
+var vip := false                        # jogador 2 no coop é a Iara: mordida não transforma, radiação não pega
+var rad := 0.0                          # radiação acumulada (0–100)
 var cor_roupa := Color("3a6ea5")
 var cor_cabelo := Color("3b2a1a")
 var hp := 100.0
@@ -120,6 +122,7 @@ func receber(item: String, q: int, avisar := true) -> void:
 	mochila[item] = qtd(item) + q
 	if avisar:
 		main.aviso("%s: +%d %s" % [nome, q, D.nome(item)], Color("7ff0c4"))
+		main.sons.tocar("pegar", null, -8.0)
 	main.historia.evento("item", {"item": item})
 
 
@@ -156,6 +159,14 @@ func usar_item(item: String) -> void:
 			else:
 				main.aviso("%s comeu: %s" % [nome, info["nome"]], Color("7ff0c4"))
 		"cura":
+			if info.has("rad"):
+				if rad <= 0.0:
+					main.aviso("Sem radiação no corpo", Color(1, 1, 1, 0.7))
+					return
+				gastar(item, 1)
+				rad = maxf(0.0, rad - info["rad"])
+				main.aviso("%s tomou iodo: radiação %d" % [nome, int(rad)], Color("7ff0c4"))
+				return
 			if hp >= hp_max:
 				main.aviso("Vida já está cheia", Color(1, 1, 1, 0.7))
 				return
@@ -219,6 +230,9 @@ func receber_dano(q: float, piscar := true) -> void:
 	if piscar:
 		t_dano = 0.25
 		main.tremer(4.0)
+		main.sons.tocar("dor", global_position, -4.0, 1.25 if vip else 0.9)
+		if vip:
+			main.historia.evento("iara_mordida", {})
 	interacao = {}
 	if hp <= 0.0:
 		hp = 0.0
@@ -282,6 +296,11 @@ func _physics_process(d: float) -> void:
 	fome = maxf(0.0, fome - 0.35 * d)
 	if fome <= 0.0 and not caido:
 		receber_dano(1.0 * d, false)
+	# radiação: acumula nas zonas quentes; acima de 50 começa a tirar vida (a Iara é imune)
+	if not vip and carro == null:
+		rad = minf(100.0, rad + main.radiacao_em(global_position) * 9.0 * d)
+	if rad > 50.0 and not caido:
+		receber_dano((rad - 50.0) / 50.0 * 1.6 * d, false)
 
 	if caido:
 		t_caido -= d
@@ -304,6 +323,7 @@ func _physics_process(d: float) -> void:
 	main.coleira(self)
 	if mover.length() > 0.2:
 		passo += d * (14.0 if correndo else 9.0)
+		main.sons.passo(self, correndo)
 		if correndo:
 			main.barulho(global_position, 240.0)
 
@@ -346,6 +366,7 @@ func _physics_process(d: float) -> void:
 			main.aviso("Lanterna sem pilha: use pilhas ou acenda uma tocha", Color("ff8a8a"))
 		else:
 			luz_on = not luz_on
+			main.sons.tocar("lanterna", null, -6.0)
 	if Input.is_action_just_pressed(p("tocha")) and tocha_t <= 0.0:
 		if tem("tocha"):
 			usar_item("tocha")
@@ -414,15 +435,19 @@ func atacar(a: String) -> void:
 		golpe_anim = 0.18
 		estamina -= info["folego"]
 		var dano: float = info["dano"] * forca
+		var acertou := false
 		for z in main.zumbis:
 			var v: Vector2 = z.global_position - global_position
 			if v.length() < info["alcance"] and absf(mira.angle_to(v)) < 1.1:
 				z.levar_dano(dano, v.normalized() * 320.0)
+				acertou = true
+		main.sons.tocar("acerto" if acertou else "golpe", global_position, -2.0 if acertou else -8.0)
 		main.barulho(global_position, info["barulho"])
 		return
 	if t_recarga > 0.0:
 		return
 	if int(pentes.get(a, 0)) <= 0:
+		main.sons.tocar("seco", global_position, -6.0)
 		recarregar()
 		t_ataque = 0.3
 		return
@@ -442,6 +467,7 @@ func atacar(a: String) -> void:
 				r["collider"].levar_dano(info["dano"], dir * 240.0)
 		tiros.append({"de": global_position, "ate": fim, "t": 0.07})
 	main.barulho(global_position, info["barulho"])
+	main.sons.tocar("tiro_" + a, global_position, 0.0 if a == "pistola" else 3.0)
 	main.tremer(4.0 if a == "pistola" else 8.0)
 
 
@@ -455,6 +481,7 @@ func recarregar() -> void:
 		main.aviso("%s: sem %s" % [nome, D.nome(info["municao"]).to_lower()], Color("ff8a8a"))
 		return
 	t_recarga = info["recarga"]
+	main.sons.tocar("recarga", global_position, -4.0)
 
 
 func _terminar_recarga() -> void:
@@ -472,6 +499,7 @@ func arremessar() -> void:
 		main.aviso("%s: sem molotov (crie com garrafa, pano e gasolina)" % nome, Color("ff8a8a"))
 		return
 	gastar("molotov", 1)
+	main.sons.tocar("vidro", global_position + mira * 280.0)
 	main.molotov(global_position + mira * 280.0)
 
 

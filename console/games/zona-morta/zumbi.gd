@@ -23,6 +23,8 @@ var frente := Vector2.RIGHT
 var fase := 0.0
 var cor := Color("6f8f5a")
 var destino := Vector2.ZERO   # para onde foi o barulho
+var t_gemido := 0.0
+var brilho: PointLight2D
 
 
 func _ready() -> void:
@@ -41,6 +43,12 @@ func _ready() -> void:
 			cor = Color("5d6b4a")
 		"policial":
 			cor = Color("4a5d7a")
+		"irradiado":
+			cor = Color("7fbf3a")
+			brilho = main.nova_luz(Color(0.5, 1.0, 0.3), 0.55, false)
+			brilho.position = Vector2(0, -20)
+			brilho.energy = 0.8
+			add_child(brilho)
 		_:
 			cor = Color.from_hsv(randf_range(0.20, 0.30), 0.35, randf_range(0.40, 0.55))
 
@@ -49,6 +57,8 @@ func ouvir(origem: Vector2) -> void:
 	if not alerta:
 		destino = origem
 	t_perdeu = maxf(t_perdeu, 4.0)
+	if not alerta:
+		_rosnar()
 	alerta = true
 
 
@@ -84,6 +94,12 @@ func _physics_process(d: float) -> void:
 	if t_olhar <= 0.0:
 		t_olhar = 0.3
 		_olhar()
+	# gemidos de tempos em tempos (mais frequentes quando está atrás de alguém)
+	t_gemido -= d
+	if t_gemido <= 0.0:
+		t_gemido = randf_range(2.5, 5.0) if alerta else randf_range(6.0, 14.0)
+		var som := "brutamontes" if tipo == "brutamontes" else "gemido"
+		main.sons.tocar(som, global_position, -10.0 if not alerta else -5.0, 0.8 if tipo == "irradiado" else 1.0)
 
 	var desejo := Vector2.ZERO
 	if alvo and alerta:
@@ -117,6 +133,7 @@ func _physics_process(d: float) -> void:
 
 	if alvo and t_ataque <= 0.0 and alvo.global_position.distance_to(global_position) < 32.0 and alvo.pode_ser_mordido():
 		t_ataque = 0.9 if tipo != "brutamontes" else 1.4
+		main.sons.tocar("mordida", global_position, -3.0)
 		alvo.receber_dano(dano)
 	queue_redraw()
 
@@ -124,7 +141,7 @@ func _physics_process(d: float) -> void:
 func _olhar() -> void:
 	var melhor: Node = null
 	var menor := 1e9
-	for j in main.jogadores:
+	for j in main.alvos():
 		if not j.pode_ser_mordido():
 			continue
 		var dist: float = j.global_position.distance_to(global_position)
@@ -133,6 +150,8 @@ func _olhar() -> void:
 			melhor = j
 			menor = dist
 	if melhor:
+		if alvo == null:
+			_rosnar()
 		alvo = melhor
 		alerta = true
 		t_perdeu = 5.0
@@ -141,6 +160,13 @@ func _olhar() -> void:
 		if t_perdeu <= 0.0:
 			alerta = false
 			alvo = null
+
+
+func _rosnar() -> void:
+	if tipo == "corredor":
+		main.sons.tocar("grito", global_position, -2.0)
+	else:
+		main.sons.tocar("rosnado", global_position, -6.0, 0.75 if tipo == "brutamontes" else 1.0)
 
 
 func _ve(j: Node2D) -> bool:
