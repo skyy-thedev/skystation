@@ -88,6 +88,13 @@ def game_files(path):
     folder = os.path.dirname(path)
     ext = path.rsplit(".", 1)[-1].lower()
     try:
+        if ext == "gdi":                         # Dreamcast: o .gdi lista as faixas (track01.bin, track02.raw…)
+            with open(path, errors="replace") as f:
+                for ln in f.read().splitlines()[1:]:
+                    for tok in re.findall(r'"([^"]+)"|(\S+\.(?:bin|raw|iso))', ln, re.I):
+                        p = os.path.join(folder, tok[0] or tok[1])
+                        if os.path.exists(p) and p not in files:
+                            files.append(p)
         if ext in ("cue", "m3u"):
             with open(path, errors="replace") as f:
                 text = f.read()
@@ -111,15 +118,17 @@ def game_files(path):
 
 def system_of(path):
     parts = os.path.normpath(path).split(os.sep)
-    for s in ("ps1", "ps2", "ps3", "psp", "snes", "n64", "gc", "wii", "x360", "nds", "3ds", "gba", "gb", "nes", "md"):
+    for s in ("ps1", "ps2", "ps3", "psp", "snes", "n64", "gc", "wii", "x360", "nds", "3ds", "gba", "gb", "nes", "md",
+              "ps4", "switch", "wiiu", "vita", "xbox", "dc", "saturn"):   # Fase 13
         if s in parts:
             return s
     return None
 
 
 def _is_game(path):
-    return os.path.isfile(path) or (system_of(path) == "ps3" and os.path.isdir(path) and
-                                    os.path.basename(path.rstrip("/")) not in ("ps3", "covers"))
+    sis = system_of(path)                          # PS3, PS4 e Wii U: o jogo pode ser uma pasta inteira
+    return os.path.isfile(path) or (sis in ("ps3", "ps4", "wiiu") and os.path.isdir(path) and
+                                    os.path.basename(path.rstrip("/")) not in (sis, "covers"))
 
 
 def mover(path, dest_kind):
@@ -615,7 +624,8 @@ def uso():
     sky = os.path.join(HOME, "skystation")
     u = shutil.disk_usage("/")
     itens = []
-    for nome, sub in (("PS1", "roms/ps1"), ("PS2", "roms/ps2"), ("PS3", "roms/ps3"), ("PSP", "roms/psp"), ("SNES", "roms/snes"), ("N64", "roms/n64"), ("GameCube e Wii", "roms/gc"), ("GameCube e Wii", "roms/wii"), ("Xbox 360", "roms/x360"),
+    for nome, sub in (("PS1", "roms/ps1"), ("PS2", "roms/ps2"), ("PS3", "roms/ps3"), ("PSP", "roms/psp"), ("SNES", "roms/snes"), ("N64", "roms/n64"), ("GameCube e Wii", "roms/gc"), ("GameCube e Wii", "roms/wii"), ("Xbox 360", "roms/x360"), ("PS4", "roms/ps4"), ("Switch", "roms/switch"),
+                      ("Wii U", "roms/wiiu"), ("PS Vita", "roms/vita"), ("Xbox", "roms/xbox"), ("Dreamcast e Saturn", "roms/dc"), ("Dreamcast e Saturn", "roms/saturn"),
                       ("Portáteis e clássicos", "roms/nds"), ("Portáteis e clássicos", "roms/3ds"), ("Portáteis e clássicos", "roms/gba"),
                       ("Portáteis e clássicos", "roms/gb"), ("Portáteis e clássicos", "roms/nes"), ("Portáteis e clássicos", "roms/md"),
                       ("Jogos próprios", "games"), ("Saves e estados", "saves"), ("Saves e estados", "states"),

@@ -4,6 +4,7 @@
 #   ps1  -> RetroArch + core PCSX-ReARMed (dynarec, o mais leve)
 #   ps2  -> PCSX2 (perfil leve: OpenGL, resolução nativa | potente: Vulkan, 2x)
 #   ps3  -> RPCS3 (Fase 7.0; só em PC forte: 6+ threads). Jogo = pasta do disco ou .iso
+#   Fase 13: dc/saturn (RetroArch), wiiu/vita/xbox (core do RetroArch ou Cemu/Vita3K/xemu), ps4 (shadPS4), switch (teste)
 
 SYS="$1"
 ROM="$2"
@@ -23,12 +24,67 @@ if [ "$ROM" = "disco" ]; then
     [ -r "$DEV" ] || fail "Sem permissão para ler o leitor de disco. Rode a Fase 5.8 e reinicie."
     DISCO="$(printf '%s' "${3:-disco}" | tr -cd 'A-Za-z0-9-')"
 else
-    [ -f "$ROM" ] || { [ "$SYS" = ps3 ] && [ -d "$ROM" ]; } || fail "Arquivo não encontrado: $(basename "$ROM")"
+    # PS3, PS4 e Wii U também aceitam o jogo como pasta (cópia do disco/jogo instalado).
+    [ -f "$ROM" ] || { case "$SYS" in ps3|ps4|wiiu) [ -d "$ROM" ] ;; *) false ;; esac; } \
+        || fail "Arquivo não encontrado: $(basename "$ROM")"
 fi
 mkdir -p "$SKY/saves/$SYS" "$SKY/states/$SYS" "$SKY/bios/$SYS"
 
+# Fase 13: BIOS/chaves deixadas em SKYROMS/bios/<sistema>/ são copiadas para o console (sem apagar
+# nada que já esteja lá). bios_sync <subpasta>: alguns emuladores procuram dentro de uma subpasta.
+bios_sync() {
+    local dest="$SKY/bios/$SYS${1:+/$1}" o
+    mkdir -p "$dest"
+    for o in "/mnt/skyroms/bios/$SYS" "/mnt/skyroms/bios/$SYS${1:+/$1}"; do
+        [ -d "$o" ] && find "$o" -maxdepth 1 -type f -exec cp -n {} "$dest/" \; 2>/dev/null
+    done
+    return 0
+}
+# copia_como <pasta> <nome exato> <padrões…>: o emulador exige um nome exato; usa o 1º arquivo parecido.
+copia_como() {
+    local dir="$1" nome="$2" f; shift 2
+    [ -f "$dir/$nome" ] && return 0
+    for f in "$@"; do
+        f="$(find "$dir" -maxdepth 1 -type f -iname "$f" ! -iname "$nome" 2>/dev/null | head -1)"
+        [ -n "$f" ] && { cp -n "$f" "$dir/$nome"; return 0; }
+    done
+    return 1
+}
+precisa_forte() {   # PS4 e Switch: como o PS3/360, só em processador com 6+ threads
+    if [ "$(nproc)" -lt 6 ] && [ ! -f "$HOME/.config/skystation/forcar-pesados" ]; then
+        fail "$1 precisa de um processador com 6+ threads (este tem $(nproc)). Dê boot com o pendrive num PC mais forte."
+    fi
+}
+saturn_bios() { [ -f "$SKY/bios/saturn/sega_101.bin" ] || [ -f "$SKY/bios/saturn/mpr-17933.bin" ]; }
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland;xcb}"
+
+# Wii U, Vita e Xbox: pelo RetroArch quando o core existe (controle, menu Home e saves por perfil já
+# funcionam); senão pelo programa oficial instalado pela Fase 13 ("<sistema>-solo").
+ALVO="$SYS"
 case "$SYS" in
-ps1|snes|n64|psp|gc|wii|nds|3ds|gba|gb|nes|md)
+    wiiu) [ -f /opt/skystation/emu/cores/cemu_libretro.so ] || ALVO=wiiu-solo ;;
+    vita) [ -f /opt/skystation/emu/cores/vita3k_libretro.so ] || ALVO=vita-solo ;;
+    xbox) [ -f /opt/skystation/emu/cores/xemu_libretro.so ] || ALVO=xbox-solo ;;
+esac
+case "$SYS" in
+    dc)     bios_sync dc ;;                      # Flycast: <system>/dc/dc_boot.bin, dc_flash.bin
+    saturn) bios_sync ;;
+    wiiu)   bios_sync Cemu ;;                    # core Cemu: <system>/Cemu/keys.txt
+    vita)   bios_sync vita3k ;;                  # core Vita3K: <system>/vita3k/PSP2UPDAT.PUP
+    xbox)   bios_sync xemu                       # core xemu: nomes exatos em <system>/xemu/
+            X="$SKY/bios/xbox/xemu"
+            copia_como "$X" mcpx_1.0.bin '*mcpx*.bin'
+            copia_como "$X" Complex_4627v1.03.bin 'Complex*.bin' '*4627*.bin' '*bios*.bin'
+            copia_como "$X" xbox_hdd.qcow2 '*.qcow2' ;;
+esac
+# Wii U em pasta (code/ content/ meta/): o emulador abre o .rpx de dentro de code/.
+if [ "$SYS" = wiiu ] && [ -d "$ROM" ]; then
+    ROM="$(find "$ROM/code" -maxdepth 1 -type f -iname '*.rpx' 2>/dev/null | head -1)"
+    [ -n "$ROM" ] || fail "Pasta de Wii U sem code/*.rpx."
+fi
+
+case "$ALVO" in
+ps1|snes|n64|psp|gc|wii|nds|3ds|gba|gb|nes|md|dc|saturn|wiiu|vita|xbox)
     # Fase 7.1: para cada sistema, o primeiro core instalado da lista (o instalador tenta nessa ordem).
     case "$SYS" in
         ps1)  CORES="pcsx_rearmed" ;;
@@ -42,12 +98,33 @@ ps1|snes|n64|psp|gc|wii|nds|3ds|gba|gb|nes|md)
         gb)   CORES="gambatte" ;;
         nes)  CORES="nestopia fceumm" ;;
         md)   CORES="genesis_plus_gx" ;;
+        # Fase 13
+        dc)   CORES="flycast" ;;
+        saturn)                     # Beetle Saturn é o mais fiel, mas exige BIOS; sem ela, YabaSanshiro (HLE)
+            if saturn_bios; then
+                CORES="mednafen_saturn yabasanshiro"
+            else
+                CORES="yabasanshiro mednafen_saturn"
+            fi ;;
+        wiiu) CORES="cemu" ;;
+        vita) CORES="vita3k" ;;
+        xbox) CORES="xemu" ;;
     esac
     CORE=""
     for c in $CORES; do
         [ -f "/opt/skystation/emu/cores/${c}_libretro.so" ] && { CORE="/opt/skystation/emu/cores/${c}_libretro.so"; break; }
     done
-    [ -n "$CORE" ] || fail "Emulador de ${SYS^^} não instalado. Rode a Fase 7.1 (fase7-1.sh)."
+    case "$SYS" in dc|saturn|wiiu|vita|xbox) FASE="a Fase 13 (fase13.sh)" ;; *) FASE="a Fase 7.1 (fase7-1.sh)" ;; esac
+    [ -n "$CORE" ] || fail "Emulador de ${SYS^^} não instalado. Rode $FASE."
+    if [ "$SYS" = saturn ] && [ "${CORE##*/}" = mednafen_saturn_libretro.so ] \
+        && ! saturn_bios; then
+        fail "O Saturn precisa da BIOS (sega_101.bin ou mpr-17933.bin) em SKYROMS/bios/saturn."
+    fi
+    if [ "$SYS" = xbox ]; then
+        for f in mcpx_1.0.bin Complex_4627v1.03.bin xbox_hdd.qcow2; do
+            [ -f "$SKY/bios/xbox/xemu/$f" ] || fail "Xbox: falta $f em SKYROMS/bios/xbox (MCPX, BIOS e o HD do xemu)."
+        done
+    fi
     CFG="$HOME/.config/skystation/retroarch.cfg"
     mkdir -p "$(dirname "$CFG")"
     # Configuração base do SkyStation, sempre regenerada (o RetroArch não salva por cima).
@@ -58,7 +135,7 @@ ps1|snes|n64|psp|gc|wii|nds|3ds|gba|gb|nes|md)
         [ "$SYS" = psp ] && sed -i -e "s|/bios/ps1\"|/bios/psp\"|" "$CFG"
         # GameCube/Wii: o core procura os arquivos de apoio em <system>/dolphin-emu/Sys
         case "$SYS" in gc|wii) sed -i -e "s|/bios/ps1\"|/bios/dolphin\"|" "$CFG"; mkdir -p "$SKY/bios/dolphin" ;; esac
-        case "$SYS" in nds|3ds) sed -i -e "s|/bios/ps1\"|/bios/$SYS\"|" "$CFG" ;; esac
+        case "$SYS" in nds|3ds|dc|saturn|wiiu|vita|xbox) sed -i -e "s|/bios/ps1\"|/bios/$SYS\"|" "$CFG" ;; esac
     fi
     # Fase 7.4: qualidade por aparelho. No perfil "potente" (Ryzen/Vega 7) os emuladores 3D desenham
     # em resolução maior; no "leve" ficam no original. O arquivo é refeito a cada jogo porque o mesmo
@@ -218,6 +295,79 @@ ps3)
     ulimit -n 65536 2>/dev/null || ulimit -n "$(ulimit -Hn)" 2>/dev/null   # o RPCS3 reclama com menos de 4096 arquivos abertos
     export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland;xcb}"
     exec /opt/rpcs3/AppRun --no-gui --fullscreen --input-config SkyStation --user-id "$USR" "$ROM"
+    ;;
+# ---------------- Fase 13: programas separados (quando não há core do RetroArch) ----------------
+wiiu-solo)
+    [ -x /opt/cemu/AppRun ] || fail "Emulador de Wii U não instalado. Rode a Fase 13 (fase13.sh)."
+    # O Cemu guarda tudo em ~/.local/share/Cemu; as chaves (keys.txt) vão para lá também.
+    CEMU="${XDG_DATA_HOME:-$HOME/.local/share}/Cemu"
+    mkdir -p "$CEMU"
+    [ -f "$SKY/bios/wiiu/Cemu/keys.txt" ] && cp -n "$SKY/bios/wiiu/Cemu/keys.txt" "$CEMU/keys.txt"
+    # Sem controle configurado o Cemu não lê o DS4: na 1ª vez abre a tela do Cemu para configurar
+    # (Opções → Configurações de entrada → API SDLController → escolher o controle → Salvar).
+    if [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/Cemu/controllerProfiles/controller0.xml" ] \
+        && [ ! -f "$CEMU/controllerProfiles/controller0.xml" ]; then
+        echo "Wii U: configure o controle no Cemu (Opções → Configurações de entrada), feche e abra o jogo de novo." >"$MSG"
+        exec /opt/cemu/AppRun
+    fi
+    exec /opt/cemu/AppRun -f -g "$ROM"
+    ;;
+vita-solo)
+    [ -x /opt/vita3k/AppRun ] || fail "Emulador de PS Vita não instalado. Rode a Fase 13 (fase13.sh)."
+    # Com um .vpk/.zip o Vita3K instala o jogo (só na 1ª vez demora) e já abre.
+    exec /opt/vita3k/AppRun "$ROM"
+    ;;
+xbox-solo)
+    [ -x /opt/xemu/AppRun ] || fail "Emulador de Xbox não instalado. Rode a Fase 13 (fase13.sh)."
+    X="$SKY/bios/xbox/xemu"
+    for f in mcpx_1.0.bin Complex_4627v1.03.bin xbox_hdd.qcow2; do
+        [ -f "$X/$f" ] || fail "Xbox: falta $f em SKYROMS/bios/xbox (MCPX, BIOS e o HD do xemu)."
+    done
+    # Configuração refeita a cada jogo (o HD fica no perfil: cada perfil tem os seus saves).
+    [ -f "$SKY/saves/xbox/xbox_hdd.qcow2" ] || cp "$X/xbox_hdd.qcow2" "$SKY/saves/xbox/xbox_hdd.qcow2"
+    TOML="$HOME/.config/skystation/xemu.toml"
+    mkdir -p "$(dirname "$TOML")"
+    cat >"$TOML" <<EOF
+[general]
+show_welcome = false
+
+[sys.files]
+bootrom_path = '$X/mcpx_1.0.bin'
+flashrom_path = '$X/Complex_4627v1.03.bin'
+hdd_path = '$SKY/saves/xbox/xbox_hdd.qcow2'
+eeprom_path = '$SKY/saves/xbox/eeprom.bin'
+EOF
+    exec /opt/xemu/AppRun -config_path "$TOML" -full-screen -dvd_path "$ROM"
+    ;;
+ps4)
+    # PS4 (Fase 13, experimental): shadPS4. O jogo é a pasta com eboot.bin (ex.: CUSA00001).
+    [ -x /opt/shadps4/AppRun ] || fail "Emulador de PS4 não instalado. Rode a Fase 13 (fase13.sh)."
+    precisa_forte "PS4"
+    EBOOT="$ROM"
+    [ -d "$ROM" ] && EBOOT="$ROM/eboot.bin"
+    [ -f "$EBOOT" ] || fail "PS4: a pasta do jogo precisa ter o eboot.bin."
+    exec /opt/shadps4/AppRun --fullscreen true -g "$EBOOT"
+    ;;
+switch)
+    # Switch 1 (Fase 13, só testes): Eden ou Citron, o AppImage que você deixou em SKYROMS/emuladores.
+    [ -x /opt/switch/AppRun ] || fail "Switch: baixe o Eden (ou Citron) no site oficial, ponha em SKYROMS/emuladores e rode a Fase 13."
+    precisa_forte "Switch"
+    bios_sync
+    # Chaves e firmware do SEU console. Os dois emuladores vêm do yuzu e usam o mesmo formato.
+    for d in eden citron; do
+        DATA="${XDG_DATA_HOME:-$HOME/.local/share}/$d"
+        mkdir -p "$DATA/keys"
+        for k in prod.keys title.keys; do [ -f "$SKY/bios/switch/$k" ] && cp -n "$SKY/bios/switch/$k" "$DATA/keys/"; done
+        FW="$DATA/nand/system/Contents/registered"
+        for o in "$SKY/bios/switch/firmware" "/mnt/skyroms/bios/switch/firmware"; do
+            if [ -d "$o" ] && [ -z "$(ls -A "$FW" 2>/dev/null)" ]; then
+                mkdir -p "$FW" && cp -n "$o"/*.nca "$FW/" 2>/dev/null
+            fi
+        done
+    done
+    ls "$SKY/bios/switch"/prod.keys >/dev/null 2>&1 \
+        || fail "Switch: falta o prod.keys (do seu Switch) em SKYROMS/bios/switch."
+    exec /opt/switch/AppRun -f -g "$ROM"
     ;;
 *)
     fail "Sistema desconhecido: $SYS"

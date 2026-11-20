@@ -15,7 +15,8 @@ import time
 HOME = os.path.expanduser("~")
 SAVES = os.path.join(HOME, "skystation/saves")
 RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
-SISTEMAS = ("ps1", "ps2", "ps3", "snes", "n64", "psp", "x360", "gc", "wii", "nds", "3ds", "gba", "gb", "nes", "md")
+SISTEMAS = ("ps1", "ps2", "ps3", "snes", "n64", "psp", "x360", "gc", "wii", "nds", "3ds", "gba", "gb", "nes", "md",
+            "ps4", "switch", "wiiu", "vita", "xbox", "dc", "saturn")
 
 
 def sistema(gid):
@@ -73,7 +74,14 @@ TROFEUS = [
     ("ps3", "Célula de poder", "Jogue um jogo de PS3", "prata", lambda s: "ps3" in s["sistemas"]),
     ("x360", "Do outro lado", "Jogue um jogo de Xbox 360", "prata", lambda s: "x360" in s["sistemas"]),
     ("nintendo", "Encanador honorário", "Jogue um jogo da Nintendo",
-     "bronze", lambda s: bool(s["sistemas"] & {"snes", "n64", "gc", "wii", "nds", "3ds", "gba", "gb", "nes"})),
+     "bronze", lambda s: bool(s["sistemas"] & {"snes", "n64", "gc", "wii", "nds", "3ds", "gba", "gb", "nes", "wiiu", "switch"})),
+    # Fase 13
+    ("ps4", "Nova geração", "Jogue um jogo de PS4", "ouro", lambda s: "ps4" in s["sistemas"]),
+    ("wiiu", "Segunda tela", "Jogue um jogo de Wii U", "prata", lambda s: "wiiu" in s["sistemas"]),
+    ("vita", "Portátil de luxo", "Jogue um jogo de PS Vita", "prata", lambda s: "vita" in s["sistemas"]),
+    ("xbox", "O primeiro X", "Jogue um jogo do Xbox original", "bronze", lambda s: "xbox" in s["sistemas"]),
+    ("sega", "Coração Sega", "Jogue um jogo de Dreamcast ou Saturn", "bronze",
+     lambda s: bool(s["sistemas"] & {"dc", "saturn"})),
     ("proprio", "Feito em casa", "Jogue um jogo próprio do SkyStation", "bronze", lambda s: "proprio" in s["sistemas"]),
     ("todos", "Volta ao mundo", "Jogue em 4 sistemas diferentes", "ouro", lambda s: len(s["sistemas"]) >= 4),
 ]

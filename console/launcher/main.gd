@@ -46,8 +46,18 @@ const ROM_SYSTEMS := {
 	"gb": {"badge": "GB", "name": "Game Boy / Color", "color": "#9bbc0f", "icon": "cartB", "exts": ["gb", "gbc"]},
 	"nes": {"badge": "NES", "name": "Nintendinho (NES)", "color": "#e0483e", "icon": "cartN", "exts": ["nes"]},
 	"md": {"badge": "MD", "name": "Mega Drive", "color": "#4a90d9", "icon": "cartM", "exts": ["md", "gen", "smd", "bin"]},
+	# Fase 13 (PS4 e Wii U também em pasta: _scan_dirs)
+	"ps4": {"badge": "PS4", "name": "PlayStation 4", "color": "#5b8cff", "icon": "disc4", "exts": []},
+	"switch": {"badge": "NX", "name": "Nintendo Switch", "color": "#ff5a5a", "icon": "cartNX", "exts": ["nsp", "xci"]},
+	"wiiu": {"badge": "Wii U", "name": "Nintendo Wii U", "color": "#3fb7e8", "icon": "discU", "exts": ["wua", "wud", "wux", "rpx"]},
+	"vita": {"badge": "Vita", "name": "PS Vita", "color": "#4f7cff", "icon": "cartV", "exts": ["vpk", "zip"]},
+	"xbox": {"badge": "Xbox", "name": "Xbox", "color": "#6ccf3f", "icon": "discXB", "exts": ["iso", "xiso"]},
+	"dc": {"badge": "DC", "name": "Dreamcast", "color": "#ff8a3d", "icon": "discD", "exts": ["chd", "gdi", "cdi", "cue"]},
+	"saturn": {"badge": "SAT", "name": "Sega Saturn", "color": "#a0a8ff", "icon": "discS", "exts": ["chd", "cue", "ccd", "m3u"]},
 }
-const EXTRA_SYS := ["gc", "wii", "x360", "nds", "3ds", "gba", "gb", "nes", "md"]
+const EXTRA_SYS := ["gc", "wii", "x360", "nds", "3ds", "gba", "gb", "nes", "md",
+	"ps4", "switch", "wiiu", "vita", "xbox", "dc", "saturn"]
+const DIR_SYS := ["ps4", "wiiu"]  # Fase 13: o jogo pode ser uma pasta (PS4: eboot.bin; Wii U: code/*.rpx)
 const ROM_BASES := ["/mnt/skyroms", "/mnt/skystation/roms"]  # + ~/skystation/roms
 
 # Paletas do fundo: [topo, base, cor da onda, destaque]
@@ -909,8 +919,61 @@ func _scan_roms() -> void:
 						g["cover"] = tex
 						break
 				games.append(g)
+	_scan_dirs(tag_re, seen)
 	_scan_ps3()
 	_scan_disc(tag_re)
+
+
+func _scan_dirs(tag_re: RegEx, seen: Dictionary) -> void:
+	# Fase 13: jogos em pasta. PS4 = pasta com eboot.bin (CUSA00001); Wii U = pasta com code/*.rpx.
+	for base in [home_dir + "/skystation/roms"] + ROM_BASES:
+		for sys_id in DIR_SYS:
+			var info: Dictionary = ROM_SYSTEMS[sys_id]
+			var rdir: String = base + "/" + sys_id
+			var da := DirAccess.open(rdir)
+			if da == null:
+				continue
+			for d in da.get_directories():
+				var nome := str(d)
+				if nome == "covers" or nome.begins_with("."):
+					continue
+				var gdir: String = rdir + "/" + nome
+				var ok := false
+				if sys_id == "ps4":
+					ok = FileAccess.file_exists(gdir + "/eboot.bin")
+				else:
+					var cd := DirAccess.open(gdir + "/code")
+					if cd != null:
+						for f in cd.get_files():
+							if str(f).get_extension().to_lower() == "rpx":
+								ok = true
+								break
+				if not ok:
+					continue
+				var key: String = sys_id + "/" + nome.to_lower()
+				if seen.has(key):
+					continue
+				seen[key] = true
+				var title: String = tag_re.sub(nome, "", true).strip_edges()
+				if title == "":
+					title = nome
+				var where := skyroms_nome if base == "/mnt/skyroms" else "armazenamento interno"
+				var g := {
+					"id": sys_id + "-" + nome.validate_filename().replace(" ", "_"),
+					"dir": rdir, "sys": sys_id,
+					"title": title, "type": "retro",
+					"exec": "sky-emu %s %s" % [sys_id, _shq(gdir)], "path": gdir,
+					"description": "%s  ·  pasta  ·  %s" % [info["name"], where],
+					"color": Color.from_string(info["color"], Color("4fd1ff")),
+					"order": 50, "cover": null,
+				}
+				for cpath in [rdir + "/covers/" + nome + ".png", rdir + "/covers/" + nome + ".jpg",
+						gdir + "/sce_sys/icon0.png"]:
+					var tex := _load_tex(cpath)
+					if tex != null:
+						g["cover"] = tex
+						break
+				games.append(g)
 
 
 var ps3_info: Dictionary = {}
@@ -3545,7 +3608,7 @@ func _icon(kind: String, c: Vector2, s: float, col: Color) -> void:
 			draw_rect(Rect2(c.x - s * 0.275, c.y - s * 0.085, s * 0.05, s * 0.16), hole)
 			for o in [Vector2(0.25, -0.05), Vector2(0.33, 0.02), Vector2(0.17, 0.02), Vector2(0.25, 0.09)]:
 				draw_circle(c + o * s, s * 0.035, hole, true, -1.0, true)
-		"disc", "disc1", "disc2", "disc3", "discP", "discG", "discW", "discX":
+		"disc", "disc1", "disc2", "disc3", "discP", "discG", "discW", "discX", "disc4", "discU", "discXB", "discD", "discS":
 			draw_arc(c, s * 0.42, 0, TAU, 64, col, lw, true)
 			draw_arc(c, s * 0.30, -0.6, 0.9, 24, Color(col, col.a * 0.45), lw * 0.6, true)
 			draw_circle(c, s * 0.10, col, false, lw * 0.8, true)
@@ -3563,10 +3626,10 @@ func _icon(kind: String, c: Vector2, s: float, col: Color) -> void:
 			draw_arc(c + Vector2(s * 0.26, -s * 0.2), s * 0.12, -PI * 0.5, PI * 0.5, 12, col, lw, true)
 			draw_rect(Rect2(c.x - s * 0.04, c.y + s * 0.04, s * 0.08, s * 0.2), col)
 			draw_rect(Rect2(c.x - s * 0.2, c.y + s * 0.24, s * 0.4, s * 0.1), col)
-		"cartS", "cart64", "cartD", "cart3", "cartA", "cartB", "cartN", "cartM":
+		"cartS", "cart64", "cartD", "cart3", "cartA", "cartB", "cartN", "cartM", "cartNX", "cartV":
 			_rrect(Rect2(c.x - s * 0.36, c.y - s * 0.40, s * 0.72, s * 0.80), Color(0, 0, 0, 0), 5, col, int(lw))
 			draw_line(c + Vector2(-s * 0.22, -s * 0.22), c + Vector2(s * 0.22, -s * 0.22), Color(col, col.a * 0.5), lw)
-			var ctxt: String = {"cartS": "S", "cart64": "64", "cartD": "DS", "cart3": "3D", "cartA": "A", "cartB": "GB", "cartN": "N", "cartM": "M"}.get(kind, "")
+			var ctxt: String = {"cartS": "S", "cart64": "64", "cartD": "DS", "cart3": "3D", "cartA": "A", "cartB": "GB", "cartN": "N", "cartM": "M", "cartNX": "NX", "cartV": "V"}.get(kind, "")
 			_text(ctxt, Vector2(c.x - s * 0.36, c.y + s * 0.24), int(s * 0.34), col, true,
 				s * 0.72, HORIZONTAL_ALIGNMENT_CENTER)
 		"monitor":

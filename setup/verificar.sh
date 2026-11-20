@@ -135,6 +135,23 @@ v "pedido do GeForce NOW ligado" "sudo skystation-atualizar" systemctl is-enable
 if flatpak info com.nvidia.geforcenow >/dev/null 2>&1; then echo "  ✓ app do GeForce NOW instalado"
 else echo "  · app do GeForce NOW ainda não instalado: abra o GeForce NOW uma vez (usa a versão web até terminar; log em /var/log/skystation-instalar.log)"; fi
 
+echo "== 13 PS4 / Switch / Wii U / Vita / Xbox / Dreamcast / Saturn"
+F13="sudo bash /opt/skystation-src/setup/fase13.sh"
+v "Dreamcast (Flycast)" "$F13" test -f $C/flycast_libretro.so
+v "Saturn (Beetle Saturn ou YabaSanshiro)" "$F13" sh -c "ls $C/mednafen_saturn_libretro.so $C/yabasanshiro_libretro.so 2>/dev/null | grep -q ."
+v "Wii U (Cemu)" "$F13" sh -c "test -f $C/cemu_libretro.so || test -x /opt/cemu/AppRun"
+v "PS Vita (Vita3K)" "$F13" sh -c "test -f $C/vita3k_libretro.so || test -x /opt/vita3k/AppRun"
+v "Xbox original (xemu)" "$F13" sh -c "test -f $C/xemu_libretro.so || test -x /opt/xemu/AppRun"
+v "PS4 (shadPS4, experimental)" "$F13" test -x /opt/shadps4/AppRun
+if [ -x /opt/switch/AppRun ]; then echo "  ✓ Switch (teste): $(cat /opt/switch/ORIGEM 2>/dev/null)"
+else echo "  · Switch (teste): ponha o AppImage do Eden/Citron em SKYROMS/emuladores e rode a Fase 13"; fi
+B="$H/skystation/bios"
+for par in "saturn:sega_101.bin mpr-17933.bin" "xbox:mcpx_1.0.bin" "vita:PSP2UPDAT.PUP" "switch:prod.keys"; do
+    s="${par%%:*}"; achou=""
+    for f in ${par#*:}; do ls "$B/$s/$f" "$B/$s"/*/"$f" /mnt/skyroms/bios/$s/$f >/dev/null 2>&1 && achou=1; done
+    [ -n "$achou" ] && echo "  ✓ arquivos do $s presentes" || echo "  · $s: faltam arquivos do seu console em SKYROMS/bios/$s (veja o fim do fase13.sh)"
+done
+
 echo
 if [ "$falhas" -eq 0 ]; then echo "Tudo certo: $ok de $ok verificações ✓"
 else echo "$ok ok, $falhas com problema (veja as dicas →)"; fi

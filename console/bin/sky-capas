@@ -34,6 +34,12 @@ SYSTEMS = {
     "gb": ("Nintendo_-_Game_Boy_Color", {"gb", "gbc"}),
     "nes": ("Nintendo_-_Nintendo_Entertainment_System", {"nes"}),
     "md": ("Sega_-_Mega_Drive_-_Genesis", {"md", "gen", "smd"}),
+    # Fase 13 (PS4 e Switch não têm repositório de capas no libretro: capa manual em covers/)
+    "wiiu": ("Nintendo_-_Wii_U", {"wua", "wud", "wux"}),
+    "vita": ("Sony_-_PlayStation_Vita", {"vpk"}),
+    "xbox": ("Microsoft_-_Xbox", {"iso", "xiso"}),
+    "dc": ("Sega_-_Dreamcast", {"chd", "gdi", "cdi", "cue"}),
+    "saturn": ("Sega_-_Saturn", {"chd", "cue", "ccd", "m3u"}),
 }
 URL = "https://raw.githubusercontent.com/libretro-thumbnails/{repo}/master/Named_Boxarts/{name}.png"
 FAILS = os.path.join(HOME, ".cache/skystation/capas-falhas.json")

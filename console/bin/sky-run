@@ -21,7 +21,7 @@ mkdir -p "$RUN" "$STATE"
 rm -f "$RUN/last_exit" "$RUN/last_msg"
 echo "$TITLE" >"$RUN/game.title"     # o menu Home mostra o nome do jogo
 echo "$ID" >"$RUN/game.id"
-case "${ID%%-*}" in ps1|ps2|ps3|psp|snes|n64|gc|wii|x360|nds|3ds|gba|gb|nes|md) echo "${ID%%-*}" ;; *) echo "" ;; esac >"$RUN/game.sys"   # salvar estado só no PS1
+case "${ID%%-*}" in ps1|ps2|ps3|psp|snes|n64|gc|wii|x360|nds|3ds|gba|gb|nes|md|ps4|switch|wiiu|vita|xbox|dc|saturn) echo "${ID%%-*}" ;; *) echo "" ;; esac >"$RUN/game.sys"   # salvar estado só no PS1
 START=$(date +%s)
 echo "$START" >"$RUN/game.start"     # Fase 8.0: troféus da partida em andamento e "NOVO" no Home
 
