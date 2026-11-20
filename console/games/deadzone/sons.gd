@@ -234,6 +234,19 @@ func _ressoar(x: float, f: float, r: float, m: Array) -> float:
 
 
 func _gerar() -> void:
+	# "!" de quando te acham: dois toques agudos secos com cauda (a assinatura de todo jogo de furtividade)
+	var ex := _buf(0.9)
+	for i in ex.size():
+		var t := float(i) / TAXA
+		var v := 0.0
+		for k in 2:
+			var t0 := k * 0.075
+			if t >= t0:
+				var tt := t - t0
+				var env := exp(-tt * (9.0 if k == 1 else 22.0))
+				v += (sin(TAU * 1318.5 * tt) + 0.6 * sin(TAU * 1975.5 * tt) + 0.3 * signf(sin(TAU * 659.25 * tt))) * env
+		ex[i] = v
+	_add("exclama", _wav(ex))
 	# tiros: estalo de ruído + "soco" grave
 	_add("tiro_pistola", _wav(_misturar(_ruido_filtrado(0.35, 6000.0, 22.0, 0.9), _seno(0.25, 140.0, 50.0, 14.0, 0.8))))
 	_add("tiro_espingarda", _wav(_misturar(_ruido_filtrado(0.6, 3500.0, 9.0, 1.0), _seno(0.4, 90.0, 35.0, 8.0, 1.0))))

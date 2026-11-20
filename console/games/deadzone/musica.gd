@@ -114,6 +114,8 @@ func _process(d: float) -> void:
 		main.JOGANDO, main.PAUSA, main.MOCHILA:
 			alvo["tensao"] = -24.0 + main.noite() * 5.0
 			var n := perseguidores()
+			if main.fase_alerta == "EVASÃO":
+				alvo["perigo"] = -32.0                 # ainda procurando você
 			if n > 0:
 				alvo["perigo"] = -24.0 + minf(n, 6) * 2.4
 				alvo["tensao"] -= 4.0

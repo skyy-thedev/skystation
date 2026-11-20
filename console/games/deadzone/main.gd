@@ -64,6 +64,14 @@ var casters: Array = []             # [Rect2 da base, altura] de cada parede par
 var enfeites_sombra: Array = []     # nós com sprite que projetam sombra (árvores, Kombis…)
 var luzes_noite: Array = []         # [PointLight2D, energia, pisca] (postes, luz do bunker)
 var sol_k := -1.0
+## furtividade no estilo Metal Gear: "" (tudo calmo) → ALERTA (alguém te viu) → EVASÃO (perderam você de
+## vista, procuram) → CAUTELA (ainda desconfiados) → calmo. O radar mostra a fase e os cones de visão.
+var fase_alerta := ""
+var t_fase := 0.0
+var ondas: Array = []               # barulhos recentes, para o radar: {pos, raio, t}
+const EVASAO := 14.0
+const CAUTELA := 10.0
+const MOCHILA_COLS := 5
 
 
 func _ready() -> void:
@@ -107,7 +115,7 @@ func _ready() -> void:
 
 func _acoes() -> void:
 	# padrão PlayStation: L anda, R mira, R2 usa a arma, R1 golpe, L2 corre, L1 molotov, ✕ usar (segure),
-	# □ recarrega, ○ bandagem, △ mochila, setas ←→ trocam arma, ↑ lanterna, ↓ tocha, Options pausa
+	# □ recarrega, ○ bandagem, △ mochila, setas ←→ trocam arma, ↑ lanterna, ↓ tocha, R3 agacha, Options pausa
 	var mapa := {
 		"esquerda": {"k": [KEY_A, KEY_LEFT], "e": [[JOY_AXIS_LEFT_X, -1.0]]},
 		"direita": {"k": [KEY_D, KEY_RIGHT], "e": [[JOY_AXIS_LEFT_X, 1.0]]},
@@ -129,8 +137,11 @@ func _acoes() -> void:
 		"voltar": {"k": [KEY_BACKSPACE], "j": [JOY_BUTTON_B]},
 		"m_cima": {"k": [KEY_W, KEY_UP], "j": [JOY_BUTTON_DPAD_UP], "e": [[JOY_AXIS_LEFT_Y, -1.0]]},
 		"m_baixo": {"k": [KEY_S, KEY_DOWN], "j": [JOY_BUTTON_DPAD_DOWN], "e": [[JOY_AXIS_LEFT_Y, 1.0]]},
-		"m_esq": {"k": [KEY_A, KEY_LEFT], "j": [JOY_BUTTON_DPAD_LEFT, JOY_BUTTON_LEFT_SHOULDER]},
-		"m_dir": {"k": [KEY_D, KEY_RIGHT], "j": [JOY_BUTTON_DPAD_RIGHT, JOY_BUTTON_RIGHT_SHOULDER]},
+		"m_esq": {"k": [KEY_A, KEY_LEFT], "j": [JOY_BUTTON_DPAD_LEFT], "e": [[JOY_AXIS_LEFT_X, -1.0]]},
+		"m_dir": {"k": [KEY_D, KEY_RIGHT], "j": [JOY_BUTTON_DPAD_RIGHT], "e": [[JOY_AXIS_LEFT_X, 1.0]]},
+		"aba_esq": {"k": [KEY_Q], "j": [JOY_BUTTON_LEFT_SHOULDER]},
+		"aba_dir": {"k": [KEY_R], "j": [JOY_BUTTON_RIGHT_SHOULDER]},
+		"agachar": {"k": [KEY_C, KEY_CTRL], "j": [JOY_BUTTON_RIGHT_STICK]},
 	}
 	for n in [1, 2]:
 		for nome in mapa:
@@ -261,6 +272,8 @@ func _nova_partida(p_modo := "historia", p_semente := -1) -> void:
 	sombras_sol.add_child(sombras_no)
 	casters.clear()
 	enfeites_sombra.clear()
+	fase_alerta = ""
+	ondas.clear()
 	luzes_noite.clear()
 	sol_k = -1.0
 	camada_sangue = Node2D.new()
@@ -515,9 +528,62 @@ func raio_visao(j: Node) -> float:
 
 
 func barulho(origem: Vector2, raio: float) -> void:
+	if raio > 60.0:
+		ondas.append({"pos": origem, "raio": raio, "t": 0.0})
 	for z in zumbis:
 		if z.global_position.distance_to(origem) < raio:
 			z.ouvir(origem)
+
+
+func alarme(quem: Node2D, j: Node2D) -> void:
+	## um zumbi te viu: "!" e os vizinhos vêm junto
+	if fase_alerta != "ALERTA":
+		sons.tocar("exclama", null, -3.0)
+		tremer(3.0)
+	fase_alerta = "ALERTA"
+	t_fase = 0.0
+	for z in zumbis:
+		if z != quem and z.alvo == null and z.global_position.distance_to(quem.global_position) < 420.0:
+			z.suspeita = maxf(z.suspeita, 0.75)
+			z.destino = j.global_position
+			z.alerta = true
+			z.t_perdeu = maxf(z.t_perdeu, 4.0)
+
+
+func _fases(d: float) -> void:
+	var cacando := false
+	for z in zumbis:
+		if is_instance_valid(z) and z.alvo != null:
+			cacando = true
+			break
+	if cacando:
+		fase_alerta = "ALERTA"
+		t_fase = 0.0
+	elif fase_alerta == "ALERTA":
+		fase_alerta = "EVASÃO"
+		t_fase = EVASAO
+	elif fase_alerta != "":
+		t_fase -= d
+		if t_fase <= 0.0:
+			if fase_alerta == "EVASÃO":
+				fase_alerta = "CAUTELA"
+				t_fase = CAUTELA
+			else:
+				fase_alerta = ""
+	for o in ondas:
+		o["t"] += d
+	ondas = ondas.filter(func(o): return o["t"] < 1.2)
+
+
+func alvo_furtivo(j: Node2D) -> Node2D:
+	## zumbi que não te viu, colado e de costas (ou de lado) para você: dá para abater sem barulho
+	for z in zumbis:
+		if not is_instance_valid(z) or z.alvo == j or z.suspeita >= 0.95:
+			continue
+		var v: Vector2 = j.global_position - z.global_position
+		if v.length() < 52.0 and z.frente.dot(v.normalized()) < 0.15:
+			return z
+	return null
 
 
 func mira_assistida(de: Vector2, dir: Vector2, alcance: float) -> Vector2:
@@ -913,16 +979,23 @@ func _menu_mochila() -> void:
 	if Input.is_action_just_pressed(p + "mochila") or Input.is_action_just_pressed(p + "voltar") or Input.is_action_just_pressed(p + "pausa"):
 		estado = JOGANDO
 		return
-	if Input.is_action_just_pressed(p + "m_esq") or Input.is_action_just_pressed(p + "m_dir"):
+	if Input.is_action_just_pressed(p + "aba_esq") or Input.is_action_just_pressed(p + "aba_dir"):
 		mochila_aba = 1 - mochila_aba
 		menu_sel = 0
+		sons.tocar("ui", null, -8.0)
 		return
 	if lista.is_empty():
 		return
+	# grade de cartas: ←→ anda uma, ↑↓ anda uma linha
+	var c := MOCHILA_COLS
 	menu_sel = clampi(menu_sel, 0, lista.size() - 1)
 	if Input.is_action_just_pressed(p + "m_cima"):
-		menu_sel = wrapi(menu_sel - 1, 0, lista.size())
+		menu_sel = maxi(0, menu_sel - c)
 	elif Input.is_action_just_pressed(p + "m_baixo"):
+		menu_sel = mini(lista.size() - 1, menu_sel + c)
+	elif Input.is_action_just_pressed(p + "m_esq"):
+		menu_sel = wrapi(menu_sel - 1, 0, lista.size())
+	elif Input.is_action_just_pressed(p + "m_dir"):
 		menu_sel = wrapi(menu_sel + 1, 0, lista.size())
 	elif Input.is_action_just_pressed(p + "interagir"):
 		if mochila_aba == 0:
@@ -930,8 +1003,12 @@ func _menu_mochila() -> void:
 			if it.has("arma"):
 				j.arma = it["arma"]
 				aviso("%s: %s na mão" % [j.nome, D.nome(it["arma"])], Color(1, 1, 1, 0.8))
+				sons.tocar("recarga", null, -10.0)
 			else:
+				var info: Dictionary = D.ITENS.get(it["item"], {})
 				j.usar_item(it["item"])
+				if info.get("tipo", "") in ["comida", "cura", "luz"] and not j.uso.is_empty() or it["item"] == "tocha":
+					estado = JOGANDO                  # fecha para ver a animação de uso
 		else:
 			var rec: Dictionary = lista[menu_sel]
 			if not pode_criar(j, rec):
@@ -967,6 +1044,7 @@ func _jogar(d: float) -> void:
 			j.ganhar_xp(25)
 		aviso("Amanheceu. Dia %d: os zumbis estão mais fortes." % dia, Color("ffd166"))
 	historia.checar_saida()
+	_fases(d)
 	if antes < 175.0 and tempo >= 175.0 and not avisou_noite:
 		avisou_noite = true
 		aviso("Está escurecendo. Ache um lugar seguro, acenda a lanterna (↑).", Color("ff9f43"))
