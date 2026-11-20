@@ -214,6 +214,13 @@ if command -v timedatectl >/dev/null 2>&1 && [ -d /run/systemd/system ] \
     timedatectl set-ntp true 2>/dev/null || true
 fi
 
+# 13.5: PS Vita pelo Vita3K oficial. Quem já rodou a Fase 13 mas ficou só com o core do RetroArch (que abortava)
+# ganha o programa aqui, sem precisar rodar a fase de novo.
+if [ ! -x /opt/vita3k/AppRun ] && { [ -f /opt/skystation/emu/cores/flycast_libretro.so ] || [ -f /opt/skystation/emu/cores/vita3k_libretro.so ]; }; then
+    echo "    instalando o Vita3K (PS Vita)…"
+    timeout 900 bash "$SRC/setup/fase13.sh" --so-vita || echo "    AVISO: não consegui instalar o Vita3K agora (sem internet?); tenta de novo na próxima atualização."
+fi
+
 # Fase 13.1: jogos que chegam compactados (.zip/.7z/.rar) são instalados pelo sky-instalar com o 7-Zip
 # (que abre RAR/RAR5 também). O pacote se chama "7zip" no Arch atual e "p7zip" nos mais antigos.
 if ! command -v 7z >/dev/null 2>&1 && ! command -v 7zz >/dev/null 2>&1; then

@@ -81,9 +81,17 @@ core "Dreamcast" flycast || true
 core "Saturn (com BIOS)" mednafen_saturn || true
 core "Saturn (sem BIOS)" yabasanshiro || true
 
+# 13.5: "fase13.sh --so-vita" (chamado pelo atualizar.sh) instala só o Vita3K e sai.
+if [ "${1:-}" = "--so-vita" ]; then
+    programa "Vita3K (PS Vita)" /opt/vita3k Vita3K/Vita3K '\.AppImage$' 'x86_64' || exit 1
+    exit 0
+fi
+
 echo "==> [2/5] Wii U, PS Vita e Xbox original"
 core "Wii U" cemu || programa "Cemu (Wii U)" /opt/cemu cemu-project/Cemu 'x86_64\.AppImage$' || true
-core "PS Vita" vita3k || programa "Vita3K (PS Vita)" /opt/vita3k Vita3K/Vita3K '\.AppImage$' 'x86_64' || true
+# 13.5: PS Vita sempre pelo Vita3K oficial. O core do RetroArch precisa das pastas data/ e shaders-builtin/ da
+# release dele (o buildbot só entrega o .so) e abortava (E134); o oficial também instala o firmware sozinho.
+programa "Vita3K (PS Vita)" /opt/vita3k Vita3K/Vita3K '\.AppImage$' 'x86_64' || true
 core "Xbox original" xemu || programa "xemu (Xbox)" /opt/xemu xemu-project/xemu 'x86_64\.AppImage$' || true
 
 echo "==> [3/5] PS4 (shadPS4, experimental)"

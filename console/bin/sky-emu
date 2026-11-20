@@ -63,7 +63,9 @@ export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland;xcb}"
 ALVO="$SYS"
 case "$SYS" in
     wiiu) [ -f /opt/skystation/emu/cores/cemu_libretro.so ] || ALVO=wiiu-solo ;;
-    vita) [ -f /opt/skystation/emu/cores/vita3k_libretro.so ] || ALVO=vita-solo ;;
+    # 13.5: Vita pelo Vita3K oficial sempre que ele existe (o core só como último recurso: sem as pastas data/ e
+    # shaders-builtin/ da release dele, que o buildbot não entrega, ele abortava com "double free", E134).
+    vita) { [ -x /opt/vita3k/AppRun ] || [ ! -f /opt/skystation/emu/cores/vita3k_libretro.so ]; } && ALVO=vita-solo ;;
     xbox) [ -f /opt/skystation/emu/cores/xemu_libretro.so ] || ALVO=xbox-solo ;;
 esac
 case "$SYS" in
@@ -323,6 +325,14 @@ wiiu-solo)
 vita-solo)
     [ -x /opt/vita3k/AppRun ] || fail "Emulador de PS Vita não instalado. Rode a Fase 13 (fase13.sh)."
     echo "sky-emu: PS Vita pelo Vita3K separado (/opt/vita3k)" >&2
+    # Sem assistente de primeira vez nem tela de boas-vindas (o console não tem mouse): o jogo abre direto.
+    VCONF="${XDG_CONFIG_HOME:-$HOME/.config}/Vita3K/config.yml"
+    if [ ! -f "$VCONF" ]; then
+        mkdir -p "$(dirname "$VCONF")"
+        printf -- '---\ninitial-setup: true\nshow-welcome: false\nshow-gui: false\ndiscord-rich-presence: false\n...\n' >"$VCONF"
+    else
+        sed -i -e 's/^initial-setup: false/initial-setup: true/' -e 's/^show-welcome: true/show-welcome: false/' "$VCONF"
+    fi
     # 13.3: instala cada .PUP uma vez (Vita3K --firmware); a marca fica ao lado, por tamanho do arquivo.
     for pup in "$VFW"/[Pp][Ss][Vv]*.[Pp][Uu][Pp] "$VFW"/*.[Pp][Uu][Pp]; do   # o do sistema (PSV…) primeiro
         [ -f "$pup" ] || continue
