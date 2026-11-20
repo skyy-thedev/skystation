@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { chamar } from "@/lib/cliente";
+import { PublicarVersao, VerChavePublica } from "./PublicarVersao";
 
 type Versao = { id: string; versao: string; notas: string; tamanho: number; enviada: boolean; publicada: boolean; criadaEm: string };
 export type ItemAdmin = {
@@ -40,8 +41,8 @@ export function AdminLoja({ inicial }: { inicial: ItemAdmin[] }) {
       <section className="cartao">
         <h1>SkyStore · painel</h1>
         <p className="suave">
-          Cadastre o item aqui. Os arquivos são enviados e assinados pelo <code>node scripts/loja.mjs enviar</code> no seu PC
-          (a chave privada nunca sobe para o servidor).
+          Cadastre o item aqui e publique versões no cartão dele: escolha a pasta do jogo e a sua chave privada, e o
+          navegador empacota, assina e envia (a chave não sai do seu computador). O <code>loja.mjs</code> continua valendo.
         </p>
         <div className="form-loja">
           <label>Slug (endereço, não muda depois)
@@ -74,6 +75,7 @@ export function AdminLoja({ inicial }: { inicial: ItemAdmin[] }) {
       </section>
 
       {itens.length === 0 && <p className="vazio">Nenhum item ainda. Cadastre o primeiro acima.</p>}
+      <section className="cartao"><VerChavePublica /></section>
       {itens.map((i) => (
         <section className="cartao" key={i.id}>
           <div className="linha" style={{ justifyContent: "space-between" }}>
@@ -89,8 +91,10 @@ export function AdminLoja({ inicial }: { inicial: ItemAdmin[] }) {
               </button>
             </div>
           </div>
+          <PublicarVersao slug={i.slug} sugestao={i.versoes.length ? "" : "1.0"}
+            aoTerminar={async () => setItens((await chamar<{ itens: ItemAdmin[] }>("/api/admin/loja", "GET")).itens)} />
           {i.versoes.length === 0 ? (
-            <p className="apagado">Sem versões. No PC: <code>node scripts/loja.mjs enviar pacote.skypkg {i.slug} 1.0</code></p>
+            <p className="apagado">Sem versões ainda.</p>
           ) : (
             <table className="tabela-versoes">
               <tbody>

@@ -38,7 +38,7 @@ const contas = []; // [navegador, senha] para excluir no fim
 /** Um "navegador": guarda o cookie de sessão do site entre as chamadas. */
 function navegador() {
   let cookie = "";
-  return async (metodo, caminho, corpo, extra = {}) => {
+  const nav = async (metodo, caminho, corpo, extra = {}) => {
     const r = await fetch(BASE + caminho, {
       method: metodo,
       redirect: "manual",
@@ -59,7 +59,10 @@ function navegador() {
     try { dados = JSON.parse(texto); } catch {}
     return { status: r.status, dados, texto, local: r.headers.get("location") };
   };
+  nav.cookie = () => cookie;
+  return nav;
 }
+const cookieDe = (nav) => nav.cookie();
 try {
   console.log("Servidor: " + BASE);
   const saude = await api("GET", "/api/saude");
@@ -378,6 +381,15 @@ try {
   const baixado = Buffer.from(await (await fetch(bx.dados.url)).arrayBuffer());
   ok(baixado.equals(pacote), "loja: o arquivo baixado é o mesmo enviado");
   ok((await nAdm("POST", "/api/admin/loja/versoes", { slug: slugL, versao: "1.0", sha256: shaP, tamanho: pacote.length, assinatura: assinar(slugL, "1.0", shaP, pacote.length) })).status === 409, "loja: não reaproveita número de versão");
+  // painel do site (sem terminal): pacote pequeno passa pelo servidor, que confere o sha256 assinado
+  const ivS = await nAdm("POST", "/api/admin/loja/versoes", { slug: slugL, versao: "1.0.1", sha256: shaP, tamanho: pacote.length, assinatura: assinar(slugL, "1.0.1", shaP, pacote.length) });
+  const enviaS = (corpoBin, quem = cookieDe(nAdm)) => fetch(`${BASE}/api/admin/loja/versoes/arquivo?id=${ivS.dados.versaoId}`, { method: "POST", body: corpoBin, headers: quem ? { Cookie: quem } : {} });
+  const trocado = Buffer.from(pacote); trocado[0] ^= 1;
+  ok((await enviaS(pacote, "")).status === 401, "loja: envio pelo servidor exige sessão");
+  ok((await enviaS(trocado)).status === 400, "loja: envio pelo servidor recusa arquivo diferente do assinado");
+  ok((await enviaS(pacote)).status === 200, "loja: envio pelo servidor grava o pacote certo");
+  ok((await nAdm("POST", "/api/admin/loja/versoes/confirmar", { id: ivS.dados.versaoId })).status === 200, "loja: versão enviada pelo painel confirma");
+  ok((await enviaS(pacote)).status === 409, "loja: não regrava versão já enviada");
   // 1.10 é mais nova que 1.9; uma versão enviada mas não publicada não vale para os consoles
   for (const ver of ["1.9", "1.10"]) {
     const r = await nAdm("POST", "/api/admin/loja/versoes", { slug: slugL, versao: ver, sha256: shaP, tamanho: pacote.length, assinatura: assinar(slugL, ver, shaP, pacote.length) });
@@ -388,7 +400,7 @@ try {
   ok((await api("POST", `/api/loja/${slugL}/baixar`, { token: A.token, corpo: { versao: "1.9" } })).status === 404, "loja: versão não publicada não baixa");
   const adm = await nAdm("GET", "/api/admin/loja");
   const itA = adm.dados.itens.find((i) => i.slug === slugL);
-  ok(itA.versoes.map((v) => v.versao).join() === "1.10,1.9,1.0" && itA.downloads === 2, "loja: painel lista as versões e conta os downloads");
+  ok(itA.versoes.map((v) => v.versao).join() === "1.10,1.9,1.0.1,1.0" && itA.downloads === 2, "loja: painel lista as versões e conta os downloads");
   ok((await nAdm("GET", "/admin/loja")).status === 200 && (await nA("GET", "/admin/loja")).status === 404, "loja: página do painel só para admin");
   for (const v of itA.versoes) await nAdm("DELETE", "/api/admin/loja/versoes", { id: v.id });
   ok(!(await anonimo("GET", "/api/loja")).dados.itens.some((i) => i.slug === slugL), "loja: sem versões sai da vitrine");

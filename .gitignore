@@ -13,3 +13,7 @@ __pycache__/
 # Substituído pelo Git (servia para conferir cópias pela pasta do Windows)
 MANIFEST.md5
 .godot/
+
+# Chaves da SkyStore: a privada NUNCA vai para o GitHub
+*.pem
+chave-privada*

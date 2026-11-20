@@ -360,3 +360,6 @@ textarea { resize: vertical; min-height: 70px; }
 .loja-versao:first-of-type { border-top: 0; }
 .loja-versao p { margin: 6px 0 0; }
 @media (max-width: 720px) { .loja-item { grid-template-columns: 1fr; } .loja-item-capa { max-width: 220px; } }
+.publicar-versao { margin: 14px 0; padding: 14px 16px; border: 1px dashed rgba(79, 209, 255, 0.35); border-radius: 14px; }
+.publicar-versao h3 { margin: 0 0 10px; font-size: 15px; }
+.chave-publica { word-break: break-all; user-select: all; }

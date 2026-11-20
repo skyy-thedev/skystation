@@ -38,6 +38,12 @@ export async function urlEnvio(chave: string) {
   return getSignedUrl(cliente, new PutObjectCommand({ Bucket: bucket, Key: chave }), { expiresIn: 900 });
 }
 
+/** Grava um arquivo pequeno direto do servidor (pacotes da SkyStore enviados pelo painel do site). */
+export async function gravar(chave: string, dados: Uint8Array, tipo = "application/gzip") {
+  const { cliente, bucket } = s3();
+  await cliente.send(new PutObjectCommand({ Bucket: bucket, Key: chave, Body: dados, ContentType: tipo }));
+}
+
 /** Endereço para o console BAIXAR o arquivo (GET), válido por 5 minutos. */
 export async function urlDownload(chave: string) {
   const { cliente, bucket } = s3();
