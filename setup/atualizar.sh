@@ -271,6 +271,15 @@ for p in gamescope xorg-xprop python-cairo; do
     fi
 done
 
+# Terminal secreto e "Teclar" da Central no gamescope: lá só existe X11, e o foot e o wtype são só Wayland
+# (o foot falhava com "failed to connect to wayland", E230). alacritty/xterm = terminal; xdotool = teclar.
+for p in alacritty xterm xdotool; do
+    pacman -Q "$p" >/dev/null 2>&1 && continue
+    if ! timeout 600 pacman -S --needed --noconfirm "$p" >/dev/null 2>&1; then
+        echo "    AVISO: não consegui instalar $p agora (sem internet?). Terminal/teclar no gamescope ficam para depois."
+    fi
+done
+
 # Versão: commit do Git, commit baixado do GitHub, ou data da atualização.
 if [ -f "$SRC/.commit" ]; then
     echo "$(date '+%Y.%m.%d') ($(cat "$SRC/.commit"))" >/opt/skystation/VERSION

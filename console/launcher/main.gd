@@ -2442,7 +2442,16 @@ func _tick_secret(delta: float) -> void:
 	if secret_t < 2.0:
 		return
 	secret_t = -5.0   # não dispara de novo enquanto os botões continuam apertados
+	# O sky-terminal escolhe o terminal da sessão: foot no cage (Wayland); alacritty/xterm no gamescope (X11),
+	# onde o foot falhava com "failed to connect to wayland" (E230).
+	var term := "/opt/skystation/bin/sky-terminal"
 	var out: Array = []
+	if FileAccess.file_exists(term):
+		if OS.execute(term, ["--qual"], out) != 0:
+			_toast("Terminal não instalado para esta sessão: Sistema → Atualizar o SkyStation", 4.0)
+			return
+		_launch({"id": "terminal", "dir": home_dir, "exec": term, "title": "Terminal", "type": "app", "sys": ""})
+		return
 	if OS.execute("sh", ["-c", "command -v foot"], out) != 0:
 		_toast("Terminal não instalado: rode a Fase 6.2", 4.0)
 		return

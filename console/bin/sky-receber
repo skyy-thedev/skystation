@@ -200,20 +200,45 @@ TECLAS = {"enter": ["-k", "Return"], "apagar": ["-k", "BackSpace"], "tab": ["-k"
           "ctrl-c": ["-M", "ctrl", "c", "-m", "ctrl"], "ctrl-d": ["-M", "ctrl", "d", "-m", "ctrl"]}
 
 
-def teclar(q):
-    if not shutil.which("wtype"):
-        return {"ok": False, "error": "falta o wtype no console: rode a Fase 6.2"}
+# No gamescope só existe X11 e o wtype (Wayland) não funciona: lá quem digita é o xdotool.
+TECLAS_X11 = {"enter": "Return", "apagar": "BackSpace", "tab": "Tab", "esc": "Escape", "cima": "Up",
+              "baixo": "Down", "esquerda": "Left", "direita": "Right", "ctrl-c": "ctrl+c", "ctrl-d": "ctrl+d"}
+
+
+def _teclar_x11(q):
+    if not shutil.which("xdotool"):
+        return None, {"ok": False, "error": "falta o xdotool no console: Sistema → Atualizar o SkyStation"}
     if q.get("tecla"):
-        args = TECLAS.get(q["tecla"])
-        if not args:
-            return {"ok": False, "error": "tecla desconhecida"}
+        k = TECLAS_X11.get(q["tecla"])
+        if not k:
+            return None, {"ok": False, "error": "tecla desconhecida"}
+        return ["xdotool", "key", "--clearmodifiers", k], None
+    texto = q.get("texto", "")[:500]
+    if not texto:
+        return None, {"ok": False, "error": "nada para digitar"}
+    return ["xdotool", "type", "--clearmodifiers", "--delay", "8", "--", texto], None
+
+
+def teclar(q):
+    if not os.environ.get("WAYLAND_DISPLAY") and os.environ.get("DISPLAY"):
+        cmd, erro = _teclar_x11(q)
+        if erro:
+            return erro
     else:
-        texto = q.get("texto", "")[:500]
-        if not texto:
-            return {"ok": False, "error": "nada para digitar"}
-        args = ["--", texto]
+        if not shutil.which("wtype"):
+            return {"ok": False, "error": "falta o wtype no console: rode a Fase 6.2"}
+        if q.get("tecla"):
+            args = TECLAS.get(q["tecla"])
+            if not args:
+                return {"ok": False, "error": "tecla desconhecida"}
+        else:
+            texto = q.get("texto", "")[:500]
+            if not texto:
+                return {"ok": False, "error": "nada para digitar"}
+            args = ["--", texto]
+        cmd = ["wtype", *args]
     try:
-        r = subprocess.run(["wtype", *args], capture_output=True, text=True, timeout=10)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError) as e:
         return {"ok": False, "error": str(e)}
     return {"ok": r.returncode == 0, "error": r.stderr.strip()[:200]}

@@ -57,6 +57,9 @@ F62="sudo bash /opt/skystation-src/setup/fase6-2.sh"
 v "QR code (python-qrcode)" "$F62" python3 -c "import qrcode"
 v "celular como teclado (wtype)" "$F62" command -v wtype
 v "terminal (foot)" "$F62" command -v foot
+v "terminal no gamescope (alacritty/xterm)" "Sistema → Atualizar o SkyStation" sh -c 'command -v alacritty || command -v xterm'
+v "teclar no gamescope (xdotool)" "Sistema → Atualizar o SkyStation" command -v xdotool
+v "escolha do terminal (sky-terminal)" "Sistema → Atualizar o SkyStation" test -x /opt/skystation/bin/sky-terminal
 v "emulador de SNES" "$F62" test -f /opt/skystation/emu/cores/snes9x_libretro.so
 v "emulador de N64" "$F62" test -f /opt/skystation/emu/cores/mupen64plus_next_libretro.so
 v "gestos do touchpad no sky-notify" "Sistema → Atualizar o SkyStation" grep -q touchpad_worker /opt/skystation/bin/sky-notify

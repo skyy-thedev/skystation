@@ -1,0 +1,39 @@
+#!/bin/sh
+# SkyStation: abre o terminal certo para a sessão atual (terminal secreto, L3 + R3).
+# - cage (Wayland): foot, que só fala Wayland.
+# - gamescope: só existe X11 (Xwayland) para os programas; o foot falha com
+#   "failed to connect to wayland; no compositor running?" (erro E230). Usa alacritty ou xterm.
+# Uso: sky-terminal [argumentos repassados ao terminal]
+#      sky-terminal --qual   (só diz qual terminal seria aberto; 0 = existe um)
+
+escolher() {
+    if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v foot >/dev/null 2>&1; then
+        echo foot; return 0
+    fi
+    if [ -n "${DISPLAY:-}" ]; then
+        command -v alacritty >/dev/null 2>&1 && { echo alacritty; return 0; }
+        command -v xterm >/dev/null 2>&1 && { echo xterm; return 0; }
+    fi
+    return 1
+}
+
+T="$(escolher)" || {
+    echo "sky-terminal: nenhum terminal para esta sessão (WAYLAND_DISPLAY='${WAYLAND_DISPLAY:-}', DISPLAY='${DISPLAY:-}')." >&2
+    echo "Instale com: sudo skystation-atualizar (foot no cage; alacritty/xterm no gamescope)" >&2
+    exit 1
+}
+
+if [ "${1:-}" = "--qual" ]; then
+    echo "$T"
+    exit 0
+fi
+
+case "$T" in
+    foot) exec foot "$@" ;;
+    alacritty)
+        # Força X11: se sobrar um WAYLAND_DISPLAY velho no ambiente, o alacritty tentaria o Wayland.
+        WINIT_UNIX_BACKEND=x11 exec env -u WAYLAND_DISPLAY alacritty \
+            -o 'font.size=14' -o 'window.startup_mode="Fullscreen"' "$@" ;;
+    xterm)
+        exec xterm -fullscreen -fa Monospace -fs 14 -bg black -fg white "$@" ;;
+esac
