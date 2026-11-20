@@ -1,0 +1,305 @@
+#!/usr/bin/env python3
+"""SkyStation: SkyStore no console (Fase 12, etapa 2).
+
+  sky-store listar               -> {"ok", "itens": [... + "instalado", "atualizar"], "erro"?}
+  sky-store instalar <slug>      -> baixa, confere sha256 e assinatura, instala (também atualiza)
+  sky-store remover <slug>       -> tira do console
+  sky-store atualizacoes         -> só os itens instalados que têm versão nova
+
+Segurança (a loja não confia nem no próprio servidor):
+  1. O servidor devolve uma URL temporária + sha256 + assinatura Ed25519.
+  2. O console baixa, calcula o sha256 e confere a assinatura com a CHAVE PÚBLICA que vem junto com o
+     próprio SkyStation (/opt/skystation/loja/chave-publica.txt), sobre o texto
+     "skystation-loja-v1\\nslug\\nversao\\nsha256\\ntamanho". Quem trocar o pacote no armazenamento, ou
+     invadir o servidor, não tem a chave privada (fica só no PC do Sky): a instalação é recusada.
+  3. Extrai com o filtro "data" do tarfile (nada de caminhos para fora da pasta, links ou dispositivos).
+
+Pacote: .tar.gz com game.json na raiz (ou numa pasta só). Instala em ~/skystation/games/<slug>, onde o
+menu já procura jogos e apps. Progresso em linhas JSON ({"etapa", "p"}) e {"ok": ...} no fim, como o sky-jogos.
+"""
+import base64
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+import urllib.request
+
+BIN = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, BIN)
+import skynet  # noqa: E402
+
+HOME = os.path.expanduser("~")
+JOGOS = os.path.join(HOME, "skystation/games")
+ESTADO = os.path.join(HOME, "skystation/loja/instalados.json")
+CAPAS = os.path.join(HOME, ".cache/skystation/loja")
+CHAVE = os.environ.get("SKY_LOJA_CHAVE") or "/opt/skystation/loja/chave-publica.txt"
+RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
+TIPOS_INSTALAVEIS = {"jogo", "app"}
+PREFIXO_SPKI = bytes.fromhex("302a300506032b6570032100")   # cabeçalho DER de uma chave pública Ed25519
+
+
+def out(obj):
+    print(json.dumps(obj, ensure_ascii=False), flush=True)
+
+
+def instalados():
+    d = skynet.ler_json(ESTADO, {})
+    return d if isinstance(d, dict) else {}
+
+
+def _versao_maior(a, b):
+    """a > b? ("1.10" > "1.9"; "1.0-beta" < "1.0")"""
+    def partes(v):
+        base = v.split("-")[0]
+        return [int(x) if x.isdigit() else 0 for x in base.split(".")], 0 if "-" in v else 1
+    (na, fa), (nb, fb) = partes(a), partes(b)
+    n = max(len(na), len(nb))
+    na, nb = na + [0] * (n - len(na)), nb + [0] * (n - len(nb))
+    return (na, fa) > (nb, fb)
+
+
+def _capa(item):
+    """Baixa a capa uma vez (https) e devolve o caminho local, para o menu mostrar."""
+    url = str(item.get("capa") or "")
+    if not url.startswith("https://"):
+        return ""
+    ext = ".png" if url.lower().split("?")[0].endswith(".png") else ".jpg"
+    dest = os.path.join(CAPAS, item["slug"] + ext)
+    marca = dest + ".url"
+    if os.path.exists(dest) and skynet.ler_json(marca, {}).get("url") == url:
+        return dest
+    try:
+        os.makedirs(CAPAS, exist_ok=True)
+        req = urllib.request.Request(url, headers={"User-Agent": skynet.AGENTE})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            dados = r.read(4 * 1024 * 1024)
+        if dados[:3] == b"\xff\xd8\xff" or dados[:4] == b"\x89PNG":
+            with open(dest, "wb") as f:
+                f.write(dados)
+            skynet.gravar_json(marca, {"url": url})
+            return dest
+    except (OSError, ValueError):
+        pass
+    return dest if os.path.exists(dest) else ""
+
+
+def listar():
+    st, d = skynet.api("GET", "/api/loja", token=False, timeout=8)
+    inst = instalados()
+    if st != 200:
+        # sem internet: mostra pelo menos o que já está instalado
+        itens = [{"slug": s, "nome": i.get("nome", s), "tipo": i.get("tipo", "jogo"), "resumo": "Instalado",
+                  "instalado": i.get("versao"), "atualizar": False, "versao": {"versao": i.get("versao")},
+                  "capa_local": i.get("capa_local", "")} for s, i in inst.items()]
+        return {"ok": False, "erro": skynet.mensagem(d, "A SkyStore não respondeu."), "itens": itens}
+    itens = []
+    for item in d.get("itens", []):
+        if not isinstance(item, dict) or not item.get("slug"):
+            continue
+        v = (item.get("versao") or {}).get("versao", "")
+        tem = inst.get(item["slug"], {}).get("versao")
+        item["instalado"] = tem
+        item["atualizar"] = bool(tem and v and _versao_maior(v, tem))
+        item["instalavel"] = item.get("tipo") in TIPOS_INSTALAVEIS
+        item["capa_local"] = _capa(item)
+        itens.append(item)
+    return {"ok": True, "itens": itens}
+
+
+# ---------------------------------------------------------------- conferência
+
+def _chave_publica():
+    try:
+        raw = base64.b64decode(open(CHAVE).read().strip(), validate=True)
+    except (OSError, ValueError):
+        return None
+    return raw if len(raw) == 32 else None
+
+
+def assinatura_ok(mensagem, assinatura_b64, chave=None):
+    chave = chave or _chave_publica()
+    if not chave:
+        return False
+    try:
+        sig = base64.b64decode(assinatura_b64, validate=True)
+    except ValueError:
+        return False
+    if len(sig) != 64:
+        return False
+    try:                                        # 1º: a biblioteca cryptography, se o Python tiver
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        try:
+            Ed25519PublicKey.from_public_bytes(chave).verify(sig, mensagem.encode())
+            return True
+        except InvalidSignature:
+            return False
+    except ImportError:
+        pass
+    openssl = shutil.which("openssl")           # 2º: o openssl do sistema (sempre presente no Arch)
+    if not openssl:
+        return False
+    with tempfile.TemporaryDirectory() as t:
+        pem = os.path.join(t, "pub.pem")
+        with open(pem, "w") as f:
+            f.write("-----BEGIN PUBLIC KEY-----\n" + base64.b64encode(PREFIXO_SPKI + chave).decode()
+                    + "\n-----END PUBLIC KEY-----\n")
+        with open(os.path.join(t, "msg"), "wb") as f:
+            f.write(mensagem.encode())
+        with open(os.path.join(t, "sig"), "wb") as f:
+            f.write(sig)
+        r = subprocess.run([openssl, "pkeyutl", "-verify", "-pubin", "-inkey", pem, "-rawin",
+                            "-in", os.path.join(t, "msg"), "-sigfile", os.path.join(t, "sig")],
+                           capture_output=True, text=True)
+        return r.returncode == 0
+
+
+def mensagem_assinada(slug, versao, sha256, tamanho):
+    return f"skystation-loja-v1\n{slug}\n{versao}\n{sha256}\n{tamanho}"
+
+
+# ---------------------------------------------------------------- instalar
+
+def _baixar(url, dest, total):
+    h = hashlib.sha256()
+    feito, t0, ultimo = 0, time.monotonic(), 0.0
+    req = urllib.request.Request(url, headers={"User-Agent": skynet.AGENTE})
+    with urllib.request.urlopen(req, timeout=30) as r, open(dest, "wb") as f:
+        while True:
+            parte = r.read(1024 * 1024)
+            if not parte:
+                break
+            f.write(parte)
+            h.update(parte)
+            feito += len(parte)
+            if feito > total + 1024:
+                raise RuntimeError("o pacote veio maior do que o anunciado")
+            agora = time.monotonic()
+            if agora - ultimo > 0.25:
+                ultimo = agora
+                v = feito / max(0.1, agora - t0)
+                out({"etapa": "Baixando", "p": round(feito / max(1, total), 3), "v": round(v),
+                     "falta": int((total - feito) / v) if v > 0 else 0})
+    return feito, h.hexdigest()
+
+
+def _raiz_do_pacote(pasta):
+    """game.json na raiz, ou dentro de uma pasta só."""
+    if os.path.isfile(os.path.join(pasta, "game.json")):
+        return pasta
+    itens = [x for x in os.listdir(pasta) if not x.startswith(".")]
+    if len(itens) == 1 and os.path.isfile(os.path.join(pasta, itens[0], "game.json")):
+        return os.path.join(pasta, itens[0])
+    return None
+
+
+def instalar(slug):
+    if not skynet.conectado():
+        return {"ok": False, "error": "Entre na SkyNetwork para baixar da SkyStore."}
+    chave = _chave_publica()
+    if not chave:
+        return {"ok": False, "error": "Este SkyStation não tem a chave da SkyStore. Atualize o SkyStation."}
+    out({"etapa": "Conectando"})
+    st, d = skynet.api("POST", f"/api/loja/{slug}/baixar", {}, timeout=15)
+    if st != 200:
+        return {"ok": False, "error": skynet.mensagem(d, "A SkyStore não liberou o download.")}
+    tipo = d.get("tipo")
+    if tipo not in TIPOS_INSTALAVEIS:
+        return {"ok": False, "error": f"Itens do tipo {tipo} ainda não podem ser instalados por aqui."}
+    versao, sha, total, url = str(d.get("versao", "")), str(d.get("sha256", "")), int(d.get("tamanho", 0)), d.get("url", "")
+    livre = shutil.disk_usage(HOME).free
+    if total * 3 + 100 * 1024 * 1024 > livre:          # pacote + extraído + folga
+        return {"ok": False, "error": f"Falta espaço: precisa de {total * 3 / 1e9:.1f} GB."}
+    os.makedirs(JOGOS, exist_ok=True)
+    tmp = tempfile.mkdtemp(prefix=f".loja-{slug}-", dir=JOGOS)    # mesmo disco: no fim é só renomear
+    try:
+        pacote = os.path.join(tmp, "pacote.tar.gz")
+        tamanho, calculado = _baixar(url, pacote, total)
+        out({"etapa": "Conferindo", "p": 1.0})
+        if tamanho != total or calculado != sha:
+            return {"ok": False, "error": "O arquivo baixado não confere (sha256). Nada foi instalado."}
+        if not assinatura_ok(mensagem_assinada(slug, versao, sha, total), str(d.get("assinatura", "")), chave):
+            return {"ok": False, "error": "Assinatura da SkyStore inválida: pacote recusado por segurança."}
+        out({"etapa": "Instalando"})
+        destino_tmp = os.path.join(tmp, "x")
+        os.makedirs(destino_tmp)
+        with tarfile.open(pacote, "r:*") as tf:
+            tf.extractall(destino_tmp, filter="data")
+        raiz = _raiz_do_pacote(destino_tmp)
+        if not raiz:
+            return {"ok": False, "error": "O pacote não tem game.json."}
+        final = os.path.join(JOGOS, slug)
+        antigo = final + ".antigo"
+        shutil.rmtree(antigo, ignore_errors=True)
+        if os.path.exists(final):
+            os.replace(final, antigo)                  # atualização: a versão anterior só sai no fim
+        os.replace(raiz, final)
+        shutil.rmtree(antigo, ignore_errors=True)
+        if os.path.isfile(os.path.join(final, "project.godot")) and shutil.which("godot"):
+            out({"etapa": "Preparando o jogo"})        # jogo em Godot: gera o cache uma vez
+            subprocess.run(["godot", "--headless", "--path", final, "--import"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
+        inst = instalados()
+        anterior = inst.get(slug, {}).get("versao")
+        inst[slug] = {"versao": versao, "tipo": tipo, "nome": d.get("nome", slug), "sha256": sha,
+                      "quando": int(time.time()), "pasta": final,
+                      "capa_local": os.path.join(final, "cover.png") if os.path.exists(os.path.join(final, "cover.png")) else ""}
+        skynet.gravar_json(ESTADO, inst)
+        _avisar_menu()
+        verbo = "atualizado para a versão" if anterior else "instalado: versão"
+        return {"ok": True, "message": f"{d.get('nome', slug)} {verbo} {versao}"}
+    except tarfile.FilterError:
+        return {"ok": False, "error": "Pacote recusado: ele tenta gravar fora da pasta do jogo."}
+    except (OSError, RuntimeError, tarfile.TarError, subprocess.SubprocessError) as e:
+        return {"ok": False, "error": f"Não deu para instalar: {e}"}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def remover(slug):
+    inst = instalados()
+    if slug not in inst:
+        return {"ok": False, "error": "Esse item não foi instalado pela SkyStore."}
+    pasta = os.path.realpath(os.path.join(JOGOS, slug))
+    if os.path.dirname(pasta) != os.path.realpath(JOGOS):
+        return {"ok": False, "error": "Caminho inválido."}
+    shutil.rmtree(pasta, ignore_errors=True)
+    nome = inst.pop(slug).get("nome", slug)
+    skynet.gravar_json(ESTADO, inst)
+    _avisar_menu()
+    return {"ok": True, "message": f"{nome} removido (os saves continuam guardados)"}
+
+
+def _avisar_menu():
+    try:
+        os.makedirs(RUN, exist_ok=True)
+        with open(os.path.join(RUN, "events.jsonl"), "a") as f:
+            f.write(json.dumps({"t": time.time(), "kind": "jogos", "text": ""}) + "\n")
+    except OSError:
+        pass
+
+
+def main():
+    a = sys.argv[1:]
+    cmd = a[0] if a else "listar"
+    valido = lambda s: bool(s) and all(c.isalnum() or c == "-" for c in s) and s == s.lower()
+    if cmd == "listar":
+        out(listar())
+    elif cmd == "atualizacoes":
+        r = listar()
+        r["itens"] = [i for i in r["itens"] if i.get("atualizar")]
+        out(r)
+    elif cmd in ("instalar", "remover") and len(a) > 1 and valido(a[1]):
+        out(instalar(a[1]) if cmd == "instalar" else remover(a[1]))
+        out({"evento": "fim"})          # para o menu recolher a tarefa (como o sky-jogos)
+    else:
+        out({"ok": False, "error": "uso: sky-store listar | instalar <slug> | remover <slug> | atualizacoes"})
+
+
+if __name__ == "__main__":
+    main()

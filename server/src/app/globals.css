@@ -350,3 +350,13 @@ textarea { resize: vertical; min-height: 70px; }
 .tabela-versoes { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 14px; }
 .tabela-versoes td { padding: 9px 8px; border-top: 1px solid var(--borda); }
 @media (max-width: 640px) { .form-loja { grid-template-columns: 1fr; } }
+
+/* SkyStore (Fase 12, etapa 3) */
+.loja-topo h1, .loja-item h1 { margin: 4px 0 12px; }
+.loja-item { display: grid; grid-template-columns: minmax(180px, 260px) 1fr; gap: 32px; align-items: start; }
+.loja-item-texto p { line-height: 1.55; }
+.selo-oficial { color: var(--ouro); margin-right: 6px; font-weight: 600; }
+.loja-versao { padding: 10px 0; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.loja-versao:first-of-type { border-top: 0; }
+.loja-versao p { margin: 6px 0 0; }
+@media (max-width: 720px) { .loja-item { grid-template-columns: 1fr; } .loja-item-capa { max-width: 220px; } }

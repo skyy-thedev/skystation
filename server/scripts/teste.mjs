@@ -364,6 +364,14 @@ try {
   const naVit = vit.dados.itens.find((i) => i.slug === slugL);
   ok(naVit && naVit.versao.versao === "1.0" && naVit.oficial && naVit.versao.tamanho === pacote.length, "loja: na vitrine com a versão 1.0");
   ok((await anonimo("GET", `/api/loja/${slugL}`)).dados.versoes.length === 1, "loja: página do item");
+  // etapa 3: a vitrine no site (HTML)
+  const pgLoja = await fetch(`${BASE}/loja`);
+  const htmlLoja = await pgLoja.text();
+  ok(pgLoja.status === 200 && htmlLoja.includes("Jogo de Teste") && htmlLoja.includes(`/loja/${slugL}`), "loja: vitrine do site lista o item");
+  const pgItem = await fetch(`${BASE}/loja/${slugL}`);
+  const htmlItem = await pgItem.text();
+  ok(pgItem.status === 200 && htmlItem.includes("Jogo de Teste") && htmlItem.includes("primeira") && !htmlItem.includes(shaP), "loja: página do item no site (notas, sem dados de download)");
+  ok((await fetch(`${BASE}/loja/nao-existe-mesmo`)).status === 404, "loja: item que não existe = 404 no site");
   ok((await api("POST", `/api/loja/${slugL}/baixar`, { corpo: {} })).status === 401, "loja: baixar só com console registrado");
   const bx = await api("POST", `/api/loja/${slugL}/baixar`, { token: A.token, corpo: {} });
   ok(bx.status === 200 && bx.dados.sha256 === shaP && bx.dados.assinatura, "loja: console recebe endereço, sha256 e assinatura");

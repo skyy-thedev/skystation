@@ -8,6 +8,12 @@
 //   node scripts/loja.mjs enviar <arquivo> <slug> <versao> [--notas "o que mudou"] [--publicar]
 //   node scripts/loja.mjs publicar <slug> <versao>      |  despublicar <slug> <versao>
 //   node scripts/loja.mjs lista
+//   node scripts/loja.mjs empacotar <pasta do jogo> [saida.tar.gz]   monta o pacote (game.json na raiz)
+//
+// Exemplo (primeiro jogo oficial), na pasta server/:
+//   node scripts/loja.mjs empacotar ../console/games/zona-morta zona-morta-0.3.tar.gz
+//   node scripts/loja.mjs item zona-morta --tipo jogo --nome "Zona Morta" --oficial --publicar --resumo "…"
+//   node scripts/loja.mjs enviar zona-morta-0.3.tar.gz zona-morta 0.3 --notas "Primeira versão na SkyStore" --publicar
 //
 // Servidor: SKY_URL (padrão https://skyntwk.vercel.app). Login: SKY_USUARIO (o seu ID SkyNetwork, que
 // precisa estar em SKY_ADMIN no servidor) e a senha (pergunta; ou SKY_SENHA). Chave privada:
@@ -146,6 +152,17 @@ if (cmd === "chave") {
   const v = await acharVersao(slug, versao);
   await api("PATCH", "/api/admin/loja/versoes", { id: v.id, publicada: cmd === "publicar" });
   console.log(`${slug} ${versao} ${cmd === "publicar" ? "publicada" : "fora do ar"}.`);
+} else if (cmd === "empacotar") {
+  // .tar.gz com a pasta do jogo dentro; sem cache do Godot (.godot/), que o console gera ao instalar.
+  const [pasta, saidaArg] = o._;
+  if (!pasta || !existsSync(join(pasta, "game.json"))) sair("uso: empacotar <pasta com game.json> [saida.tar.gz]");
+  const { execFileSync } = await import("node:child_process");
+  const { basename, resolve } = await import("node:path");
+  const nome = basename(resolve(pasta));
+  const saida = resolve(saidaArg || `${nome}.tar.gz`);
+  execFileSync("tar", ["-czf", saida, "--exclude=.godot", "--exclude=*.import", "-C", dirname(resolve(pasta)), nome], { stdio: "inherit" });
+  const tam = statSync(saida).size;
+  console.log(`${saida}  ·  ${(tam / 1048576).toFixed(2)} MB  ·  sha256 ${await sha256De(saida)}`);
 } else if (cmd === "lista") {
   await entrar();
   const { itens } = await api("GET", "/api/admin/loja");
@@ -154,5 +171,5 @@ if (cmd === "chave") {
     for (const v of i.versoes) console.log(`    ${v.versao}  ${v.publicada ? "publicada" : v.enviada ? "enviada" : "incompleta"}  ${(v.tamanho / 1048576).toFixed(1)} MB`);
   }
 } else {
-  sair("uso: node scripts/loja.mjs chave | publica | item | enviar | publicar | despublicar | lista  (detalhes no topo do arquivo)");
+  sair("uso: node scripts/loja.mjs chave | publica | empacotar | item | enviar | publicar | despublicar | lista  (detalhes no topo do arquivo)");
 }

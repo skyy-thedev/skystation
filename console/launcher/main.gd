@@ -180,6 +180,11 @@ var busy_msg: String = ""
 var busy_thread: Thread = null
 # Fase 13.1: instalação de jogos compactados (sky-instalar), com a tela "Instalando" no estilo do PS
 var inst: Dictionary = {}          # o que o sky-instalar escreveu em instalando.json
+# Fase 12 (etapa 2): SkyStore no console (sky-store listar/instalar/remover)
+var loja: Dictionary = {}          # última resposta do "sky-store listar"
+var loja_at: float = 4.0           # quando buscar a vitrine de novo
+var loja_busy: bool = false
+var job_tool: String = "sky-jogos"
 var inst_pid: int = -1
 var inst_open: bool = false        # tela cheia aberta (B/A manda para segundo plano)
 var inst_poll_at: float = 0.0
@@ -403,6 +408,8 @@ func _process(delta: float) -> void:
 	if toast_t > 0.0:
 		toast_t -= delta
 	_tick_install(delta)
+	if t >= loja_at and not loja_busy and running_pid == -1:
+		_loja_refresh()
 	queue_redraw()
 
 	if settings != null and settings.visible:
@@ -656,8 +663,15 @@ func _reload_games() -> void:
 		if da == null:
 			continue
 		for sub in da.get_directories():
+			if str(sub).begins_with("."):
+				continue   # .loja-…: download da SkyStore em andamento
 			var g = _read_game(base + "/" + sub, sub)
 			if g != null:
+				# Fase 12: a versão baixada da SkyStore (pasta do usuário) substitui a que veio com o sistema
+				for k in games.size():
+					if str(games[k].get("dir", "")).get_file() == str(sub) and str(games[k].get("dir", "")).begins_with("/opt/"):
+						games.remove_at(k)
+						break
 				games.append(g)
 	_scan_roms()
 	_apply_fichas()
@@ -1424,6 +1438,9 @@ func _build_cats() -> void:
 	if not c_pc["items"].is_empty():
 		cats.append(c_pc)
 	cats.append(c_apps)
+	var c_loja := _build_store_cat()
+	if not c_loja.is_empty():
+		cats.append(c_loja)
 	var tl: Array = trophies.get("trofeus", [])
 	if not tl.is_empty():
 		var c_tro := {"id": "trofeus", "title": "Troféus", "icon": "trophy", "items": []}
@@ -1515,6 +1532,9 @@ func _activate() -> void:
 		_open_settings(4)
 		if settings != null:
 			settings.call("abrir_amigo", action.substr(7))
+		return
+	if action.begins_with("loja:"):
+		_loja_acao(action.substr(5), "")
 		return
 	if action.begins_with("netplay:"):
 		_entrar_netplay(action.substr(8))
@@ -1895,6 +1915,18 @@ func _toggle_panel() -> void:
 				if it["game"].get("sys", "") in ["ps1", "ps2"] and gpath.get_extension().to_lower() in ["cue", "iso", "img"]:
 					panel_items.append(["Compactar (CHD): ocupa menos espaço", "compress"])
 				panel_items.append(["Apagar jogo", "delete_game"])
+		var acao_it := str(it.get("action", ""))
+		if acao_it.begins_with("loja:"):
+			var li := _loja_item(acao_it.substr(5))
+			if not li.is_empty() and bool(li.get("instalavel", true)):
+				var tem := _nulo(li.get("instalado"))
+				if tem == "":
+					panel_items.append(["Baixar e instalar", "loja_do:baixar"])
+				else:
+					if bool(li.get("atualizar", false)):
+						panel_items.append(["Atualizar para a versão " + _loja_versao(li), "loja_do:baixar"])
+					panel_items.append(["Abrir", "loja_do:abrir"])
+					panel_items.append(["Remover do console", "loja_do:remover"])
 		if it.get("kind", "") == "shot":
 			panel_items.append(["Ver captura", "play"])
 			panel_items.append(["Apagar captura", "delete_shot"])
@@ -1912,8 +1944,13 @@ func _toggle_panel() -> void:
 func _panel_choose() -> void:
 	var a: String = panel_items[panel_sel][1]
 	panel_open = false
-	if a != "delete_game":
+	if a != "delete_game" and a != "loja_do:remover":
 		confirm_delete = false
+	if a.begins_with("loja_do:"):
+		var acao_l := str(_cur().get("action", ""))
+		if acao_l.begins_with("loja:"):
+			_loja_acao(acao_l.substr(5), a.substr(8))
+		return
 	if a.begins_with("copy_disc:"):
 		_run_job(["copiar-disco", a.split(":")[1]], "Copiando o disco…")
 		return
@@ -2538,7 +2575,7 @@ func _close_receive() -> void:
 	_toast("Central web continua ligada em segundo plano", 3.0, "download")
 
 
-func _run_job(args: Array, title: String) -> void:
+func _run_job(args: Array, title: String, tool: String = "sky-jogos") -> void:
 	if job_thread != null:
 		# Fase 9.0: antes, se a tarefa anterior não tivesse sido "recolhida" (o aviso de fim não chegou
 		# ou a leitura ficou presa), a próxima era ignorada em silêncio: apagar um segundo jogo só
@@ -2552,7 +2589,8 @@ func _run_job(args: Array, title: String) -> void:
 		else:
 			job_thread.wait_to_finish()
 		job_thread = null
-	var info := OS.execute_with_pipe(SKY_BIN + "/sky-jogos", PackedStringArray(args))
+	var info := OS.execute_with_pipe(SKY_BIN + "/" + tool, PackedStringArray(args))
+	job_tool = tool
 	if info.is_empty():
 		_toast("Não consegui iniciar", 3.0, "drive")
 		return
@@ -2585,6 +2623,8 @@ func _on_job_line(line: String) -> void:
 			_play_file("alerta")
 		_reload_games()
 		_refresh_status()
+		if job_tool == "sky-store":
+			loja_at = t        # a vitrine passa a mostrar "Instalado"/"Atualizar" certo
 	elif str(ev.get("evento", "")) == "fim":
 		# só recolhe a thread que de fato terminou (o "fim" de uma tarefa antiga não pode travar a nova)
 		if job_thread != null and not job_thread.is_alive():
@@ -3636,6 +3676,130 @@ func _draw_busy(w: float, h: float) -> void:
 	_text(busy_msg, Vector2(0, c.y + 72), 22, WHITE, false, w, HORIZONTAL_ALIGNMENT_CENTER)
 	if job_thread != null and job_cancel_hint and busy_msg != "Cancelando…":
 		_text("B  cancelar", Vector2(0, c.y + 108), 15, DIM, false, w, HORIZONTAL_ALIGNMENT_CENTER)
+
+
+# ---------------------------------------------------------------- SkyStore (Fase 12, etapa 2)
+
+func _loja_refresh() -> void:
+	if not FileAccess.file_exists(SKY_BIN + "/sky-store"):
+		loja_at = t + 3600.0
+		return
+	loja_busy = true
+	loja_at = t + 1800.0   # a vitrine muda pouco: de meia em meia hora (e logo depois de instalar)
+	_bg(_run_json.bind(SKY_BIN + "/sky-store", ["listar"]), _on_loja)
+
+
+func _on_loja(r: Dictionary) -> void:
+	loja_busy = false
+	if not r.has("itens"):
+		loja_at = t + 120.0
+		return
+	var antes := JSON.stringify(loja.get("itens", []))
+	loja = r
+	if not r.get("ok", false):
+		loja_at = t + 300.0   # sem internet agora: tenta de novo em 5 min
+	var novos := 0
+	for i in r.get("itens", []):
+		if bool(i.get("atualizar", false)):
+			novos += 1
+	if JSON.stringify(r.get("itens", [])) != antes:
+		_build_cats()
+		if novos > 0:
+			_toast("SkyStore: %d atualização(ões) disponível(is)" % novos, 3.5, "download")
+
+
+func _loja_item(slug: String) -> Dictionary:
+	for i in loja.get("itens", []):
+		if str(i.get("slug", "")) == slug:
+			return i
+	return {}
+
+
+func _loja_versao(i: Dictionary) -> String:
+	var v = i.get("versao")
+	return str(v.get("versao", "")) if typeof(v) == TYPE_DICTIONARY else ""
+
+
+func _build_store_cat() -> Dictionary:
+	# A loja aparece para quem está na SkyNetwork ou já instalou algo dela.
+	var itens: Array = loja.get("itens", [])
+	if itens.is_empty() and not net.get("na_rede", false):
+		return {}
+	var c := {"id": "skystore", "title": "SkyStore", "icon": "download", "items": []}
+	if itens.is_empty():
+		var msg := "Abrindo a loja…" if loja.is_empty() else (str(loja.get("erro", "")) if not loja.get("ok", true)
+			else "Ainda não há nada publicado. Os jogos e apps oficiais da SkyStation aparecem aqui.")
+		c["items"].append(_act("SkyStore", msg, "", "download"))
+		return c
+	for i in itens:
+		var slug := str(i.get("slug", ""))
+		var tipo := str(i.get("tipo", "jogo"))
+		var v := _loja_versao(i)
+		var tem := _nulo(i.get("instalado"))
+		var tam := 0.0
+		if typeof(i.get("versao")) == TYPE_DICTIONARY:
+			tam = float(i["versao"].get("tamanho", 0))
+		var sub := ""
+		if not bool(i.get("instalavel", true)):
+			sub = "%s  ·  em breve no console" % tipo.capitalize()
+		elif tem == "":
+			sub = "%s  ·  versão %s  ·  %s  ·  A: baixar" % [tipo.capitalize(), v, _fmt_mb(tam)]
+		elif bool(i.get("atualizar", false)):
+			sub = "Atualização: versão %s (você tem a %s)  ·  A: atualizar" % [v, tem]
+		else:
+			sub = "Instalado  ·  versão %s  ·  A: abrir  ·  △: remover" % tem
+		if bool(i.get("oficial", false)):
+			sub = "★ Oficial  ·  " + sub
+		var it := _act(str(i.get("nome", slug)), sub, "loja:" + slug, "download",
+			Color(accent) if bool(i.get("atualizar", false)) else Color(0, 0, 0, 0))
+		it["desc"] = str(i.get("resumo", ""))
+		var capa := str(i.get("capa_local", ""))
+		if capa != "":
+			it["cover"] = _load_tex(capa)
+		c["items"].append(it)
+	return c
+
+
+func _fmt_mb(b: float) -> String:
+	if b >= 1e9:
+		return "%.1f GB" % (b / 1e9)
+	return "%d MB" % maxi(1, int(round(b / 1e6)))
+
+
+func _loja_acao(slug: String, o_que: String) -> void:
+	var i := _loja_item(slug)
+	if i.is_empty():
+		return
+	if not bool(i.get("instalavel", true)):
+		_toast("Esse tipo de item ainda não pode ser instalado pelo console", 3.0, "download")
+		return
+	var tem := _nulo(i.get("instalado"))
+	if o_que == "":   # botão A: o que faz mais sentido agora
+		o_que = "baixar" if tem == "" or bool(i.get("atualizar", false)) else "abrir"
+	var nome := str(i.get("nome", slug))
+	match o_que:
+		"baixar":
+			if not net.get("na_rede", false):
+				_toast("Entre na SkyNetwork para baixar da SkyStore", 3.0, "download")
+				return
+			_run_job(["instalar", slug], ("Atualizando " if tem != "" else "Baixando ") + nome + "…", "sky-store")
+		"remover":
+			if not confirm_delete:
+				confirm_delete = true
+				panel_open = true
+				panel_items = [["Confirmar: remover " + nome, "loja_do:remover"], ["Cancelar", "close"]]
+				panel_sel = 1
+				return
+			confirm_delete = false
+			_run_job(["remover", slug], "Removendo " + nome + "…", "sky-store")
+		"abrir":
+			var pasta := home_dir + "/skystation/games/" + slug
+			for g in games:
+				if str(g.get("dir", "")) == pasta:
+					_play("accept")
+					_launch(g)
+					return
+			_toast("Não achei o jogo instalado. Tente Recarregar jogos.", 3.0, "download")
 
 
 # ---------------------------------------------------------------- instalar jogos compactados (13.1)

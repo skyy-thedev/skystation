@@ -1,0 +1,5 @@
+SkyStore (Fase 12): chave-publica.txt fica nesta pasta (vai para /opt/skystation/loja/).
+
+É a chave PÚBLICA Ed25519 da loja, 32 bytes em base64 (a mesma da variável SKY_LOJA_CHAVE_PUBLICA na
+Vercel). O console só instala pacotes assinados pela chave PRIVADA correspondente, que fica só no PC
+de quem publica (server/scripts/loja.mjs chave). Sem este arquivo, o sky-store recusa instalar.

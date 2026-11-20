@@ -138,6 +138,10 @@ v "pedido do GeForce NOW ligado" "sudo skystation-atualizar" systemctl is-enable
 if flatpak info com.nvidia.geforcenow >/dev/null 2>&1; then echo "  ✓ app do GeForce NOW instalado"
 else echo "  · app do GeForce NOW ainda não instalado: abra o GeForce NOW uma vez (usa a versão web até terminar; log em /var/log/skystation-instalar.log)"; fi
 
+echo "== 12 SkyStore"
+v "chave pública da SkyStore" "sudo skystation-atualizar" test -s /opt/skystation/loja/chave-publica.txt
+v "conferência de assinatura (openssl Ed25519)" "sudo pacman -S openssl" sh -c "openssl version | grep -q '^OpenSSL 3'"
+
 echo "== 13.1 Jogos compactados"
 v "7-Zip (instala .zip/.7z/.rar do SKYROMS)" "sudo skystation-atualizar" sh -c "command -v 7z || command -v 7zz"
 pend="$(/opt/skystation/bin/sky-instalar procurar 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["pendentes"]))' 2>/dev/null)"
