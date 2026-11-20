@@ -70,7 +70,14 @@ case "$SYS" in
     dc)     bios_sync dc ;;                      # Flycast: <system>/dc/dc_boot.bin, dc_flash.bin
     saturn) bios_sync ;;
     wiiu)   bios_sync Cemu ;;                    # core Cemu: <system>/Cemu/keys.txt
-    vita)   bios_sync vita3k ;;                  # core Vita3K: <system>/vita3k/PSP2UPDAT.PUP
+    vita)   bios_sync vita3k                     # core Vita3K: <system>/vita3k/*.PUP
+            # 13.3: sem firmware o Vita3K não carrega muitos jogos (e pode até abortar, E134). São dois
+            # arquivos do site da Sony: PSVUPDAT.PUP (sistema) e PSP2UPDAT.PUP (fontes).
+            VFW="$SKY/bios/vita/vita3k"
+            VPREF="${XDG_DATA_HOME:-$HOME/.local/share}/Vita3K/Vita3K"
+            if [ -z "$(find "$VFW" -maxdepth 1 -iname '*.pup' 2>/dev/null | head -1)" ] && [ ! -d "$VPREF/vs0" ]; then
+                fail "PS Vita: falta o firmware. Baixe no site da Sony o PSVUPDAT.PUP (sistema) e o PSP2UPDAT.PUP (fontes) e coloque em SKYROMS/bios/vita."
+            fi ;;
     xbox)   bios_sync xemu                       # core xemu: nomes exatos em <system>/xemu/
             X="$SKY/bios/xbox/xemu"
             copia_como "$X" mcpx_1.0.bin '*mcpx*.bin'
@@ -115,6 +122,7 @@ ps1|snes|n64|psp|gc|wii|nds|3ds|gba|gb|nes|md|dc|saturn|wiiu|vita|xbox)
         [ -f "/opt/skystation/emu/cores/${c}_libretro.so" ] && { CORE="/opt/skystation/emu/cores/${c}_libretro.so"; break; }
     done
     case "$SYS" in dc|saturn|wiiu|vita|xbox) FASE="a Fase 13 (fase13.sh)" ;; *) FASE="a Fase 7.1 (fase7-1.sh)" ;; esac
+    echo "sky-emu: $SYS pelo RetroArch (core ${CORE##*/})" >&2
     [ -n "$CORE" ] || fail "Emulador de ${SYS^^} não instalado. Rode $FASE."
     if [ "$SYS" = saturn ] && [ "${CORE##*/}" = mednafen_saturn_libretro.so ] \
         && ! saturn_bios; then
@@ -314,6 +322,20 @@ wiiu-solo)
     ;;
 vita-solo)
     [ -x /opt/vita3k/AppRun ] || fail "Emulador de PS Vita não instalado. Rode a Fase 13 (fase13.sh)."
+    echo "sky-emu: PS Vita pelo Vita3K separado (/opt/vita3k)" >&2
+    # 13.3: instala cada .PUP uma vez (Vita3K --firmware); a marca fica ao lado, por tamanho do arquivo.
+    for pup in "$VFW"/[Pp][Ss][Vv]*.[Pp][Uu][Pp] "$VFW"/*.[Pp][Uu][Pp]; do   # o do sistema (PSV…) primeiro
+        [ -f "$pup" ] || continue
+        marca="$VPREF/.skystation-$(basename "$pup")-$(stat -c %s "$pup")"
+        [ -f "$marca" ] && continue
+        echo "sky-emu: instalando o firmware $(basename "$pup")" >&2
+        if timeout 600 /opt/vita3k/AppRun --firmware "$pup" </dev/null >&2; then
+            mkdir -p "$VPREF" && : >"$marca"
+        else
+            echo "sky-emu: o Vita3K não aceitou $(basename "$pup") (código $?)" >&2
+        fi
+    done
+    [ -d "$VPREF/vs0" ] || fail "PS Vita: o firmware não foi instalado. Confira se o PSVUPDAT.PUP em SKYROMS/bios/vita é o do site da Sony."
     # Com um .vpk/.zip o Vita3K instala o jogo (só na 1ª vez demora) e já abre.
     exec /opt/vita3k/AppRun "$ROM"
     ;;

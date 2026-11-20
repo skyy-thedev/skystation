@@ -129,7 +129,7 @@ Arquivos que você precisa ter (do seu console), em SKYROMS/bios/<sistema>/:
   dc      nada obrigatório (o Flycast tem BIOS própria); com dc_boot.bin + dc_flash.bin fica mais compatível
   saturn  sega_101.bin (Japão) ou mpr-17933.bin (EUA/Europa); sem eles usa o YabaSanshiro
   xbox    mcpx_1.0.bin, a BIOS (ex.: Complex_4627.bin) e o HD xbox_hdd.qcow2 (o do site do xemu)
-  vita    firmware PSP2UPDAT.PUP (do site da Sony) — jogos em .vpk
+  vita    PSVUPDAT.PUP (firmware) e PSP2UPDAT.PUP (fontes), os dois do site da Sony — jogos em .vpk/.zip
   wiiu    keys.txt só para .wud/.wux criptografados; .wua e pastas com code/*.rpx abrem direto
   switch  prod.keys (+ title.keys) e a pasta firmware/ com os .nca — teste apenas
   ps4     os módulos do sistema são opcionais; o jogo é a pasta com eboot.bin (CUSAxxxxx)

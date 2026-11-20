@@ -154,7 +154,7 @@ v "PS4 (shadPS4, experimental)" "$F13" test -x /opt/shadps4/AppRun
 if [ -x /opt/switch/AppRun ]; then echo "  ✓ Switch (teste): $(cat /opt/switch/ORIGEM 2>/dev/null)"
 else echo "  · Switch (teste): ponha o AppImage do Eden/Citron em SKYROMS/emuladores e rode a Fase 13"; fi
 B="$H/skystation/bios"
-for par in "saturn:sega_101.bin mpr-17933.bin" "xbox:mcpx_1.0.bin" "vita:PSP2UPDAT.PUP" "switch:prod.keys"; do
+for par in "saturn:sega_101.bin mpr-17933.bin" "xbox:mcpx_1.0.bin" "vita:PSVUPDAT.PUP" "switch:prod.keys"; do
     s="${par%%:*}"; achou=""
     for f in ${par#*:}; do ls "$B/$s/$f" "$B/$s"/*/"$f" /mnt/skyroms/bios/$s/$f >/dev/null 2>&1 && achou=1; done
     [ -n "$achou" ] && echo "  ✓ arquivos do $s presentes" || echo "  · $s: faltam arquivos do seu console em SKYROMS/bios/$s (veja o fim do fase13.sh)"
