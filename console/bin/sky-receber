@@ -53,6 +53,9 @@ NOVOS = {'gc': ['iso', 'gcm', 'rvz', 'gcz', 'ciso'], 'wii': ['iso', 'wbfs', 'rvz
          'dc': ['chd', 'gdi', 'cdi', 'cue', 'bin', 'raw'], 'saturn': ['chd', 'cue', 'bin', 'ccd', 'img', 'sub', 'm3u']}
 for _s, _e in NOVOS.items():
     EXTS[_s] = set(_e) | {"png", "jpg"}
+for _s in list(EXTS):          # Fase 13.1: compactados também; o sky-instalar extrai sozinho no console
+    if _s not in ("bios", "ps3fw"):
+        EXTS[_s] |= {"zip", "7z", "rar"}
 BIOS_DIR = os.path.join(HOME, "skystation/bios/ps2")
 PS3FW_DIR = os.path.join(HOME, "skystation/bios/ps3")
 SHOTS = os.path.join(HOME, "skystation/capturas")

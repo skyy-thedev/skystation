@@ -1,0 +1,372 @@
+#!/usr/bin/env python3
+"""SkyStation (Fase 13.1): instala jogos que chegaram compactados (.zip, .7z, .rar) no SKYROMS.
+
+  sky-instalar procurar     -> {"pendentes": [{"arquivo", "nome", "sistema", "tamanho"}]}
+  sky-instalar rodar        -> instala todos, um por vez (o menu abre em segundo plano)
+  sky-instalar estado       -> o que está acontecendo agora (o mesmo de instalando.json)
+
+Como instala:
+  1. Extrai em uma pasta escondida ao lado (.nome.instalando), no mesmo disco: no fim é só renomear.
+  2. Tira o lixo (leia-me, .nfo, .url) e as pastas "embrulho" (zip com uma pasta só dentro).
+  3. Um arquivo só (PS2 .iso, PSP .cso, Dreamcast .cdi) vai direto para a pasta do sistema; jogo com
+     várias faixas (.gdi + track01.bin…, .cue + .bin) ganha uma pasta própria, porque as faixas têm o
+     mesmo nome em todos os jogos. PS3/PS4/Wii U em pasta continuam pasta.
+  4. Só depois de tudo certo apaga o compactado (e as partes .part2.rar / .7z.002).
+
+O que fica de fora: .zip do PS Vita (o Vita3K instala direto dele), downloads pela metade
+(.opdownload, .crdownload, .part) e arquivos alterados há menos de 1 minuto (ainda copiando).
+O progresso vai para $XDG_RUNTIME_DIR/skystation/instalando.json, que o menu desenha.
+"""
+import fcntl
+import importlib.machinery
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+BIN = os.path.dirname(os.path.abspath(__file__))
+RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
+ESTADO = os.path.join(RUN, "instalando.json")
+EVENTS = os.path.join(RUN, "events.jsonl")
+TRAVA = os.path.join(RUN, "instalar.lock")
+BASES = ["/mnt/skyroms", os.path.join(HOME, "skystation/roms"), "/mnt/skystation/roms"]
+JOGOS = importlib.machinery.SourceFileLoader("sky_jogos", os.path.join(BIN, "sky-jogos")).load_module()
+
+NOMES = {"ps1": "PlayStation", "ps2": "PlayStation 2", "ps3": "PlayStation 3", "ps4": "PlayStation 4",
+         "psp": "PSP", "vita": "PS Vita", "snes": "Super Nintendo", "n64": "Nintendo 64", "gc": "GameCube",
+         "wii": "Nintendo Wii", "wiiu": "Wii U", "switch": "Nintendo Switch", "nds": "Nintendo DS",
+         "3ds": "Nintendo 3DS", "gba": "Game Boy Advance", "gb": "Game Boy", "nes": "NES", "md": "Mega Drive",
+         "x360": "Xbox 360", "xbox": "Xbox", "dc": "Dreamcast", "saturn": "Sega Saturn"}
+PASTA_E_JOGO = {"ps3", "ps4", "wiiu"}      # o jogo pode ser uma pasta inteira
+LIXO = JOGOS.LIXO          # leia-me, .nfo, .url… (só no "embrulho", nunca dentro do jogo)
+LIXO_NOMES = {"thumbs.db", "desktop.ini", ".ds_store"}
+COMPACTADO = re.compile(r"\.(zip|7z|rar)$|\.7z\.001$|\.zip\.001$", re.I)
+PARTE_N = re.compile(r"\.part0*(\d+)\.rar$", re.I)
+MIN_IDADE = 60          # segundos sem mudar para considerar que terminou de copiar
+FALHAS = os.path.join(HOME, ".cache/skystation/instalar-falhas.json")
+
+
+def _assinatura(arq):
+    """Arquivo que já falhou só é tentado de novo se mudar (baixou de novo, outro tamanho/data)."""
+    try:
+        st = os.stat(arq)
+        return f"{st.st_size}:{int(st.st_mtime)}"
+    except OSError:
+        return ""
+
+
+def _falhas():
+    try:
+        with open(FALHAS) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _anota_falha(arq, erro):
+    d = _falhas()
+    d[os.path.realpath(arq)] = {"assinatura": _assinatura(arq), "erro": erro}
+    os.makedirs(os.path.dirname(FALHAS), exist_ok=True)
+    with open(FALHAS + ".tmp", "w") as f:
+        json.dump(d, f, ensure_ascii=False)
+    os.replace(FALHAS + ".tmp", FALHAS)
+
+
+def _parte_principal(nome):
+    """Só a 1ª parte de um compactado dividido conta; as outras vão junto."""
+    m = PARTE_N.search(nome) or re.search(r"\.(?:7z|zip)\.(\d{3})$", nome, re.I)
+    return int(m.group(1)) == 1 if m else True
+
+
+def _partes(arquivo):
+    """Todos os pedaços de um compactado (x.part1.rar, x.part2.rar… / x.7z.001, x.7z.002…)."""
+    pasta, nome = os.path.split(arquivo)
+    m = PARTE_N.search(nome)
+    if m:
+        raiz = nome[:m.start()]
+        pad = re.compile(re.escape(raiz) + r"\.part0*\d+\.rar$", re.I)
+    elif re.search(r"\.(7z|zip)\.001$", nome, re.I):
+        pad = re.compile(re.escape(nome[:-4]) + r"\.\d{3}$", re.I)
+    else:
+        return [arquivo]
+    return sorted(os.path.join(pasta, n) for n in os.listdir(pasta) if pad.match(n))
+
+
+def nome_do_jogo(arquivo):
+    n = os.path.basename(arquivo)
+    n = re.sub(r"(\.part0*\d+)?\.(zip|7z|rar)(\.\d{3})?$", "", n, flags=re.I)
+    return n.strip() or "jogo"
+
+
+def procurar(com_falhas=False):
+    achados, vistos = [], set()
+    falhas = {} if com_falhas else _falhas()
+    agora = time.time()
+    for base in BASES:
+        try:
+            pastas = os.listdir(base)
+        except OSError:
+            continue
+        for p in pastas:
+            sis = JOGOS.sistema_da_pasta(p)
+            pasta = os.path.join(base, p)
+            if not sis or not os.path.isdir(pasta):
+                continue
+            try:
+                nomes = sorted(os.listdir(pasta), key=str.lower)
+            except OSError:
+                continue
+            for n in nomes:
+                arq = os.path.join(pasta, n)
+                if n.startswith(".") or not COMPACTADO.search(n) or not _parte_principal(n) or not os.path.isfile(arq):
+                    continue
+                if sis == "vita" and n.lower().endswith(".zip"):
+                    continue                         # o .zip É o jogo de Vita
+                try:
+                    st = os.stat(arq)
+                except OSError:
+                    continue
+                partes = _partes(arq)
+                if agora - max(os.path.getmtime(x) for x in partes) < MIN_IDADE:
+                    continue                         # ainda chegando (cópia do Windows, download)
+                real = os.path.realpath(arq)
+                if real in vistos or falhas.get(real, {}).get("assinatura") == _assinatura(arq):
+                    continue
+                vistos.add(real)
+                achados.append({"arquivo": arq, "nome": nome_do_jogo(arq), "sistema": sis,
+                                "tamanho": sum(os.path.getsize(x) for x in partes)})
+    return achados
+
+
+# ---------------------------------------------------------------- extração
+
+def _ferramenta():
+    for b in ("7z", "7zz", "7za"):
+        if shutil.which(b):
+            return [shutil.which(b)]
+    if shutil.which("bsdtar"):
+        return [shutil.which("bsdtar")]
+    return None
+
+
+def tamanho_extraido(arquivo):
+    """Soma dos arquivos de dentro (para a barra de progresso e para conferir o espaço)."""
+    f = _ferramenta()
+    try:
+        if f and os.path.basename(f[0]).startswith("7z"):
+            r = subprocess.run(f + ["l", "-slt", "-ba", arquivo], capture_output=True, text=True, timeout=120)
+            return sum(int(m) for m in re.findall(r"^Size = (\d+)", r.stdout, re.M))
+        if f:
+            r = subprocess.run(f + ["-tvf", arquivo], capture_output=True, text=True, timeout=120)
+            return sum(int(c[4]) for c in (ln.split() for ln in r.stdout.splitlines()) if len(c) > 4 and c[4].isdigit())
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    return 0
+
+
+def _du(pasta):
+    total = 0
+    for d, _, fs in os.walk(pasta):
+        for x in fs:
+            try:
+                total += os.lstat(os.path.join(d, x)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def extrair(arquivo, destino, total, progresso):
+    f = _ferramenta()
+    if not f:
+        raise RuntimeError("Falta o 7-Zip no console. Rode Sistema → Atualizar o SkyStation.")
+    if os.path.basename(f[0]).startswith("7z"):
+        cmd = f + ["x", "-y", "-bd", "-bso0", "-bsp0", "-p", "-o" + destino, arquivo]   # -p: sem senha (não trava)
+    else:
+        cmd = f + ["-xf", arquivo, "-C", destino]
+    os.makedirs(destino, exist_ok=True)
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    while proc.poll() is None:
+        time.sleep(0.5)
+        if total:
+            progresso(min(0.99, _du(destino) / total))
+    if proc.returncode != 0:
+        erro = (proc.stderr.read() if proc.stderr else "").strip().splitlines()
+        motivo = erro[-1] if erro else f"código {proc.returncode}"
+        m = motivo.lower()
+        if "password" in m or "senha" in m or "encrypted" in m:
+            motivo = "o arquivo tem senha"
+        elif any(x in m for x in ("crc", "data error", "unexpected end", "not archive", "can not open",
+                                  "cannot open", "headers error", "truncated", "unrecognized")):
+            motivo = "arquivo corrompido ou incompleto (baixe de novo)"
+        elif "no space" in m or "disk full" in m:
+            motivo = "acabou o espaço no disco"
+        raise RuntimeError(motivo[:160])
+
+
+def _limpar(pasta):
+    """Desembrulha (zip com uma pasta só dentro vira o conteúdo dela) e tira o lixo de cada camada de
+    embrulho. Não entra no jogo: PS3/PS4 têm .png e .txt de verdade dentro das pastas deles."""
+    atual = pasta
+    while True:
+        shutil.rmtree(os.path.join(atual, "__MACOSX"), ignore_errors=True)
+        for x in os.listdir(atual):
+            c = os.path.join(atual, x)
+            if os.path.isfile(c) and (os.path.splitext(x)[1].lower() in LIXO or x.lower() in LIXO_NOMES):
+                try:
+                    os.remove(c)
+                except OSError:
+                    pass
+        itens = os.listdir(atual)
+        if len(itens) == 1 and os.path.isdir(os.path.join(atual, itens[0])):
+            atual = os.path.join(atual, itens[0])
+            if _parece_jogo_em_pasta(atual):
+                return atual        # a pasta É o jogo (PS3/PS4/Wii U): não entra nela
+        else:
+            return atual
+
+
+def _parece_jogo_em_pasta(p):
+    """PS3 (PS3_GAME), PS4 (eboot.bin + sce_sys), Wii U (code/content/meta): a pasta É o jogo."""
+    nomes = {x.lower() for x in os.listdir(p)}
+    return bool(nomes & {"ps3_game", "sce_sys", "eboot.bin"}) or {"code", "content", "meta"} <= nomes
+
+
+def _sem_conflito(caminho):
+    if not os.path.exists(caminho):
+        return caminho
+    raiz, ext = os.path.splitext(caminho)
+    for i in range(2, 100):
+        c = f"{raiz} ({i}){ext}"
+        if not os.path.exists(c):
+            return c
+    raise RuntimeError("já existe um jogo com esse nome")
+
+
+def posicionar(conteudo, pasta_sistema, nome, sis):
+    """Coloca o que foi extraído no lugar certo. Devolve o caminho final do jogo."""
+    if not os.listdir(conteudo):
+        raise RuntimeError("o compactado estava vazio")
+    arquivos = [os.path.join(d, x) for d, _, fs in os.walk(conteudo) for x in fs]
+    if len(arquivos) == 1 and not (sis in PASTA_E_JOGO and _parece_jogo_em_pasta(conteudo)):
+        final = _sem_conflito(os.path.join(pasta_sistema, os.path.basename(arquivos[0])))
+        os.replace(arquivos[0], final)
+        return final
+    # várias faixas, ou jogo em pasta: uma pasta só para ele, com o nome do compactado
+    final = _sem_conflito(os.path.join(pasta_sistema, nome))
+    os.replace(conteudo, final)
+    return final
+
+
+# ---------------------------------------------------------------- estado e avisos
+
+def _grava_estado(d):
+    os.makedirs(RUN, exist_ok=True)
+    d["t"] = time.time()
+    tmp = ESTADO + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f, ensure_ascii=False)
+    os.replace(tmp, ESTADO)
+
+
+def _aviso(kind, text=""):
+    try:
+        with open(EVENTS, "a") as f:
+            f.write(json.dumps({"t": time.time(), "kind": kind, "text": text}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+    if text:
+        try:
+            sys.path.insert(0, BIN)
+            import skyhist
+            skyhist.add(kind, text)
+        except Exception:
+            pass
+
+
+def rodar():
+    os.makedirs(RUN, exist_ok=True)
+    trava = open(TRAVA, "w")
+    try:
+        fcntl.flock(trava, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print(json.dumps({"ok": False, "error": "já está instalando"}))
+        return
+    feitos, erros, total_jogos = [], [], 0
+    fila = procurar()
+    total_jogos = len(fila)
+    st = {"ativo": True, "total": total_jogos, "feitos": 0, "erros": [], "fila": [j["nome"] for j in fila]}
+    _grava_estado(st)
+    while fila:
+        jogo = fila.pop(0)
+        arq, sis, nome = jogo["arquivo"], jogo["sistema"], jogo["nome"]
+        pasta = os.path.dirname(arq)
+        st.update({"atual": {"nome": nome, "sistema": sis, "sistema_nome": NOMES.get(sis, sis.upper()),
+                             "pct": 0.0, "etapa": "Preparando"},
+                   "fila": [j["nome"] for j in fila], "feitos": len(feitos)})
+        _grava_estado(st)
+        tmp = os.path.join(pasta, "." + nome + ".instalando")
+        try:
+            if not os.path.exists(arq):
+                raise RuntimeError("o arquivo sumiu")
+            if not JOGOS.gravavel(pasta):
+                raise RuntimeError("a pasta está só leitura (no Windows, desligue a Inicialização rápida)")
+            total = tamanho_extraido(arq)
+            livre = shutil.disk_usage(pasta).free
+            if total and total + 100 * 1024 * 1024 > livre:
+                raise RuntimeError(f"falta espaço: precisa de {total / 1e9:.1f} GB e há {livre / 1e9:.1f} GB livres")
+            shutil.rmtree(tmp, ignore_errors=True)     # sobra de uma tentativa interrompida
+
+            def progresso(p):
+                st["atual"].update({"pct": round(p, 3), "etapa": "Instalando"})
+                _grava_estado(st)
+
+            st["atual"]["etapa"] = "Instalando"
+            extrair(arq, tmp, total, progresso)
+            st["atual"].update({"pct": 1.0, "etapa": "Finalizando"})
+            _grava_estado(st)
+            final = posicionar(_limpar(tmp), pasta, nome, sis)
+            shutil.rmtree(tmp, ignore_errors=True)
+            for parte in _partes(arq):
+                os.remove(parte)
+            feitos.append({"nome": nome, "sistema": sis, "caminho": final})
+            _aviso("jogos")
+            _aviso("jogo", f"{nome} instalado ({NOMES.get(sis, sis)})")
+        except (OSError, RuntimeError, subprocess.SubprocessError) as e:
+            shutil.rmtree(tmp, ignore_errors=True)
+            erros.append({"nome": nome, "erro": str(e)})
+            _anota_falha(arq, str(e))
+            _aviso("jogo", f"Não instalei {nome}: {e}")
+        st.update({"feitos": len(feitos), "erros": erros})
+        # chegou outro compactado enquanto instalava? entra na fila
+        conhecidos = {j["arquivo"] for j in fila} | {f["nome"] for f in feitos} | {x["nome"] for x in erros}
+        for novo in procurar():
+            if novo["arquivo"] not in conhecidos and novo["nome"] not in conhecidos:
+                fila.append(novo)
+                st["total"] = st["total"] + 1
+    st.update({"ativo": False, "atual": None, "fila": [], "feitos": len(feitos), "erros": erros})
+    _grava_estado(st)
+    print(json.dumps({"ok": not erros, "instalados": len(feitos), "erros": erros}, ensure_ascii=False))
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "procurar"
+    if cmd == "procurar":
+        print(json.dumps({"pendentes": procurar()}, ensure_ascii=False))
+    elif cmd == "rodar":
+        rodar()
+    elif cmd == "estado":
+        try:
+            print(open(ESTADO).read())
+        except OSError:
+            print(json.dumps({"ativo": False}))
+    else:
+        print(__doc__)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

@@ -41,6 +41,10 @@ SYSTEMS = {
     "dc": ("Sega_-_Dreamcast", {"chd", "gdi", "cdi", "cue"}),
     "saturn": ("Sega_-_Saturn", {"chd", "cue", "ccd", "m3u"}),
 }
+APELIDOS = {"dreamcast": "dc", "sega dreamcast": "dc", "segasaturn": "saturn", "sega saturn": "saturn",
+            "psvita": "vita", "ps vita": "vita", "xbox360": "x360", "xbox 360": "x360", "xboxoriginal": "xbox",
+            "wii u": "wiiu", "megadrive": "md", "mega drive": "md", "genesis": "md", "gbc": "gb",
+            "gamecube": "gc", "playstation": "ps1", "psx": "ps1", "playstation 2": "ps2", "n3ds": "3ds"}
 URL = "https://raw.githubusercontent.com/libretro-thumbnails/{repo}/master/Named_Boxarts/{name}.png"
 FAILS = os.path.join(HOME, ".cache/skystation/capas-falhas.json")
 RETRY = 7 * 24 * 3600
@@ -95,11 +99,22 @@ def main():
         fails = {}
     got = tried = 0
     for base in BASES:
-        for sys_id, (repo, exts) in SYSTEMS.items():
-            rdir = os.path.join(base, sys_id)
+        try:
+            pastas = os.listdir(base)
+        except OSError:
+            continue
+        for pasta in pastas:            # Fase 13.1: pelo nome oficial ou apelido (SKYROMS/dreamcast)
+            sys_id = pasta.lower() if pasta.lower() in SYSTEMS else APELIDOS.get(pasta.lower())
+            if not sys_id or sys_id not in SYSTEMS:
+                continue
+            repo, exts = SYSTEMS[sys_id]
+            rdir = os.path.join(base, pasta)
             if not os.path.isdir(rdir) or not os.access(rdir, os.W_OK):
                 continue
-            for path in sorted(glob.glob(os.path.join(glob.escape(rdir), "*"))):
+            # jogos soltos e jogos com pasta própria (Dreamcast .gdi + faixas); a capa vai sempre em covers/
+            soltos = glob.glob(os.path.join(glob.escape(rdir), "*"))
+            em_pasta = glob.glob(os.path.join(glob.escape(rdir), "*", "*"))
+            for path in sorted(soltos + [p for p in em_pasta if os.path.basename(os.path.dirname(p)) != "covers"]):
                 ext = path.rsplit(".", 1)[-1].lower() if "." in os.path.basename(path) else ""
                 if ext not in exts:
                     continue

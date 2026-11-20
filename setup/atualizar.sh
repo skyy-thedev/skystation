@@ -198,6 +198,14 @@ if [ -d /run/systemd/system ]; then
     systemctl restart skystation-nuvem.path >/dev/null 2>&1 || true
 fi
 
+# Fase 13.1: jogos que chegam compactados (.zip/.7z/.rar) são instalados pelo sky-instalar com o 7-Zip
+# (que abre RAR/RAR5 também). O pacote se chama "7zip" no Arch atual e "p7zip" nos mais antigos.
+if ! command -v 7z >/dev/null 2>&1 && ! command -v 7zz >/dev/null 2>&1; then
+    timeout 600 pacman -S --needed --noconfirm 7zip >/dev/null 2>&1 \
+        || timeout 600 pacman -S --needed --noconfirm p7zip >/dev/null 2>&1 \
+        || echo "    AVISO: não consegui instalar o 7-Zip agora (sem internet?). Jogos compactados ficam para depois."
+fi
+
 # Fase 11.8: Xbox Cloud Gaming roda no Chromium (a Microsoft não tem app do Xbox para Linux);
 # o flatpak é para o app oficial do GeForce NOW, que fica para depois (serviço acima).
 for p in chromium flatpak; do

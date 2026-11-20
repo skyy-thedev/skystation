@@ -135,6 +135,11 @@ v "pedido do GeForce NOW ligado" "sudo skystation-atualizar" systemctl is-enable
 if flatpak info com.nvidia.geforcenow >/dev/null 2>&1; then echo "  ✓ app do GeForce NOW instalado"
 else echo "  · app do GeForce NOW ainda não instalado: abra o GeForce NOW uma vez (usa a versão web até terminar; log em /var/log/skystation-instalar.log)"; fi
 
+echo "== 13.1 Jogos compactados"
+v "7-Zip (instala .zip/.7z/.rar do SKYROMS)" "sudo skystation-atualizar" sh -c "command -v 7z || command -v 7zz"
+pend="$(/opt/skystation/bin/sky-instalar procurar 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["pendentes"]))' 2>/dev/null)"
+[ -n "$pend" ] && echo "  · compactados esperando instalação: $pend (o menu instala sozinho)"
+
 echo "== 13 PS4 / Switch / Wii U / Vita / Xbox / Dreamcast / Saturn"
 F13="sudo bash /opt/skystation-src/setup/fase13.sh"
 v "Dreamcast (Flycast)" "$F13" test -f $C/flycast_libretro.so

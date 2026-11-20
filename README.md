@@ -26,6 +26,7 @@ skystation/
 │   ├── xenia-edge.sh Xenia Edge ao lado do Canary (jogos de Xbox 360 que vão melhor nele)
 │   ├── skyroms-hd.sh jogos direto do HD/SSD do PC: pasta SKYROMS → /mnt/skyroms (skystation-skyroms-hd)
 │   ├── fase13.sh     PS4 (shadPS4), Switch 1 (teste), Wii U (Cemu), PS Vita (Vita3K), Xbox (xemu), Dreamcast e Saturn
+│   ├── (13.1)        jogos .zip/.7z/.rar no SKYROMS são extraídos pelo console/bin/sky-instalar (tela "Instalando")
 │   ├── nuvem.sh      app do GeForce NOW (Flatpak da NVIDIA) em segundo plano (skystation-nuvem); o Xbox Cloud Gaming usa o Chromium
 │   ├── atualizar-menu.sh  "Atualizar o SkyStation" do menu, sem sudo (serviço + .path do systemd)
 │   ├── marca.sh      identidade do sistema (comando skystation-marca, reaplicado pelo pacman)

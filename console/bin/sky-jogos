@@ -116,13 +116,38 @@ def game_files(path):
     return files
 
 
+SISTEMAS = ("ps1", "ps2", "ps3", "psp", "snes", "n64", "gc", "wii", "x360", "nds", "3ds", "gba", "gb", "nes", "md",
+            "ps4", "switch", "wiiu", "vita", "xbox", "dc", "saturn")   # Fase 13
+# Fase 13.1: nomes de pasta que as pessoas usam de verdade (ex.: SKYROMS/dreamcast). Mesma lista do launcher.
+APELIDOS = {"dreamcast": "dc", "sega dreamcast": "dc", "segasaturn": "saturn", "sega saturn": "saturn",
+            "psvita": "vita", "ps vita": "vita", "xbox360": "x360", "xbox 360": "x360", "xboxoriginal": "xbox",
+            "wii u": "wiiu", "nintendo switch": "switch", "megadrive": "md", "mega drive": "md", "genesis": "md",
+            "gbc": "gb", "gamecube": "gc", "playstation": "ps1", "psx": "ps1", "playstation 2": "ps2",
+            "playstation 3": "ps3", "playstation 4": "ps4", "n3ds": "3ds"}
+NOMES_DE_SISTEMA = set(SISTEMAS) | set(APELIDOS)
+
+
+def sistema_da_pasta(nome):
+    n = nome.lower()
+    return n if n in SISTEMAS else APELIDOS.get(n)
+
+
 def system_of(path):
     parts = os.path.normpath(path).split(os.sep)
-    for s in ("ps1", "ps2", "ps3", "psp", "snes", "n64", "gc", "wii", "x360", "nds", "3ds", "gba", "gb", "nes", "md",
-              "ps4", "switch", "wiiu", "vita", "xbox", "dc", "saturn"):   # Fase 13
-        if s in parts:
+    for part in reversed(parts):            # a pasta de sistema mais perto do jogo
+        s = sistema_da_pasta(part)
+        if s:
             return s
     return None
+
+
+def subpasta_do_jogo(path):
+    """Fase 13.1: jogo de arquivo dentro de uma pasta própria (SKYROMS/dreamcast/Sonic Adventure/Sonic.gdi).
+    Devolve a pasta do jogo, ou None se o arquivo está direto na pasta do sistema."""
+    pasta = os.path.dirname(path.rstrip("/"))
+    if os.path.isdir(path) or os.path.basename(pasta).lower() in NOMES_DE_SISTEMA | {"covers"}:
+        return None
+    return pasta if sistema_da_pasta(os.path.basename(os.path.dirname(pasta))) else None
 
 
 def _is_game(path):
@@ -155,6 +180,9 @@ def mover(path, dest_kind):
             return
     dest_dir = os.path.join(base, sys_id)
     src_dir = os.path.dirname(path)
+    sub = subpasta_do_jogo(path)
+    if sub:                                   # jogo com pasta própria: leva a pasta junto (faixas do .gdi/.cue)
+        dest_dir = os.path.join(dest_dir, os.path.basename(sub))
     if os.path.realpath(src_dir) == os.path.realpath(dest_dir):
         out({"ok": False, "error": "O jogo já está aí"})
         return
@@ -204,6 +232,7 @@ def mover(path, dest_kind):
             pass
     if os.path.isdir(path):
         shutil.rmtree(path, ignore_errors=True)
+    _limpa_subpasta(sub)
     out({"ok": True, "message": "Jogo movido para o " + ("SKYROMS" if dest_kind == "skyroms" else "console")})
 
 
@@ -216,6 +245,7 @@ def apagar(path):
         out({"ok": False, "error": SO_LEITURA})
         return
     n = 0
+    sub = subpasta_do_jogo(path)
     for f in game_files(path):
         try:
             os.remove(f)
@@ -224,7 +254,21 @@ def apagar(path):
             pass
     if os.path.isdir(path):
         shutil.rmtree(path, ignore_errors=True)
+    _limpa_subpasta(sub)
     out({"ok": True, "message": "Jogo apagado"})
+
+
+LIXO = {".txt", ".nfo", ".url", ".htm", ".html", ".diz", ".sfv", ".md5", ".sha1", ".lnk", ".db"}
+
+
+def _limpa_subpasta(sub):
+    """Apaga a pasta própria do jogo quando sobrou só lixo (leia-me, .nfo, Thumbs.db)."""
+    if not sub or not os.path.isdir(sub):
+        return
+    for d, _, fs in os.walk(sub):
+        if any(os.path.splitext(f)[1].lower() not in LIXO for f in fs):
+            return
+    shutil.rmtree(sub, ignore_errors=True)
 
 
 RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")

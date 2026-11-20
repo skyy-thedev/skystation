@@ -178,6 +178,13 @@ var toast_msg: String = ""
 var toast_t: float = 0.0
 var busy_msg: String = ""
 var busy_thread: Thread = null
+# Fase 13.1: instalação de jogos compactados (sky-instalar), com a tela "Instalando" no estilo do PS
+var inst: Dictionary = {}          # o que o sky-instalar escreveu em instalando.json
+var inst_pid: int = -1
+var inst_open: bool = false        # tela cheia aberta (B/A manda para segundo plano)
+var inst_poll_at: float = 0.0
+var inst_scan_at: float = 20.0     # procura compactados novos de tempos em tempos (cópia que terminou depois)
+var inst_shown: float = 0.0        # para a barra andar suave
 var quit_at: float = -1.0
 
 var theme_key: String = "auto"
@@ -395,6 +402,7 @@ func _process(delta: float) -> void:
 
 	if toast_t > 0.0:
 		toast_t -= delta
+	_tick_install(delta)
 	queue_redraw()
 
 	if settings != null and settings.visible:
@@ -410,7 +418,13 @@ func _process(delta: float) -> void:
 		_write_text(run_dir + "/cancelar-job", "1")   # B cancela copiar disco / compactar
 		busy_msg = "Cancelando…"
 		queue_redraw()
-	if busy_msg == "" and not dimmed:
+	if inst_open and busy_msg == "":
+		if Input.is_action_just_pressed("sky_back") or Input.is_action_just_pressed("sky_accept"):
+			inst_open = false
+			cooldown = 0.25
+			_play("back")
+			_toast("A instalação continua em segundo plano", 2.5, "download")
+	elif busy_msg == "" and not dimmed:
 		_handle_input(delta)
 	var k := 1.0 - exp(-delta * 11.0)
 	cat_smooth = lerp(cat_smooth, float(cat), k)
@@ -636,6 +650,7 @@ func _reload_games() -> void:
 	shots.sort()
 	shots.reverse()
 	games.clear()
+	_check_install()
 	for base in ["/opt/skystation/games", home_dir + "/skystation/games"]:
 		var da := DirAccess.open(base)
 		if da == null:
@@ -880,56 +895,102 @@ func _scan_roms() -> void:
 	tag_re.compile("\\s*[\\(\\[][^\\)\\]]*[\\)\\]]")  # tira "(USA)", "[SLUS-00594]" etc.
 	var seen := {}
 	for base in [home_dir + "/skystation/roms"] + ROM_BASES:
-		for sys_id in ROM_SYSTEMS:
-			var info: Dictionary = ROM_SYSTEMS[sys_id]
-			var rdir: String = base + "/" + sys_id
+		for par in _sys_folders(base):
+			var sys_id: String = par[0]
+			var rdir: String = par[1]
+			if sys_id == "ps3":
+				continue  # PS3 vem do sky-ps3 (_scan_ps3)
 			var da := DirAccess.open(rdir)
 			if da == null:
 				continue
-			var files := da.get_files()
-			for f in files:
-				var ext: String = f.get_extension().to_lower()
-				if not info["exts"].has(ext):
+			_add_rom_files(da.get_files(), rdir, rdir, sys_id, base, seen, tag_re)
+			# Fase 13.1: jogo com pasta própria (Dreamcast .gdi + faixas, Saturn .cue + .bin…), como o
+			# instalador de compactados deixa. PS4 e Wii U em pasta são outra coisa (_scan_dirs).
+			if DIR_SYS.has(sys_id):
+				continue
+			for d in da.get_directories():
+				var nome := str(d)
+				if nome == "covers" or nome.begins_with("."):
 					continue
-				if ext == "bin" and (files.has(f.get_basename() + ".cue") or files.has(f.get_basename() + ".CUE")):
-					continue
-				var stem: String = f.get_basename()
-				var key: String = sys_id + "/" + stem.to_lower()
-				if seen.has(key):
-					continue  # o mesmo jogo em duas pastas aparece uma vez só
-				seen[key] = true
-				var path: String = rdir + "/" + f
-				var title: String = tag_re.sub(stem, "", true).strip_edges()
-				if title == "":
-					title = stem
-				var where := skyroms_nome if base == "/mnt/skyroms" else "armazenamento interno"
-				var g := {
-					"id": sys_id + "-" + stem.validate_filename().replace(" ", "_"),
-					"dir": rdir, "sys": sys_id,
-					"title": title, "type": "retro",
-					"exec": "sky-emu %s %s" % [sys_id, _shq(path)], "path": path,
-					"description": "%s  ·  %s  ·  %s" % [info["name"], f.get_extension().to_upper(), where],
-					"color": Color.from_string(info["color"], Color("4fd1ff")),
-					"order": 50, "cover": null,
-				}
-				for cpath in [rdir + "/covers/" + stem + ".png", rdir + "/covers/" + stem + ".jpg",
-						rdir + "/" + stem + ".png"]:
-					var tex := _load_tex(cpath)
-					if tex != null:
-						g["cover"] = tex
-						break
-				games.append(g)
+				var sub := DirAccess.open(rdir + "/" + nome)
+				if sub != null:
+					_add_rom_files(sub.get_files(), rdir + "/" + nome, rdir, sys_id, base, seen, tag_re)
 	_scan_dirs(tag_re, seen)
 	_scan_ps3()
 	_scan_disc(tag_re)
 
 
+
+# Fase 13.1: nomes de pasta que as pessoas usam (SKYROMS/dreamcast). Mesma lista do sky-jogos.
+const SYS_ALIASES := {"dreamcast": "dc", "sega dreamcast": "dc", "segasaturn": "saturn", "sega saturn": "saturn",
+	"psvita": "vita", "ps vita": "vita", "xbox360": "x360", "xbox 360": "x360", "xboxoriginal": "xbox",
+	"wii u": "wiiu", "nintendo switch": "switch", "megadrive": "md", "mega drive": "md", "genesis": "md",
+	"gbc": "gb", "gamecube": "gc", "playstation": "ps1", "psx": "ps1", "playstation 2": "ps2",
+	"playstation 3": "ps3", "playstation 4": "ps4", "n3ds": "3ds"}
+
+
+func _sys_folders(base: String) -> Array:
+	# [[sistema, pasta], …] das pastas de sistema que existem em base (pelo nome oficial ou apelido)
+	var r: Array = []
+	var da := DirAccess.open(base)
+	if da == null:
+		return r
+	for d in da.get_directories():
+		var nome := str(d)
+		var low := nome.to_lower()
+		var sid := low if ROM_SYSTEMS.has(low) else str(SYS_ALIASES.get(low, ""))
+		if sid != "":
+			r.append([sid, base + "/" + nome])
+	return r
+
+
+func _add_rom_files(files: PackedStringArray, folder: String, rdir: String, sys_id: String, base: String,
+		seen: Dictionary, tag_re: RegEx) -> void:
+	var info: Dictionary = ROM_SYSTEMS[sys_id]
+	for f in files:
+		var ext: String = f.get_extension().to_lower()
+		if not info["exts"].has(ext):
+			continue
+		if ext == "bin" and (files.has(f.get_basename() + ".cue") or files.has(f.get_basename() + ".CUE")):
+			continue
+		var stem: String = f.get_basename()
+		var key: String = sys_id + "/" + stem.to_lower()
+		if seen.has(key):
+			continue  # o mesmo jogo em duas pastas aparece uma vez só
+		seen[key] = true
+		var path: String = folder + "/" + f
+		var title: String = tag_re.sub(stem, "", true).strip_edges()
+		if title == "":
+			title = stem
+		var where := skyroms_nome if base == "/mnt/skyroms" else "armazenamento interno"
+		var g := {
+			"id": sys_id + "-" + stem.validate_filename().replace(" ", "_"),
+			"dir": folder, "sys": sys_id,
+			"title": title, "type": "retro",
+			"exec": "sky-emu %s %s" % [sys_id, _shq(path)], "path": path,
+			"description": "%s  ·  %s  ·  %s" % [info["name"], f.get_extension().to_upper(), where],
+			"color": Color.from_string(info["color"], Color("4fd1ff")),
+			"order": 50, "cover": null,
+		}
+		var pasta_nome := folder.get_file()
+		for cpath in [rdir + "/covers/" + stem + ".png", rdir + "/covers/" + stem + ".jpg",
+				folder + "/" + stem + ".png", rdir + "/covers/" + pasta_nome + ".png", rdir + "/covers/" + pasta_nome + ".jpg"]:
+			var tex := _load_tex(cpath)
+			if tex != null:
+				g["cover"] = tex
+				break
+		games.append(g)
+
+
 func _scan_dirs(tag_re: RegEx, seen: Dictionary) -> void:
 	# Fase 13: jogos em pasta. PS4 = pasta com eboot.bin (CUSA00001); Wii U = pasta com code/*.rpx.
 	for base in [home_dir + "/skystation/roms"] + ROM_BASES:
-		for sys_id in DIR_SYS:
+		for par in _sys_folders(base):
+			var sys_id: String = par[0]
+			if not DIR_SYS.has(sys_id):
+				continue
 			var info: Dictionary = ROM_SYSTEMS[sys_id]
-			var rdir: String = base + "/" + sys_id
+			var rdir: String = par[1]
 			var da := DirAccess.open(rdir)
 			if da == null:
 				continue
@@ -3019,6 +3080,11 @@ func _draw() -> void:
 			HORIZONTAL_ALIGNMENT_LEFT, maxw, 18, -1, Color(WHITE, ta))
 	if dim_t > 0.0:
 		_draw_dim(w, h)
+	if inst_pid != -1 and intro_t >= INTRO_LEN:
+		if inst_open:
+			_draw_install(w, h)
+		else:
+			_draw_install_pill(w, h)
 	if busy_msg != "":
 		_draw_busy(w, h)
 
@@ -3561,6 +3627,132 @@ func _draw_busy(w: float, h: float) -> void:
 	_text(busy_msg, Vector2(0, c.y + 72), 22, WHITE, false, w, HORIZONTAL_ALIGNMENT_CENTER)
 	if job_thread != null and job_cancel_hint and busy_msg != "Cancelando…":
 		_text("B  cancelar", Vector2(0, c.y + 108), 15, DIM, false, w, HORIZONTAL_ALIGNMENT_CENTER)
+
+
+# ---------------------------------------------------------------- instalar jogos compactados (13.1)
+
+func _check_install() -> void:
+	# Procura .zip/.7z/.rar nas pastas de jogos; se achar, instala em segundo plano e abre a tela.
+	if inst_pid != -1 or running_pid != -1 or not FileAccess.file_exists(SKY_BIN + "/sky-instalar"):
+		return
+	var r := _sky_json("sky-instalar", ["procurar"])
+	var pend: Array = r.get("pendentes", [])
+	if pend.is_empty():
+		return
+	inst_pid = OS.create_process(SKY_BIN + "/sky-instalar", PackedStringArray(["rodar"]))
+	if inst_pid <= 0:
+		inst_pid = -1
+		_toast("Não consegui começar a instalação", 3.0, "download")
+		return
+	inst = {"ativo": true, "total": pend.size(), "feitos": 0, "fila": [],
+		"atual": {"nome": str(pend[0].get("nome", "")), "sistema_nome": "", "pct": 0.0, "etapa": "Preparando"}}
+	inst_shown = 0.0
+	inst_open = true
+	inst_poll_at = t + 0.6
+	_play("chime")
+
+
+func _tick_install(delta: float) -> void:
+	if inst_pid == -1:
+		if t >= inst_scan_at:
+			inst_scan_at = t + 120.0
+			_check_install()
+		return
+	var alvo := float(inst.get("atual", {}).get("pct", 0.0)) if typeof(inst.get("atual")) == TYPE_DICTIONARY else 1.0
+	inst_shown = move_toward(inst_shown, alvo, delta * 0.8)
+	if t < inst_poll_at:
+		return
+	inst_poll_at = t + 0.4
+	var txt := _read_text(run_dir + "/instalando.json", "")
+	var d = JSON.parse_string(txt) if txt.begins_with("{") else null
+	if typeof(d) == TYPE_DICTIONARY:
+		var antes := str(inst.get("atual", {}).get("nome", "")) if typeof(inst.get("atual")) == TYPE_DICTIONARY else ""
+		inst = d
+		var agora := str(inst.get("atual", {}).get("nome", "")) if typeof(inst.get("atual")) == TYPE_DICTIONARY else ""
+		if agora != antes:
+			inst_shown = 0.0   # jogo novo: a barra começa do zero
+	var acabou := typeof(d) == TYPE_DICTIONARY and not bool(d.get("ativo", true))
+	if acabou or not OS.is_process_running(inst_pid):
+		inst_pid = -1
+		inst_open = false
+		inst_scan_at = t + 120.0
+		var feitos := int(inst.get("feitos", 0))
+		var erros: Array = inst.get("erros", [])
+		if erros.is_empty():
+			_toast("%d jogo(s) instalado(s)" % feitos if feitos != 1 else "Jogo instalado", 3.5, "download")
+			_play_file("salvo")
+		else:
+			var e0: Dictionary = erros[0]
+			_toast("%d instalado(s), %d com problema: %s — %s" % [feitos, erros.size(), str(e0.get("nome", "")),
+				str(e0.get("erro", ""))], 6.0, "download")
+			_play_file("alerta")
+		reload_at = t + 0.5
+		covers_at = t + 3.0
+
+
+func _inst_info() -> Array:
+	# [nome do jogo, sistema, etapa, n (este é o n-ésimo), total]
+	var a = inst.get("atual")
+	var nome := ""
+	var sist := ""
+	var etapa := "Preparando"
+	if typeof(a) == TYPE_DICTIONARY:
+		nome = str(a.get("nome", ""))
+		sist = str(a.get("sistema_nome", ""))
+		etapa = str(a.get("etapa", "Instalando"))
+	var total := maxi(1, int(inst.get("total", 1)))
+	var n := mini(total, int(inst.get("feitos", 0)) + inst.get("erros", []).size() + 1)
+	return [nome, sist, etapa, n, total]
+
+
+func _draw_install(w: float, h: float) -> void:
+	# Tela cheia, como a instalação do PlayStation: fundo escurecido, nome do jogo, barra fina no centro.
+	draw_rect(Rect2(0, 0, w, h), Color(0, 0, 0, 0.78))
+	var info := _inst_info()
+	var c := Vector2(w / 2.0, h / 2.0)
+	var bw := w * 0.46
+	var x0 := c.x - bw / 2.0
+	_icon("download", Vector2(c.x, c.y - 150), 44.0, Color(accent, 0.9))
+	_text(str(info[2]), Vector2(0, c.y - 100), 18, MUTED, false, w, HORIZONTAL_ALIGNMENT_CENTER)
+	_text(str(info[0]), Vector2(0, c.y - 56), 34, WHITE, true, w, HORIZONTAL_ALIGNMENT_CENTER)
+	if str(info[1]) != "":
+		_text(str(info[1]), Vector2(0, c.y - 24), 18, Color(accent, 0.9), false, w, HORIZONTAL_ALIGNMENT_CENTER)
+	# barra
+	var by := c.y + 18.0
+	_rrect(Rect2(x0, by, bw, 8), Color(WHITE, 0.14), 4)
+	var fill := clampf(inst_shown, 0.0, 1.0)
+	if fill > 0.002:
+		_rrect(Rect2(x0, by, bw * fill, 8), accent, 4)
+		draw_circle(Vector2(x0 + bw * fill, by + 4), 9.0 + sin(t * 5.0) * 1.5, Color(accent, 0.25))
+	elif str(info[2]) == "Preparando":
+		var px := x0 + fposmod(t * 0.35, 1.0) * (bw - 80.0)   # ainda medindo o compactado: brilho que corre
+		_rrect(Rect2(px, by, 80, 8), Color(accent, 0.6), 4)
+	_text("%d%%" % int(round(fill * 100.0)), Vector2(x0, by + 42), 18, WHITE, false, 120)
+	if int(info[4]) > 1:
+		_text("%d de %d" % [int(info[3]), int(info[4])], Vector2(x0 + bw - 200, by + 42), 18, MUTED, false, 200,
+			HORIZONTAL_ALIGNMENT_RIGHT)
+	var fila: Array = inst.get("fila", [])
+	if not fila.is_empty():
+		var prox := "A seguir: " + str(fila[0]) + ("  (+%d)" % (fila.size() - 1) if fila.size() > 1 else "")
+		_text(prox, Vector2(0, by + 92), 16, DIM, false, w, HORIZONTAL_ALIGNMENT_CENTER)
+	_text("Não desligue o console. O compactado é apagado no fim.", Vector2(0, h - 96), 15, DIM, false, w,
+		HORIZONTAL_ALIGNMENT_CENTER)
+	_text("○  Continuar em segundo plano", Vector2(0, h - 58), 16, MUTED, false, w, HORIZONTAL_ALIGNMENT_CENTER)
+
+
+func _draw_install_pill(w: float, h: float) -> void:
+	# em segundo plano: um aviso pequeno no canto, com a barra
+	var info := _inst_info()
+	var r := Rect2(w - 380.0, h - 92.0, 340.0, 56.0)
+	_rrect(r, Color(0, 0, 0, 0.62), 18, Color(accent, 0.45), 1)
+	_icon("download", Vector2(r.position.x + 28, r.position.y + 28), 22.0, accent)
+	var nome := str(info[0])
+	if nome.length() > 26:
+		nome = nome.left(25) + "…"
+	_text("Instalando %s" % nome, Vector2(r.position.x + 52, r.position.y + 24), 15, WHITE, false, 270)
+	_rrect(Rect2(r.position.x + 52, r.position.y + 36, 220, 5), Color(WHITE, 0.15), 2)
+	_rrect(Rect2(r.position.x + 52, r.position.y + 36, 220 * clampf(inst_shown, 0.0, 1.0), 5), accent, 2)
+	_text("%d%%" % int(round(inst_shown * 100.0)), Vector2(r.position.x + 280, r.position.y + 43), 13, MUTED, false, 50)
 
 
 # ---------------------------------------------------------------- ícones vetoriais (originais)
