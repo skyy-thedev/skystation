@@ -102,6 +102,16 @@ def _partes(arquivo):
     return sorted(os.path.join(pasta, n) for n in os.listdir(pasta) if pad.match(n))
 
 
+def _parado(arq, espera=2.0):
+    """O tamanho não muda em alguns segundos? (vale mesmo com o relógio do arquivo errado)"""
+    try:
+        antes = os.path.getsize(arq)
+        time.sleep(espera)
+        return os.path.getsize(arq) == antes
+    except OSError:
+        return False
+
+
 def nome_do_jogo(arquivo):
     n = os.path.basename(arquivo)
     n = re.sub(r"(\.part0*\d+)?\.(zip|7z|rar)(\.\d{3})?$", "", n, flags=re.I)
@@ -137,8 +147,12 @@ def procurar(com_falhas=False):
                 except OSError:
                     continue
                 partes = _partes(arq)
-                if agora - max(os.path.getmtime(x) for x in partes) < MIN_IDADE:
-                    continue                         # ainda chegando (cópia do Windows, download)
+                idade = agora - max(os.path.getmtime(x) for x in partes)
+                # 13.4: data no FUTURO não é "ainda copiando": é o relógio do Windows adiantado (dual boot:
+                # o Linux grava o relógio da placa em UTC e o Windows lê como horário local). Antes, esses
+                # jogos sumiam da fila até o relógio de verdade alcançar a data do arquivo.
+                if 0 <= idade < MIN_IDADE:
+                    continue                         # ainda chegando (cópia, download)
                 real = os.path.realpath(arq)
                 if real in vistos or falhas.get(real, {}).get("assinatura") == _assinatura(arq):
                     continue
@@ -322,6 +336,14 @@ def rodar():
         try:
             if not os.path.exists(arq):
                 raise RuntimeError("o arquivo sumiu")
+            if not _parado(arq):
+                jogo["esperas"] = jogo.get("esperas", 0) + 1
+                if jogo["esperas"] <= 30:      # ainda crescendo (cópia em andamento): tenta no fim da fila
+                    fila.append(jogo)
+                    if len(fila) == 1:
+                        time.sleep(10)
+                    st["total"] = max(st["total"], len(feitos) + len(erros) + len(fila))
+                continue                       # desistiu por agora: a próxima procura do menu pega de novo
             if not JOGOS.gravavel(pasta):
                 raise RuntimeError("a pasta está só leitura (no Windows, desligue a Inicialização rápida)")
             total = tamanho_extraido(arq)

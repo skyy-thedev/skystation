@@ -198,6 +198,20 @@ if [ -d /run/systemd/system ]; then
     systemctl restart skystation-nuvem.path >/dev/null 2>&1 || true
 fi
 
+# 13.4: relógio em dual boot. O Linux grava o relógio da placa-mãe em UTC; o Windows lê o mesmo relógio
+# como horário local e fica 3 h adiantado depois de usar o SkyStation (e grava datas erradas nos arquivos:
+# os jogos baixados "do futuro" não eram achados pelo sky-instalar). Com Windows no PC, o SkyStation
+# passa a usar o relógio da placa em horário local, como o Windows. Sem --adjust-system-clock: a hora
+# certa (da internet) é que vai para a placa, não o contrário.
+if command -v timedatectl >/dev/null 2>&1 && [ -d /run/systemd/system ] \
+   && lsblk -rno FSTYPE 2>/dev/null | grep -qx ntfs; then
+    [ "$(timedatectl show -p TimeZone --value 2>/dev/null)" = "UTC" ] && timedatectl set-timezone America/Sao_Paulo 2>/dev/null
+    if [ "$(timedatectl show -p LocalRTC --value 2>/dev/null)" != "yes" ]; then
+        timedatectl set-local-rtc 1 2>/dev/null && echo "    relógio da placa em horário local (igual ao Windows)"
+    fi
+    timedatectl set-ntp true 2>/dev/null || true
+fi
+
 # Fase 13.1: jogos que chegam compactados (.zip/.7z/.rar) são instalados pelo sky-instalar com o 7-Zip
 # (que abre RAR/RAR5 também). O pacote se chama "7zip" no Arch atual e "p7zip" nos mais antigos.
 if ! command -v 7z >/dev/null 2>&1 && ! command -v 7zz >/dev/null 2>&1; then
