@@ -48,6 +48,8 @@ jobs:
         run: /usr/bin/python3 console/tests/teste-home.py
       - name: Online do PS3 (conta RPCN e config do RPCS3)
         run: /usr/bin/python3 console/tests/teste-ps3.py
+      - name: sky-security (compactados com programa escondido vão para a quarentena)
+        run: /usr/bin/python3 console/tests/teste-security.py
       - name: Benchmarks (jogos e sistema)
         run: /usr/bin/python3 console/tests/teste-bench.py
       - name: Desenho do menu (conversa e teclado)

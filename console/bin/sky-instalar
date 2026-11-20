@@ -11,6 +11,8 @@ Como instala:
   3. Um arquivo só (PS2 .iso, PSP .cso, Dreamcast .cdi) vai direto para a pasta do sistema; jogo com
      várias faixas (.gdi + track01.bin…, .cue + .bin) ganha uma pasta própria, porque as faixas têm o
      mesmo nome em todos os jogos. PS3/PS4/Wii U em pasta continuam pasta.
+  0. Antes de tudo, o sky-security confere o compactado: programa escondido ou vírus conhecido = vai
+     para SKYROMS/.quarentena e não é instalado.
   4. Só depois de tudo certo apaga o compactado (e as partes .part2.rar / .7z.002).
 
 O que fica de fora: .zip do PS Vita (o Vita3K instala direto dele), downloads pela metade
@@ -35,6 +37,10 @@ EVENTS = os.path.join(RUN, "events.jsonl")
 TRAVA = os.path.join(RUN, "instalar.lock")
 BASES = ["/mnt/skyroms", os.path.join(HOME, "skystation/roms"), "/mnt/skystation/roms"]
 JOGOS = importlib.machinery.SourceFileLoader("sky_jogos", os.path.join(BIN, "sky-jogos")).load_module()
+try:    # Fase 13.2: confere o compactado antes de extrair (programas escondidos, vírus conhecidos)
+    SEG = importlib.machinery.SourceFileLoader("sky_security", os.path.join(BIN, "sky-security")).load_module()
+except (OSError, ImportError, SyntaxError):
+    SEG = None
 
 NOMES = {"ps1": "PlayStation", "ps2": "PlayStation 2", "ps3": "PlayStation 3", "ps4": "PlayStation 4",
          "psp": "PSP", "vita": "PS Vita", "snes": "Super Nintendo", "n64": "Nintendo 64", "gc": "GameCube",
@@ -143,6 +149,10 @@ def procurar(com_falhas=False):
 
 
 # ---------------------------------------------------------------- extração
+
+class Bloqueado(RuntimeError):
+    """O sky-security mandou o compactado para a quarentena."""
+
 
 def _ferramenta():
     for b in ("7z", "7zz", "7za"):
@@ -319,6 +329,12 @@ def rodar():
             if total and total + 100 * 1024 * 1024 > livre:
                 raise RuntimeError(f"falta espaço: precisa de {total / 1e9:.1f} GB e há {livre / 1e9:.1f} GB livres")
             shutil.rmtree(tmp, ignore_errors=True)     # sobra de uma tentativa interrompida
+            if SEG:
+                st["atual"]["etapa"] = "Verificando"
+                _grava_estado(st)
+                seg = SEG.verificar(arq, partes=_partes(arq), sistema=sis, avisar=False)
+                if not seg["ok"]:
+                    raise Bloqueado(f"bloqueado pelo sky-security: {seg['motivo']}. Está em SKYROMS/.quarentena")
 
             def progresso(p):
                 st["atual"].update({"pct": round(p, 3), "etapa": "Instalando"})
@@ -338,7 +354,8 @@ def rodar():
         except (OSError, RuntimeError, subprocess.SubprocessError) as e:
             shutil.rmtree(tmp, ignore_errors=True)
             erros.append({"nome": nome, "erro": str(e)})
-            _anota_falha(arq, str(e))
+            if not isinstance(e, Bloqueado):          # o bloqueado já saiu da pasta (quarentena)
+                _anota_falha(arq, str(e))
             _aviso("jogo", f"Não instalei {nome}: {e}")
         st.update({"feitos": len(feitos), "erros": erros})
         # chegou outro compactado enquanto instalava? entra na fila

@@ -157,6 +157,18 @@ for par in "saturn:sega_101.bin mpr-17933.bin" "xbox:mcpx_1.0.bin" "vita:PSP2UPD
     [ -n "$achou" ] && echo "  ✓ arquivos do $s presentes" || echo "  · $s: faltam arquivos do seu console em SKYROMS/bios/$s (veja o fim do fase13.sh)"
 done
 
+echo "== 13.2 sky-security"
+ATU="Sistema → Atualizar o SkyStation (e reinicie)"
+if findmnt -rn /mnt/skyroms >/dev/null 2>&1; then
+    v "SKYROMS sem execução (noexec)" "$ATU" sh -c "findmnt -rno OPTIONS /mnt/skyroms | tr , '\\n' | grep -qx noexec"
+fi
+v "Antivírus (ClamAV)" "$ATU" sh -c "command -v clamscan"
+if ls /var/lib/clamav/daily.c[lv]d >/dev/null 2>&1; then
+    echo "  ✓ assinaturas do antivírus de $(date -r "$(ls /var/lib/clamav/daily.c[lv]d | head -1)" '+%d/%m/%Y')"
+else echo "  · assinaturas do antivírus ainda não baixadas (precisa de internet; o timer tenta todo dia)"; fi
+nq="$(ls -1 /mnt/skyroms/.quarentena 2>/dev/null | wc -l)"
+[ "$nq" -gt 0 ] && echo "  ! $nq item(ns) na quarentena: sky-security quarentena (liberar <id> / apagar <id>)"
+
 echo
 if [ "$falhas" -eq 0 ]; then echo "Tudo certo: $ok de $ok verificações ✓"
 else echo "$ok ok, $falhas com problema (veja as dicas →)"; fi

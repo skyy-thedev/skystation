@@ -206,6 +206,53 @@ if ! command -v 7z >/dev/null 2>&1 && ! command -v 7zz >/dev/null 2>&1; then
         || echo "    AVISO: não consegui instalar o 7-Zip agora (sem internet?). Jogos compactados ficam para depois."
 fi
 
+# Fase 13.2 (sky-security): o SKYROMS não executa nada (noexec). O HD já monta assim pelo
+# skystation-skyroms-hd; aqui a regra do pendrive SKYROMS de quem instalou antes ganha o mesmo.
+REGRA_ROMS=/etc/udev/rules.d/90-skystation-roms.rules
+if [ -f "$REGRA_ROMS" ] && ! grep -q noexec "$REGRA_ROMS"; then
+    sed -i 's/--options=/--options=noexec,nosuid,nodev,/' "$REGRA_ROMS"
+    udevadm control --reload-rules 2>/dev/null || true
+    echo "    sky-security: pendrive SKYROMS passa a montar sem execução (vale ao reconectar)"
+fi
+# ClamAV: o antivírus que o sky-security usa para conferir os compactados antes de instalar.
+# Sem ele, o sky-security ainda bloqueia programas pela lista de extensões. As assinaturas
+# (~350 MB em /var/lib/clamav) são atualizadas uma vez por dia, com prioridade baixa.
+if ! command -v clamscan >/dev/null 2>&1; then
+    timeout 900 pacman -S --needed --noconfirm clamav >/dev/null 2>&1 \
+        || echo "    AVISO: não consegui instalar o ClamAV agora (sem internet?). O sky-security fica só com a lista de extensões."
+fi
+if command -v freshclam >/dev/null 2>&1; then
+    cat >/etc/systemd/system/skystation-freshclam.service <<'UNIT'
+[Unit]
+Description=SkyStation: atualiza as assinaturas do antivírus (sky-security)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Nice=19
+IOSchedulingClass=idle
+ExecStart=/usr/bin/freshclam --quiet
+UNIT
+    cat >/etc/systemd/system/skystation-freshclam.timer <<'UNIT'
+[Unit]
+Description=SkyStation: assinaturas do antivírus uma vez por dia
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1d
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload || true
+        systemctl enable --now skystation-freshclam.timer >/dev/null 2>&1 || true
+        ls /var/lib/clamav/*.c[lv]d >/dev/null 2>&1 || systemctl start --no-block skystation-freshclam.service 2>/dev/null || true
+    fi
+fi
+
 # Fase 11.8: Xbox Cloud Gaming roda no Chromium (a Microsoft não tem app do Xbox para Linux);
 # o flatpak é para o app oficial do GeForce NOW, que fica para depois (serviço acima).
 for p in chromium flatpak; do

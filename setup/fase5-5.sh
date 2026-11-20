@@ -70,8 +70,8 @@ echo "==> [5/6] Pendrive de jogos SKYROMS (monta sozinho em /mnt/skyroms)"
 cat >/etc/udev/rules.d/90-skystation-roms.rules <<RULES
 # SkyStation: pendrive com o rótulo SKYROMS vira a pasta /mnt/skyroms (ps1/, ps2/ dentro dele).
 # exFAT/FAT32 (formatado no Windows): arquivos do usuário sky. Ao tirar o pendrive, desmonta sozinho.
-ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="SKYROMS", ENV{ID_FS_TYPE}=="exfat|vfat", RUN{program}+="/usr/bin/systemd-mount --no-block --collect --options=uid=$UID_SKY,gid=$GID_SKY,umask=022,noatime \$devnode /mnt/skyroms"
-ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="SKYROMS", ENV{ID_FS_TYPE}=="ext4", RUN{program}+="/usr/bin/systemd-mount --no-block --collect --options=noatime \$devnode /mnt/skyroms"
+ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="SKYROMS", ENV{ID_FS_TYPE}=="exfat|vfat", RUN{program}+="/usr/bin/systemd-mount --no-block --collect --options=noexec,nosuid,nodev,uid=$UID_SKY,gid=$GID_SKY,umask=022,noatime \$devnode /mnt/skyroms"
+ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="SKYROMS", ENV{ID_FS_TYPE}=="ext4", RUN{program}+="/usr/bin/systemd-mount --no-block --collect --options=noexec,nosuid,nodev,noatime \$devnode /mnt/skyroms"
 RULES
 udevadm control --reload-rules || true
 udevadm trigger --subsystem-match=block --action=add || true

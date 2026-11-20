@@ -10,6 +10,10 @@
 # (Inicialização rápida ligada) ou o disco não foi desligado direito, monta só leitura: os jogos
 # rodam, mas nada é gravado no HD (gravar ali faria o Windows perder dados ao voltar).
 #
+# Segurança (13.2, sky-security): tudo é montado com noexec,nosuid,nodev. Nada que vier junto com um
+# jogo baixado (um .sh, um AppImage, um programa escondido) pode rodar direto do SKYROMS; jogos e
+# emuladores só LEEM os arquivos, então nada muda para eles.
+#
 # Uso:  sudo skystation-skyroms-hd          procurar e montar (o boot já faz isso sozinho)
 #       sudo skystation-skyroms-hd parar    desmontar com segurança
 #       skystation-skyroms-hd status        mostra o que foi encontrado
@@ -56,7 +60,7 @@ DISCO_SIS="$(lsblk -rnpo PKNAME "$RAIZ" 2>/dev/null | head -1)"
 
 # monta_disco <dev> <tipo> <ponto> <ro|rw>
 monta_disco() {
-    local dev="$1" fs="$2" mp="$3" modo="$4" ids="uid=$UID_SKY,gid=$GID_SKY,umask=022"
+    local dev="$1" fs="$2" mp="$3" modo="$4,noexec,nosuid,nodev" ids="uid=$UID_SKY,gid=$GID_SKY,umask=022"
     case "$fs" in
         ntfs)
             # ntfs3 = driver do próprio kernel (rápido). ntfs-3g (FUSE) só se o ntfs3 falhar.
@@ -124,7 +128,8 @@ while read -r dev fs tipo label; do
 
     install -d "$ALVO"
     if ! mount --bind "$mp/$pasta" "$ALVO"; then umount "$mp"; rmdir "$mp"; continue; fi
-    [ "$modo" = "ro" ] && mount -o remount,bind,ro "$ALVO" 2>/dev/null
+    # O bind herda o noexec do disco, mas o remount deixa isso explícito (e vale para o findmnt/sky-security).
+    mount -o "remount,bind,$modo,noexec,nosuid,nodev" "$ALVO" 2>/dev/null
 
     nome="${label:-$(lsblk -rnpo SIZE "$dev" | head -1)}"
     grava "estado=ok" "dev=$dev" "fs=$fs" "modo=$modo" "motivo=$motivo" "pasta=$pasta" \

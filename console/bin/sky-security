@@ -1,0 +1,329 @@
+#!/usr/bin/env python3
+"""SkyStation (Fase 13.2): sky-security — confere os jogos baixados antes de instalar.
+
+  sky-security verificar <arquivo>   -> {"ok": true|false, "motivo", "suspeitos": [...], "antivirus"}
+  sky-security quarentena            -> lista o que foi bloqueado
+  sky-security liberar <id>          -> devolve à pasta de origem (e não bloqueia mais aquele arquivo)
+  sky-security apagar <id>           -> apaga de vez da quarentena
+  sky-security status                -> SKYROMS sem execução? antivírus instalado? assinaturas de quando?
+
+Duas camadas:
+  1. Lista do que tem dentro (7-Zip): jogo é dado (.iso, .chd, .bin, .cue…). Programa de PC (.exe,
+     .bat, .sh, .lnk, AppImage…) ou nome disfarçado ("jogo.iso.exe") não tem motivo para estar ali.
+  2. ClamAV, se estiver instalado: abre o compactado e procura vírus conhecidos.
+Achou algo: o compactado (com todas as partes) vai para SKYROMS/.quarentena, no mesmo disco (só um
+rename, instantâneo), com uma ficha .json do motivo. Nada é apagado sozinho.
+Log de tudo: SKYROMS/seguranca/eventos.log (dá para ler no Windows).
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
+LIBERADOS = os.path.join(HOME, ".config/skystation/seguranca-liberados.json")
+SKYROMS = "/mnt/skyroms"
+
+# Programas e atalhos (Windows, Linux, Mac). Não tem .bin/.elf/.self/.sprx/.xex/.rpx: são de jogo.
+PERIGOSOS = {
+    ".exe", ".com", ".scr", ".pif", ".cpl", ".msi", ".msp", ".msc", ".dll", ".sys", ".drv", ".ocx",
+    ".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".hta", ".reg",
+    ".lnk", ".scf", ".inf", ".jar", ".application", ".appref-ms", ".gadget", ".iso.exe",
+    ".sh", ".bash", ".run", ".appimage", ".desktop", ".py", ".pl", ".rb", ".deb", ".rpm",
+    ".pkg.tar.zst", ".app", ".dmg", ".command",
+}
+# PS3/PS4/Wii U/Xbox 360 em pasta: jogos Unity/XNA têm .dll e scripts .js/.py de verdade dentro.
+# Neles só conta o que é programa de PC sem dúvida.
+SO_PC = {".exe", ".com", ".scr", ".pif", ".cpl", ".msi", ".msp", ".bat", ".cmd", ".ps1", ".vbs", ".vbe",
+         ".wsf", ".hta", ".reg", ".lnk", ".scf", ".jar", ".sh", ".run", ".appimage", ".desktop", ".deb", ".rpm"}
+SISTEMAS_PASTA = {"ps3", "ps4", "wiiu", "x360"}
+# Extensões de jogo usadas para disfarce: "Jogo.iso.exe", "Leia-me.pdf.scr".
+DISFARCE = re.compile(r"\.(iso|chd|bin|cue|cdi|gdi|cso|pbp|wbfs|rvz|nsp|xci|vpk|pdf|txt|jpg|png|mp4|rar|zip|7z)\.[a-z0-9]{2,4}$", re.I)
+# Nomes com espaços/caracteres invisíveis antes da extensão ("jogo.iso      .exe", RLO ‮).
+INVISIVEL = re.compile(r"[‪-‮⁦-⁩​-‏]|\s{6,}\.")
+
+
+def _agora():
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _base_do(arquivo):
+    """A raiz do SKYROMS (ou da pasta de roms) onde o arquivo está: ali ficam quarentena e log."""
+    real = os.path.realpath(arquivo)
+    for b in (SKYROMS, os.path.join(HOME, "skystation/roms"), "/mnt/skystation/roms"):
+        rb = os.path.realpath(b)
+        if real.startswith(rb + os.sep):
+            return rb
+    return os.path.dirname(os.path.dirname(real))
+
+
+def _log(base, texto):
+    for pasta in (os.path.join(base, "seguranca"), os.path.join(HOME, ".local/state/skystation")):
+        try:
+            os.makedirs(pasta, exist_ok=True)
+            with open(os.path.join(pasta, "eventos.log" if "seguranca" in pasta else "seguranca.log"), "a") as f:
+                f.write(f"{_agora()}  {texto}\n")
+            return
+        except OSError:
+            continue
+
+
+def _aviso(texto):
+    try:
+        os.makedirs(RUN, exist_ok=True)
+        with open(os.path.join(RUN, "events.jsonl"), "a") as f:
+            f.write(json.dumps({"t": time.time(), "kind": "seguranca", "text": texto}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import skyhist
+        skyhist.add("seguranca", texto)
+    except Exception:
+        pass
+
+
+def _assinatura(arq):
+    try:
+        st = os.stat(arq)
+        return f"{st.st_size}:{int(st.st_mtime)}"
+    except OSError:
+        return ""
+
+
+def _liberados():
+    try:
+        with open(LIBERADOS) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+# ---------------------------------------------------------------- camada 1: o que tem dentro
+
+def _sete():
+    for b in ("7z", "7zz", "7za"):
+        if shutil.which(b):
+            return shutil.which(b)
+    return None
+
+
+def listar(arquivo):
+    """Nomes dos arquivos de dentro. None = não deu para ler (o sky-instalar trata o erro depois)."""
+    z = _sete()
+    try:
+        if z:
+            r = subprocess.run([z, "l", "-slt", "-ba", "-p", arquivo], capture_output=True, text=True,
+                               errors="replace", timeout=180)
+            if r.returncode != 0 and not r.stdout:
+                return None
+            return re.findall(r"^Path = (.*)$", r.stdout, re.M)
+        if shutil.which("bsdtar"):
+            r = subprocess.run(["bsdtar", "-tf", arquivo], capture_output=True, text=True, errors="replace", timeout=180)
+            return r.stdout.splitlines() if r.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def suspeito(nome, sistema=None):
+    """Motivo se o nome de um arquivo de dentro do compactado é perigoso; senão None."""
+    lista = SO_PC if sistema in SISTEMAS_PASTA else PERIGOSOS
+    n = os.path.basename(nome.replace("\\", "/")).lower()
+    if not n:
+        return None
+    if INVISIVEL.search(n):
+        return "nome com caracteres escondidos (truque para esconder a extensão)"
+    if DISFARCE.search(n) and os.path.splitext(n)[1] in lista:
+        return "programa disfarçado de arquivo de jogo"
+    for ext in lista:
+        if n.endswith(ext):
+            return f"programa ({ext}) — jogo de console não vem com isso"
+    if ".." in nome.replace("\\", "/").split("/") or nome.startswith(("/", "\\")):
+        return "caminho que tenta sair da pasta"
+    return None
+
+
+# ---------------------------------------------------------------- camada 2: antivírus
+
+def antivirus(arquivos):
+    """(achou, detalhe). achou=None quando não há ClamAV ou ele falhou (não bloqueia por isso)."""
+    clam = shutil.which("clamdscan") if _clamd_rodando() else None
+    clam = clam or shutil.which("clamscan")
+    if not clam:
+        return None, "sem antivírus (ClamAV não instalado)"
+    cmd = ["nice", "-n", "19", clam, "--no-summary", "--infected"]
+    if clam.endswith("clamscan"):
+        # ISOs de vários GB: confere o que é programa/documento, não lê 8 GB de imagem de disco.
+        cmd += ["--max-filesize=300M", "--max-scansize=600M", "--max-recursion=8", "--alert-encrypted=no"]
+    if shutil.which("ionice"):
+        cmd = ["ionice", "-c3"] + cmd
+    try:
+        r = subprocess.run(cmd + arquivos, capture_output=True, text=True, errors="replace", timeout=1800)
+    except (OSError, subprocess.SubprocessError) as e:
+        return None, f"antivírus falhou: {e}"
+    if r.returncode == 1:
+        achados = [ln.split(": ", 1)[-1].replace(" FOUND", "") for ln in r.stdout.splitlines() if ln.endswith("FOUND")]
+        return True, ", ".join(sorted(set(achados))) or "vírus encontrado"
+    if r.returncode == 0:
+        return False, "ClamAV: limpo"
+    erro = (r.stderr.strip().splitlines() or ["erro"])[-1]
+    return None, f"antivírus não conseguiu conferir ({erro[:80]})"
+
+
+def _clamd_rodando():
+    return os.path.exists("/run/clamav/clamd.ctl")
+
+
+# ---------------------------------------------------------------- quarentena
+
+def _partes(arquivo):
+    try:
+        import importlib.machinery
+        inst = importlib.machinery.SourceFileLoader(
+            "sky_instalar_partes", os.path.join(os.path.dirname(os.path.abspath(__file__)), "sky-instalar")).load_module()
+        return inst._partes(arquivo)
+    except Exception:
+        return [arquivo]
+
+
+def quarentenar(arquivo, motivo, suspeitos, partes=None, avisar=True):
+    base = _base_do(arquivo)
+    q = os.path.join(base, ".quarentena")
+    os.makedirs(q, exist_ok=True)
+    ident = time.strftime("%Y%m%d-%H%M%S") + "-" + re.sub(r"[^\w.-]+", "_", os.path.basename(arquivo))[:60]
+    destino = os.path.join(q, ident)
+    os.makedirs(destino)
+    movidos = []
+    for p in partes or _partes(arquivo):
+        try:
+            os.replace(p, os.path.join(destino, os.path.basename(p)))
+        except OSError:
+            shutil.move(p, os.path.join(destino, os.path.basename(p)))
+        movidos.append(os.path.basename(p))
+    ficha = {"id": ident, "quando": _agora(), "origem": os.path.dirname(os.path.realpath(arquivo)),
+             "arquivos": movidos, "motivo": motivo, "suspeitos": suspeitos[:20]}
+    with open(os.path.join(destino, "ficha.json"), "w") as f:
+        json.dump(ficha, f, ensure_ascii=False, indent=1)
+    _log(base, f"QUARENTENA {os.path.basename(arquivo)}: {motivo} {suspeitos[:5]}")
+    if avisar:
+        _aviso(f"sky-security bloqueou {os.path.basename(arquivo)}: {motivo}")
+    return ficha
+
+
+def _quarentenas():
+    for base in (SKYROMS, os.path.join(HOME, "skystation/roms"), "/mnt/skystation/roms"):
+        q = os.path.join(base, ".quarentena")
+        try:
+            nomes = sorted(os.listdir(q))
+        except OSError:
+            continue
+        for n in nomes:
+            try:
+                with open(os.path.join(q, n, "ficha.json")) as f:
+                    ficha = json.load(f)
+                ficha["pasta"] = os.path.join(q, n)
+                yield ficha
+            except (OSError, ValueError):
+                continue
+
+
+def liberar(ident):
+    for ficha in _quarentenas():
+        if ficha["id"] != ident:
+            continue
+        lib = _liberados()
+        for a in ficha["arquivos"]:
+            final = os.path.join(ficha["origem"], a)
+            if os.path.exists(final):
+                return {"ok": False, "error": f"já existe {a} na pasta de origem"}
+            os.replace(os.path.join(ficha["pasta"], a), final)
+            lib[os.path.realpath(final)] = _assinatura(final)
+        shutil.rmtree(ficha["pasta"], ignore_errors=True)
+        os.makedirs(os.path.dirname(LIBERADOS), exist_ok=True)
+        with open(LIBERADOS, "w") as f:
+            json.dump(lib, f, ensure_ascii=False)
+        _log(_base_do(ficha["pasta"]), f"LIBERADO por você: {ficha['arquivos']}")
+        return {"ok": True}
+    return {"ok": False, "error": "não achei esse item na quarentena"}
+
+
+def apagar(ident):
+    for ficha in _quarentenas():
+        if ficha["id"] == ident:
+            shutil.rmtree(ficha["pasta"], ignore_errors=True)
+            _log(_base_do(ficha["pasta"]), f"APAGADO da quarentena: {ficha['arquivos']}")
+            return {"ok": True}
+    return {"ok": False, "error": "não achei esse item na quarentena"}
+
+
+# ---------------------------------------------------------------- verificar (usado pelo sky-instalar)
+
+def verificar(arquivo, mover=True, partes=None, sistema=None, avisar=True):
+    """O sky-instalar chama antes de extrair (passa as partes e o sistema da pasta)."""
+    partes = partes or _partes(arquivo)
+    if sistema is None:
+        sistema = os.path.basename(os.path.dirname(os.path.realpath(arquivo))).lower()
+    real = os.path.realpath(arquivo)
+    if _liberados().get(real) == _assinatura(arquivo):
+        return {"ok": True, "motivo": "liberado por você", "suspeitos": [], "antivirus": "pulado"}
+    nomes = listar(arquivo)
+    suspeitos = []
+    for n in nomes or []:
+        m = suspeito(n, sistema)
+        if m:
+            suspeitos.append({"arquivo": n, "motivo": m})
+    achou, detalhe = antivirus(partes[:1])
+    motivo = ""
+    if achou:
+        motivo = f"vírus conhecido: {detalhe}"
+    elif suspeitos:
+        motivo = suspeitos[0]["motivo"] + (f" ({len(suspeitos)} arquivos)" if len(suspeitos) > 1 else "")
+    r = {"ok": not motivo, "motivo": motivo or "nada suspeito", "suspeitos": suspeitos, "antivirus": detalhe}
+    if motivo and mover:
+        r["quarentena"] = quarentenar(arquivo, motivo, [s["arquivo"] for s in suspeitos], partes, avisar)["id"]
+    elif not motivo:
+        _log(_base_do(arquivo), f"ok {os.path.basename(arquivo)} ({detalhe})")
+    return r
+
+
+def status():
+    opcoes = ""
+    try:
+        opcoes = subprocess.run(["findmnt", "-rno", "OPTIONS", SKYROMS], capture_output=True, text=True).stdout.strip()
+    except OSError:
+        pass
+    bases = [f for f in ("/var/lib/clamav/daily.cld", "/var/lib/clamav/daily.cvd") if os.path.exists(f)]
+    return {"skyroms_montado": bool(opcoes),
+            "skyroms_sem_execucao": "noexec" in opcoes.split(","),
+            "antivirus": bool(shutil.which("clamscan")),
+            "assinaturas": time.strftime("%d/%m/%Y", time.localtime(os.path.getmtime(bases[0]))) if bases else None,
+            "quarentena": len(list(_quarentenas()))}
+
+
+def main():
+    a = sys.argv[1:]
+    cmd = a[0] if a else "status"
+    if cmd == "verificar" and len(a) > 1:
+        r = verificar(a[1], mover="--sem-mover" not in a)
+        print(json.dumps(r, ensure_ascii=False))
+        sys.exit(0 if r["ok"] else 1)
+    elif cmd == "quarentena":
+        print(json.dumps({"itens": [{k: v for k, v in f.items() if k != "pasta"} for f in _quarentenas()]}, ensure_ascii=False))
+    elif cmd == "liberar" and len(a) > 1:
+        print(json.dumps(liberar(a[1]), ensure_ascii=False))
+    elif cmd == "apagar" and len(a) > 1:
+        print(json.dumps(apagar(a[1]), ensure_ascii=False))
+    elif cmd == "status":
+        print(json.dumps(status(), ensure_ascii=False))
+    else:
+        print(__doc__)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()
