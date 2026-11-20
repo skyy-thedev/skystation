@@ -76,6 +76,15 @@ put("Folders", "Savestates", os.path.join(sky, "states", "ps2"))
 put("Filenames", "BIOS", bios)
 for k, v in PROFILES.get(profile, PROFILES["leve"]).items():
     put("EmuCore/GS", k, v)
+# 20/nov: jogos de ritmo na resolução original do PS2, também no Ryzen. O benchmark do Guitar Hero III
+# mostrou quadros de 18–22 ms e, com a sincronia de tela, o jogo caía em degraus exatos de 30 e 15 FPS
+# (quadros de 33,3 e 66,7 ms em sequência): basta um quadro passar de 16,7 ms para a tela esperar o
+# próximo ciclo. Em 1x a parte gráfica (GS) e a placa de vídeo fazem 1/4 dos pixels, sobra folga para
+# segurar os 16,7 ms. Num jogo de ritmo, nota no tempo vale mais que imagem nítida.
+RITMO = ("guitar hero", "rock band", "band hero", "dj hero", "singstar", "taiko")
+ritmo = any(p in game_id.lower() for p in RITMO)
+if ritmo and profile == "potente":
+    put("EmuCore/GS", "upscale_multiplier", "1")
 for k, v in SPEED.get(speed, SPEED["normal"]).items():
     put("EmuCore/Speedhacks", k, v)
 # MTVU (VU1 numa thread própria): padrão do PCSX2 é desligado; nos modos rápido/máximo liga se
@@ -115,6 +124,15 @@ pad = dict(cp.items("Pad1")) if cp.has_section("Pad1") else {}
 if not any(str(v).startswith("SDL-") for v in pad.values()):
     for k, v in SDL_PAD.items():
         put("Pad1", k, v)
+
+# 11.7: o benchmark da partida registra o que foi aplicado
+try:
+    run = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
+    with open(os.path.join(run, "game.ajustes"), "a", encoding="utf-8") as f:
+        f.write(f"PCSX2: {profile}, {speed}, resolução {cp.get('EmuCore/GS', 'upscale_multiplier')}x"
+                + (", leitura da GPU sem espera" if sem_espera else "") + "\n")
+except OSError:
+    pass
 
 tmp = path + ".tmp"
 with open(tmp, "w", encoding="utf-8") as f:
