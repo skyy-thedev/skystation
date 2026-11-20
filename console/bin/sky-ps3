@@ -297,9 +297,7 @@ SPU_MEGA = """# SkyStation: teste 1 do God of War III (apague esta linha para ed
 Core:
   SPU Block Size: Mega
 """
-GOW3 = """# SkyStation: teste 2 do God of War III (apague esta linha para editar à mão)
-Core:
-  Max SPURS Threads: 4
+GOW3 = """# SkyStation: teste 3 do God of War III (apague esta linha para editar à mão)
 Video:
   Frame limit: 30
 """
@@ -307,6 +305,9 @@ POR_JOGO = {
     # 8.3: o SPU "Mega" piorou as lutas (33 FPS vs 45 com o padrão "Safe"); voltou ao padrão.
     # 8.3.2: travado em 30 (as cenas leves não esquentam o processador antes das lutas) e
     # no máximo 4 SPURS por grupo (menos disputa pelos 6 núcleos do Ryzen 5 5500U).
+    # 11.7: SPURS de volta ao padrão (6). Com 4, o Kratos morria sem levar dano quando o braço da
+    # Gaia volta à posição normal na luta contra o Poseidon: o limite de SPURS é uma gambiarra do
+    # RPCS3 e muda quando a física do jogo é calculada. Fica só a trava em 30 FPS.
     "BCUS98111": GOW3,   # God of War III (EUA)
     "BCES00510": GOW3,   # God of War III (Europa)
 }
@@ -543,6 +544,25 @@ def patches(rom):
     return []
 
 
+def anotar_ajustes(rom, ligados):
+    """11.7: o benchmark da partida registra o perfil usado (config por jogo e patches ligados)."""
+    try:
+        info = game_info(rom) if rom else None
+        serial = (info or {}).get("id", "")
+        linhas = []
+        if serial in POR_JOGO:
+            corpo = [l.strip() for l in POR_JOGO[serial].splitlines()[1:] if l.startswith("  ")]
+            linhas.append(f"RPCS3 {serial}: " + ", ".join(corpo))
+        if ligados:
+            linhas.append("patches: " + ", ".join(str(x) for x in ligados))
+        if linhas:
+            run = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
+            with open(os.path.join(run, "game.ajustes"), "a", encoding="utf-8") as f:
+                f.write("\n".join(linhas) + "\n")
+    except Exception as e:   # nunca impede o jogo de abrir
+        sys.stderr.write(f"ajustes: {e}\n")
+
+
 def preparar(rom=""):
     if not os.access(RPCS3, os.X_OK):
         return out({"ok": False, "error": "Emulador de PS3 não instalado. Rode a Fase 7.0 (fase7-0.sh)."})
@@ -553,6 +573,7 @@ def preparar(rom=""):
     garantir_ini(os.path.join(RP, "GuiConfigs/CurrentSettings.ini"), GUI_FORCAR)   # cursor escondido
     ajustes_por_jogo()
     ligados = patches(rom)
+    anotar_ajustes(rom, ligados)
     write_if_missing(os.path.join(RP, "config.yml"), CONFIG_YML)
     garantir_net()
     yml, players = input_yaml()

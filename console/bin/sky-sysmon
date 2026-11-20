@@ -1,0 +1,339 @@
+#!/usr/bin/env python3
+"""SkyStation 11.7: benchmark do próprio sistema (menu, serviços, temperatura, memória).
+
+Roda em segundo plano na sessão (o sky-shell sobe). Só mede quando a Medição de desempenho está
+ligada no menu (~/.config/skystation/mangohud.on ou bench.on); desligada, só confere a cada 30 s.
+
+A cada 2 s grava uma linha em <benchmarks>/sistema/sistema-AAAA-MM-DD.csv:
+  estado        menu, jogo ou home (menu Home aberto por cima do jogo)
+  fps_menu      FPS do menu e ms_pior_menu, o quadro mais lento do último segundo (o launcher
+                anota os dois em $XDG_RUNTIME_DIR/skystation/menu.fps)
+  cpu_pct, cpu_mhz, cpu_temp, carga_1min
+  gpu_pct, gpu_mhz, vram_mb
+  ram_mb, ram_livre_mb, swap_mb
+  bateria_pct, bateria_w (consumo; vazio na tomada se o notebook não informa)
+  cpu_<grupo> e mb_<grupo>: CPU (% de um núcleo) e memória de cada parte do SkyStation:
+    menu (launcher Godot), home, avisos (sky-notify), rede (sky-net), central, toast,
+    compositor (cage/gamescope/Xwayland), audio (pipewire/wireplumber), jogo (o jogo inteiro)
+E em <benchmarks>/sistema/boot.csv, uma linha por sessão: tempo de boot (systemd-analyze) e
+quanto tempo o menu levou para ficar pronto (primeiro FPS anotado pelo launcher).
+
+    sky-sysmon              mede em laço (é o que o sky-shell chama)
+    sky-sysmon uma-vez      uma amostra só, na tela (teste)
+    sky-sysmon resumo <pasta>   refaz <pasta>/sistema/resumo-sistema.csv (um dia por linha,
+                                separado por estado: menu e jogo)
+"""
+import csv
+import glob
+import os
+import re
+import statistics as st
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+CONF = os.path.join(HOME, ".config/skystation")
+RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
+INTERVALO = 2.0
+GRUPOS = {
+    "menu": [r"godot.*skystation/launcher", r"python3 .*placeholder/main\.py"],
+    "home": [r"sky-home\.py", r"sky-overlay\.py"],
+    "avisos": [r"sky-notify"],
+    "rede": [r"sky-net\b"],
+    "central": [r"sky-receber"],
+    "toast": [r"sky-toast"],
+    "compositor": [r"^cage\b", r"/cage\b", r"gamescope", r"Xwayland"],
+    "audio": [r"pipewire", r"wireplumber"],
+}
+CAB = (["hora", "estado", "fps_menu", "ms_pior_menu", "cpu_pct", "cpu_mhz", "cpu_temp", "carga_1min", "gpu_pct", "gpu_mhz",
+        "vram_mb", "ram_mb", "ram_livre_mb", "swap_mb", "bateria_pct", "bateria_w"]
+       + [f"cpu_{g}" for g in list(GRUPOS) + ["jogo"]] + [f"mb_{g}" for g in list(GRUPOS) + ["jogo"]])
+TICKS = os.sysconf("SC_CLK_TCK")
+PAGINA = os.sysconf("SC_PAGE_SIZE")
+EU = str(os.getpid())
+
+
+def ligado():
+    return os.path.exists(os.path.join(CONF, "mangohud.on")) or os.path.exists(os.path.join(CONF, "bench.on"))
+
+
+def pasta():
+    for p in ("/mnt/skyroms/benchmarks", "/mnt/skystation/benchmarks"):
+        if os.access(os.path.dirname(p), os.W_OK):
+            return p
+    return os.path.join(HOME, "skystation/benchmarks")
+
+
+def ler(path, padrao=""):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return padrao
+
+
+def num(path, div=1.0):
+    try:
+        return float(ler(path)) / div
+    except ValueError:
+        return None
+
+
+def cpu_total():
+    p = ler("/proc/stat").splitlines()[0].split()[1:]
+    v = [int(x) for x in p]
+    ocioso = v[3] + (v[4] if len(v) > 4 else 0)
+    return sum(v), ocioso
+
+
+def temp_cpu():
+    for h in glob.glob("/sys/class/hwmon/hwmon*"):
+        if ler(h + "/name") in ("k10temp", "coretemp", "zenpower"):
+            t = num(h + "/temp1_input", 1000)
+            if t is not None:
+                return round(t)
+    for z in glob.glob("/sys/class/thermal/thermal_zone*"):
+        if "x86_pkg" in ler(z + "/type") or "acpitz" in ler(z + "/type"):
+            t = num(z + "/temp", 1000)
+            if t is not None:
+                return round(t)
+    return ""
+
+
+def mhz_cpu():
+    v = [float(m) for m in re.findall(r"cpu MHz\s*:\s*([\d.]+)", ler("/proc/cpuinfo"))]
+    return round(st.mean(v)) if v else ""
+
+
+def gpu():
+    for d in glob.glob("/sys/class/drm/card*/device"):
+        busy = num(d + "/gpu_busy_percent")
+        if busy is None:
+            continue
+        mhz = ""
+        m = re.search(r"(\d+)Mhz \*", ler(d + "/pp_dpm_sclk"))
+        if m:
+            mhz = int(m.group(1))
+        vram = num(d + "/mem_info_vram_used", 1024 * 1024)
+        return round(busy), mhz, round(vram) if vram is not None else ""
+    return "", "", ""
+
+
+def memoria():
+    m = dict((k, int(v.split()[0])) for k, v in (l.split(":", 1) for l in ler("/proc/meminfo").splitlines() if ":" in l))
+    total, livre = m.get("MemTotal", 0), m.get("MemAvailable", 0)
+    swap = m.get("SwapTotal", 0) - m.get("SwapFree", 0)
+    return round((total - livre) / 1024), round(livre / 1024), round(swap / 1024)
+
+
+def bateria():
+    for b in glob.glob("/sys/class/power_supply/BAT*"):
+        pct = ler(b + "/capacity")
+        w = num(b + "/power_now", 1e6)
+        if w is None:
+            i, v = num(b + "/current_now", 1e6), num(b + "/voltage_now", 1e6)
+            w = i * v if i is not None and v is not None else None
+        return pct, round(w, 1) if w is not None else ""
+    return "", ""
+
+
+def processos():
+    """pid -> (grupo, ticks de CPU, MB). O jogo é o grupo de processos do game.pid (setsid)."""
+    jogo_pgid = ler(os.path.join(RUN, "game.pid"))
+    out = {}
+    for d in glob.glob("/proc/[0-9]*"):
+        pid = d[6:]
+        if pid == EU:
+            continue
+        try:
+            stat = ler(d + "/stat")
+            campos = stat[stat.rindex(")") + 2:].split()
+            pgid = campos[2]
+            ticks = int(campos[11]) + int(campos[12])
+            mb = int(campos[21]) * PAGINA / 1048576
+            cmd = ler(d + "/cmdline").replace("\0", " ").strip()
+        except (ValueError, IndexError):
+            continue
+        if not cmd:
+            continue
+        grupo = None
+        if jogo_pgid and pgid == jogo_pgid:
+            grupo = "jogo"
+        else:
+            for g, pads in GRUPOS.items():
+                if any(re.search(p, cmd) for p in pads):
+                    grupo = g
+                    break
+        if grupo:
+            out[pid] = (grupo, ticks, mb)
+    return out
+
+
+def estado():
+    if os.path.exists(os.path.join(RUN, "game.pid")):
+        return "home" if os.path.exists(os.path.join(RUN, "menu.aberto")) else "jogo"
+    return "menu"
+
+
+def fps_menu():
+    try:
+        if time.time() - os.path.getmtime(os.path.join(RUN, "menu.fps")) > 5:
+            return "", ""    # o launcher dorme enquanto o jogo roda
+    except OSError:
+        return "", ""
+    v = ler(os.path.join(RUN, "menu.fps")).split()
+    return (v + ["", ""])[:2]
+
+
+class Medidor:
+    def __init__(self):
+        self.antes = None
+
+    def amostra(self):
+        agora = time.monotonic()
+        total, ocioso = cpu_total()
+        procs = processos()
+        linha = None
+        if self.antes:
+            t0, tot0, oc0, procs0 = self.antes
+            dt = agora - t0
+            dtot = max(1, total - tot0)
+            cpu = round(100 * (1 - (ocioso - oc0) / dtot), 1)
+            por_g = {g: [0.0, 0.0] for g in list(GRUPOS) + ["jogo"]}
+            for pid, (g, ticks, mb) in procs.items():
+                antes = procs0.get(pid)
+                if antes and antes[0] == g:
+                    por_g[g][0] += (ticks - antes[1]) / TICKS / dt * 100
+                por_g[g][1] += mb
+            gp, gm, vr = gpu()
+            ram, livre, swap = memoria()
+            bp, bw = bateria()
+            fm, pior = fps_menu()
+            linha = {"hora": time.strftime("%H:%M:%S"), "estado": estado(), "fps_menu": fm, "ms_pior_menu": pior,
+                     "cpu_pct": cpu, "cpu_mhz": mhz_cpu(), "cpu_temp": temp_cpu(),
+                     "carga_1min": ler("/proc/loadavg", "0").split()[0], "gpu_pct": gp, "gpu_mhz": gm,
+                     "vram_mb": vr, "ram_mb": ram, "ram_livre_mb": livre, "swap_mb": swap,
+                     "bateria_pct": bp, "bateria_w": bw}
+            for g, (c, m) in por_g.items():
+                linha[f"cpu_{g}"] = round(c, 1)
+                linha[f"mb_{g}"] = round(m)
+        self.antes = (agora, total, ocioso, procs)
+        return linha
+
+
+def gravar(linha, destino):
+    os.makedirs(os.path.dirname(destino), exist_ok=True)
+    novo = not os.path.exists(destino)
+    with open(destino, "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=CAB, delimiter=";")
+        if novo:
+            w.writeheader()
+        w.writerow(linha)
+
+
+def anotar_boot(base, inicio):
+    """Uma linha por sessão: boot do Linux e tempo até o menu desenhar o primeiro quadro."""
+    pronto = ""
+    for _ in range(60):
+        if os.path.exists(os.path.join(RUN, "menu.fps")):
+            pronto = round(time.time() - inicio, 1)
+            break
+        time.sleep(1)
+    boot = ""
+    try:
+        r = subprocess.run(["systemd-analyze", "time"], capture_output=True, text=True, timeout=20)
+        boot = " ".join(r.stdout.split())[:200]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    destino = os.path.join(base, "sistema", "boot.csv")
+    os.makedirs(os.path.dirname(destino), exist_ok=True)
+    novo = not os.path.exists(destino)
+    with open(destino, "a", newline="", encoding="utf-8") as f:
+        w = csv.writer(f, delimiter=";")
+        if novo:
+            w.writerow(["data", "menu_pronto_s", "boot", "versao"])
+        w.writerow([time.strftime("%Y-%m-%d %H:%M"), pronto, boot, ler("/opt/skystation/VERSION")])
+
+
+def resumo(base):
+    """Um dia por linha e por estado: medianas e picos, e quem mais gasta CPU e memória."""
+    linhas = []
+    for arq in sorted(glob.glob(os.path.join(base, "sistema", "sistema-*.csv"))):
+        dia = os.path.basename(arq)[8:-4]
+        with open(arq, encoding="utf-8") as f:
+            dados = list(csv.DictReader(f, delimiter=";"))
+        for est in ("menu", "jogo"):
+            dd = [d for d in dados if d.get("estado") == est]
+            if len(dd) < 5:
+                continue
+            col = lambda k: sorted(float(d[k]) for d in dd if d.get(k) not in ("", None))
+            med = lambda k: round(st.median(col(k)), 1) if col(k) else ""
+            pico = lambda k: round(col(k)[-1], 1) if col(k) else ""
+            pior = lambda k: round(col(k)[int(0.05 * (len(col(k)) - 1))], 1) if col(k) else ""
+            gastos = sorted(((med(f"cpu_{g}") or 0, g) for g in GRUPOS), reverse=True)
+            memo = sorted(((med(f"mb_{g}") or 0, g) for g in GRUPOS), reverse=True)
+            linhas.append({
+                "dia": dia, "estado": est, "minutos": round(len(dd) * INTERVALO / 60, 1),
+                "fps_menu_mediano": med("fps_menu"), "fps_menu_5pct_piores": pior("fps_menu"),
+                "ms_pior_quadro_mediano": med("ms_pior_menu"),
+                "cpu_pct_mediano": med("cpu_pct"), "cpu_pct_pico": pico("cpu_pct"),
+                "temp_mediana": med("cpu_temp"), "temp_pico": pico("cpu_temp"),
+                "gpu_pct_mediano": med("gpu_pct"), "ram_mb_mediana": med("ram_mb"), "ram_mb_pico": pico("ram_mb"),
+                "swap_mb_pico": pico("swap_mb"), "bateria_w_mediana": med("bateria_w"),
+                "mais_cpu": ", ".join(f"{g} {c}%" for c, g in gastos[:3] if c),
+                "mais_memoria": ", ".join(f"{g} {int(m)} MB" for m, g in memo[:3] if m),
+            })
+    destino = os.path.join(base, "sistema", "resumo-sistema.csv")
+    if linhas:
+        with open(destino, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=list(linhas[0]), delimiter=";")
+            w.writeheader()
+            w.writerows(linhas)
+    return len(linhas), destino
+
+
+def laco():
+    m = Medidor()
+    inicio = time.time()
+    boot_feito = False
+    while True:
+        if not ligado():
+            m.antes = None
+            time.sleep(30)
+            continue
+        base = pasta()
+        if not boot_feito:
+            boot_feito = True
+            try:
+                anotar_boot(base, inicio)
+            except Exception as e:
+                sys.stderr.write(f"sky-sysmon: boot: {e}\n")
+        try:
+            linha = m.amostra()
+            if linha:
+                gravar(linha, os.path.join(base, "sistema", f"sistema-{time.strftime('%Y-%m-%d')}.csv"))
+        except Exception as e:      # medir nunca pode derrubar nada
+            sys.stderr.write(f"sky-sysmon: {e}\n")
+        time.sleep(INTERVALO)
+
+
+def main():
+    a = sys.argv[1:]
+    if a[:1] == ["uma-vez"]:
+        m = Medidor()
+        m.amostra()
+        time.sleep(1)
+        print(m.amostra())
+    elif len(a) == 2 and a[0] == "resumo":
+        n, destino = resumo(a[1])
+        print(f"{n} linhas em {destino}")
+    elif not a:
+        os.nice(10)          # o medidor nunca disputa CPU com o jogo
+        laco()
+    else:
+        print(__doc__)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,17 +1,32 @@
 #!/usr/bin/env python3
-"""SkyStation: resumo de desempenho de cada partida (Fase 8.2).
+"""SkyStation: resumo de desempenho de cada partida (Fase 8.2, refeito na 11.7).
 
-O MangoHud grava um CSV por partida com nome do emulador (rpcs3_2026-11-15_10-51-13.csv), sem o
-nome do jogo. Ao fechar o jogo, o sky-run chama:
+O MangoHud grava um CSV por partida, uma linha por quadro, com o nome do emulador
+(rpcs3_2026-11-15_10-51-13.csv) e sem o nome do jogo. Ao fechar o jogo, o sky-run chama:
 
     sky-bench fechar <pasta> <início-unix> <id> <título>
 
-que (1) renomeia o CSV da partida para "2026-11-15 10-51 · Resident Evil 5 (rpcs3).csv" e
-(2) acrescenta uma linha em <pasta>/resumo.csv com FPS mediano, os 10% piores, o tempo abaixo de
-30 FPS, temperatura e clocks. O tempo em que o jogo ficou congelado (menu Home aberto, modo de
-espera) não entra na conta: intervalos de mais de 5 s entre amostras são descartados.
+que (1) renomeia o CSV para "2026-11-15 10-51 · Resident Evil 5 (rpcs3).csv", (2) acrescenta uma
+linha em <pasta>/resumo.csv e (3) grava <pasta>/detalhes/<mesmo nome>.txt com a partida em blocos
+de 5 minutos (FPS, temperatura, clocks), para achar em que momento o jogo pesou.
 
-    sky-bench resumo <arquivo.csv>     mostra o resumo de um CSV qualquer
+Métricas (11.7). Como o log tem uma linha por quadro, a mediana das linhas pesa demais os trechos
+rápidos (a 60 FPS entram 60 linhas por segundo; a 15 FPS, só 15). Por isso tudo é medido por tempo:
+  fps_medio      quadros ÷ segundos jogados
+  fps_min/max    o pior e o melhor segundo (média de cada segundo)
+  fps_1pct_low   FPS do 1% de quadros mais lentos (o "1% low" das análises de PC); idem 0,1%
+  engasgos_min   quadros 2,5× mais lentos que os 30 anteriores (e > 50 ms), por minuto
+  carregando_s   segundos com menos de 1 FPS (tela de carregamento, compilação de shaders)
+  pct_abaixo_meta tempo abaixo da meta (60 FPS, ou 30 se o jogo é travado em 30)
+  pct_quente     tempo com o processador a 95 °C ou mais
+  gargalo        o que mais limitou: temperatura, GPU, CPU/emulador ou nenhum (ok)
+  ajustes        o perfil aplicado pelo SkyStation (build do Xenia, config do RPCS3, patches)
+O tempo em que o jogo ficou congelado (menu Home aberto, modo de espera) não entra: intervalos
+de mais de 5 s entre quadros são descartados.
+
+    sky-bench resumo <arquivo.csv>      mostra o resumo de um CSV qualquer
+    sky-bench relatorio <pasta>         refaz <pasta>/resumo-completo.csv com TODOS os CSVs da
+                                        pasta (inclusive os antigos) usando as métricas novas
 """
 import csv
 import os
@@ -19,18 +34,21 @@ import re
 import statistics as st
 import sys
 import time
+from collections import deque
 
-COLS = ["fps", "frametime", "cpu_load", "cpu_power", "gpu_load", "cpu_temp", "gpu_temp", "gpu_core_clock",
-        "gpu_mem_clock", "gpu_vram_used", "gpu_power", "ram_used", "swap_used", "process_rss", "cpu_mhz", "elapsed"]
-CAB = ["data", "jogo", "id", "emulador", "minutos", "fps_mediano", "fps_10pct_piores", "pct_abaixo_30",
-       "temp_mediana", "temp_p95", "cpu_mhz", "gpu_mhz", "gpu_uso", "arquivo"]
+CAB = ["data", "jogo", "id", "emulador", "minutos", "fps_medio", "fps_min", "fps_max", "fps_1pct_low",
+       "fps_01pct_low", "meta", "pct_abaixo_meta", "engasgos_min", "carregando_s", "temp_mediana", "temp_max",
+       "pct_quente", "cpu_mhz_mediana", "cpu_mhz_p10", "gpu_uso_mediano", "ram_max_gb", "vram_max_gb",
+       "swap_max_gb", "gargalo", "ajustes", "arquivo"]
 
 
 def ler(path):
-    with open(path, newline="") as f:
+    with open(path, newline="", encoding="utf-8", errors="replace") as f:
         rows = list(csv.reader(f))
     # cabeçalho do MangoHud: linha 1 = sistema, linha 3 = nomes das colunas
     idx = next((i for i, r in enumerate(rows[:6]) if r and r[0] == "fps"), 2)
+    if idx >= len(rows):
+        return []
     nomes = rows[idx]
     dados = []
     for r in rows[idx + 1:]:
@@ -41,33 +59,160 @@ def ler(path):
     return dados
 
 
-def resumo(dados):
-    if len(dados) < 10:
+def _q(xs, p):
+    return xs[int(p * (len(xs) - 1))] if xs else 0.0
+
+
+def resumo(dados, blocos=None):
+    """Métricas de uma partida. Com blocos=[] preenche a lista com o resumo de cada 5 min."""
+    if len(dados) < 10 or "elapsed" not in dados[0]:
         return None
-    # só o tempo jogando: descarta saltos > 5 s (jogo congelado no menu Home ou console suspenso)
+    t0 = dados[0]["elapsed"]
     jogando = 0.0
+    quadros = 0.0
+    quente_t = 0.0
+    seg = {}                     # segundo -> [quadros ponderados, tempo]
+    fts = []                     # frametimes (ms) dos quadros válidos
+    validos = []
     for a, b in zip(dados, dados[1:]):
         dt = (b["elapsed"] - a["elapsed"]) / 1e9
-        if 0 < dt < 5:
-            jogando += dt
-    fps = sorted(d["fps"] for d in dados)
-    q = lambda xs, p: xs[int(p * (len(xs) - 1))]
-    temps = sorted(d.get("cpu_temp", 0) for d in dados)
+        if not 0 < dt < 5:
+            continue
+        jogando += dt
+        quadros += b["fps"] * dt
+        if b.get("cpu_temp", 0) >= 95:
+            quente_t += dt
+        s = seg.setdefault(int((b["elapsed"] - t0) / 1e9), [0.0, 0.0])
+        s[0] += b["fps"] * dt
+        s[1] += dt
+        ft = b.get("frametime") or (1000.0 / b["fps"] if b["fps"] > 0 else 0)
+        if ft > 0:
+            fts.append(ft)
+        validos.append(b)
+    if jogando < 1 or not validos:
+        return None
+    por_seg = sorted(v[0] / v[1] for v in seg.values() if v[1] > 0.5) or [quadros / jogando]
+    fts.sort()
+    low1 = 1000.0 / _q(fts, 0.99) if fts else 0
+    low01 = 1000.0 / _q(fts, 0.999) if fts else 0
+    # engasgo: um quadro bem mais lento que os quadros logo antes dele (não só "abaixo da média":
+    # um trecho inteiro a 20 FPS é jogo pesado, não engasgo)
+    engasgos = 0
+    janela = deque(maxlen=30)
+    for d in validos:
+        ft = d.get("frametime") or 0
+        if len(janela) >= 10 and ft > max(2.5 * st.median(janela), 50):
+            engasgos += 1
+        if ft > 0:
+            janela.append(ft)
+    carregando = sum(1 for v in seg.values() if v[1] > 0.5 and v[0] / v[1] < 1)
+    # meta: jogo travado em 30 (90% dos segundos até 32 FPS) ou 60
+    meta = 30 if _q(por_seg, 0.9) <= 32 else 60
+    abaixo = sum(v[1] for v in seg.values() if v[1] > 0 and v[0] / v[1] < meta * 0.95) / jogando
+    temps = sorted(d.get("cpu_temp", 0) for d in validos)
+    mhz = sorted(d.get("cpu_mhz", 0) for d in validos)
+    gpu = sorted(d.get("gpu_load", 0) for d in validos)
+    quente = quente_t / jogando
+    fps_medio = quadros / jogando
+    gpu_med = _q(gpu, 0.5)
+    mhz_med, mhz_p10, mhz_top = _q(mhz, 0.5), _q(mhz, 0.1), _q(mhz, 0.95)
+    if fps_medio >= meta * 0.95 and abaixo < 0.05:
+        gargalo = "ok"
+    elif quente > 0.2 and mhz_top and mhz_p10 < 0.88 * mhz_top:
+        gargalo = "temperatura"
+    elif gpu_med >= 90:
+        gargalo = "GPU"
+    else:
+        gargalo = "CPU/emulador"
+    gb = lambda k: round(max(d.get(k, 0) for d in validos), 2)
+    if blocos is not None:
+        b = {}
+        for d in validos:
+            b.setdefault(int((d["elapsed"] - t0) / 300e9), []).append(d)
+        for k in sorted(b):
+            bb = b[k]
+            blocos.append({
+                "inicio_min": k * 5,
+                "fps_medio": round(len(bb) / max(1e-9, (bb[-1]["elapsed"] - bb[0]["elapsed"]) / 1e9), 1) if len(bb) > 1 else 0,
+                "temp": round(st.median(x.get("cpu_temp", 0) for x in bb)),
+                "cpu_mhz": round(st.median(x.get("cpu_mhz", 0) for x in bb)),
+                "gpu_uso": round(st.median(x.get("gpu_load", 0) for x in bb)),
+                "gpu_mhz": round(st.median(x.get("gpu_core_clock", 0) for x in bb)),
+            })
     return {
         "minutos": round(jogando / 60, 1),
-        "fps_mediano": round(st.median(fps), 1),
-        "fps_10pct_piores": round(q(fps, 0.10), 1),
-        "pct_abaixo_30": round(100 * sum(1 for x in fps if x < 29.5) / len(fps)),
-        "temp_mediana": round(st.median(temps)),
-        "temp_p95": round(q(temps, 0.95)),
-        "cpu_mhz": round(st.median(d.get("cpu_mhz", 0) for d in dados)),
-        "gpu_mhz": round(st.median(d.get("gpu_core_clock", 0) for d in dados)),
-        "gpu_uso": round(st.median(d.get("gpu_load", 0) for d in dados)),
+        "fps_medio": round(fps_medio, 1),
+        "fps_min": round(por_seg[0], 1),
+        "fps_max": round(por_seg[-1], 1),
+        "fps_1pct_low": round(low1, 1),
+        "fps_01pct_low": round(low01, 1),
+        "meta": meta,
+        "pct_abaixo_meta": round(100 * abaixo),
+        "engasgos_min": round(engasgos / (jogando / 60), 1),
+        "carregando_s": carregando,
+        "temp_mediana": round(_q(temps, 0.5)),
+        "temp_max": round(temps[-1]),
+        "pct_quente": round(100 * quente),
+        "cpu_mhz_mediana": round(mhz_med),
+        "cpu_mhz_p10": round(mhz_p10),
+        "gpu_uso_mediano": round(gpu_med),
+        "ram_max_gb": gb("ram_used"),
+        "vram_max_gb": gb("gpu_vram_used"),
+        "swap_max_gb": gb("swap_used"),
+        "gargalo": gargalo,
     }
 
 
 def limpo(t):
     return re.sub(r'[\\/:*?"<>|\n\r\t]+', " ", t).strip()[:80] or "jogo"
+
+
+def gravar_detalhes(pasta, nome, titulo, r, blocos):
+    d = os.path.join(pasta, "detalhes")
+    try:
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, nome[:-4] + ".txt"), "w", encoding="utf-8") as f:
+            f.write(f"{titulo}\n")
+            for k in CAB[4:-1]:
+                if k in r:
+                    f.write(f"  {k}: {r[k]}\n")
+            f.write("\nblocos de 5 min: início | FPS médio | temp °C | CPU MHz | GPU uso % | GPU MHz\n")
+            for b in blocos:
+                f.write(f"  {b['inicio_min']:4d} min | {b['fps_medio']:6.1f} | {b['temp']:3d} | {b['cpu_mhz']:5d}"
+                        f" | {b['gpu_uso']:3d} | {b['gpu_mhz']:5d}\n")
+    except OSError:
+        pass
+
+
+def acrescentar(resumo_path, linha):
+    # o resumo.csv antigo (Fase 8.2) tinha outras colunas: vira resumo-antigo.csv e começa um novo
+    if os.path.exists(resumo_path):
+        try:
+            with open(resumo_path, encoding="utf-8") as f:
+                cab = f.readline().strip().split(";")
+        except OSError:
+            cab = CAB
+        if cab != CAB:
+            base = os.path.join(os.path.dirname(resumo_path), "resumo-antigo.csv")
+            try:
+                os.replace(resumo_path, base)
+            except OSError:
+                pass
+    novo = not os.path.exists(resumo_path)
+    with open(resumo_path, "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=CAB, delimiter=";", extrasaction="ignore")
+        if novo:
+            w.writeheader()
+        w.writerow(linha)
+
+
+def ajustes_da_partida():
+    run = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
+    try:
+        with open(os.path.join(run, "game.ajustes"), encoding="utf-8") as f:
+            return " | ".join(l.strip() for l in f if l.strip())[:300]
+    except OSError:
+        return ""
 
 
 def fechar(pasta, inicio, gid, titulo):
@@ -76,8 +221,9 @@ def fechar(pasta, inicio, gid, titulo):
         nomes = os.listdir(pasta)
     except OSError:
         return
-    novos = [n for n in nomes if n.endswith(".csv") and n != "resumo.csv" and "·" not in n
+    novos = [n for n in nomes if n.endswith(".csv") and not n.startswith("resumo") and "·" not in n
              and os.path.getmtime(os.path.join(pasta, n)) >= inicio - 5]
+    ajustes = ajustes_da_partida()
     for n in sorted(novos):
         path = os.path.join(pasta, n)
         emu = n.split("_20")[0] if "_20" in n else "emulador"
@@ -88,21 +234,44 @@ def fechar(pasta, inicio, gid, titulo):
             os.replace(path, destino)
         except OSError:
             destino, novo = path, n
+        blocos = []
         try:
-            r = resumo(ler(destino))
-        except (OSError, ValueError):
+            r = resumo(ler(destino), blocos)
+        except (OSError, ValueError, KeyError):
             r = None
         if not r:
             continue
         linha = {"data": time.strftime("%Y-%m-%d %H:%M", time.localtime(inicio)), "jogo": titulo, "id": gid,
-                 "emulador": emu, "arquivo": novo, **r}
-        resumo_path = os.path.join(pasta, "resumo.csv")
-        novo_arq = not os.path.exists(resumo_path)
-        with open(resumo_path, "a", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=CAB, delimiter=";")
-            if novo_arq:
-                w.writeheader()
-            w.writerow(linha)
+                 "emulador": emu, "arquivo": novo, "ajustes": ajustes, **r}
+        acrescentar(os.path.join(pasta, "resumo.csv"), linha)
+        gravar_detalhes(pasta, novo, titulo, r, blocos)
+
+
+def relatorio(pasta):
+    """Refaz resumo-completo.csv com todos os CSVs da pasta (os antigos sem nome ficam com o emulador)."""
+    linhas = []
+    for n in sorted(os.listdir(pasta)):
+        if not n.endswith(".csv") or n.startswith("resumo"):
+            continue
+        m = re.match(r"(\d{4}-\d{2}-\d{2}) (\d{2})-(\d{2}) · (.*) \(([^()]*)\)\.csv$", n)
+        if m:
+            data, jogo, emu = f"{m[1]} {m[2]}:{m[3]}", m[4], m[5]
+        else:
+            m = re.match(r"(.*)_(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-\d{2}\.csv$", n)
+            if not m:
+                continue
+            data, jogo, emu = f"{m[2]} {m[3]}:{m[4]}", "", m[1]
+        try:
+            r = resumo(ler(os.path.join(pasta, n)))
+        except (OSError, ValueError, KeyError):
+            r = None
+        if r:
+            linhas.append({"data": data, "jogo": jogo, "id": "", "emulador": emu, "arquivo": n, "ajustes": "", **r})
+    with open(os.path.join(pasta, "resumo-completo.csv"), "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=CAB, delimiter=";", extrasaction="ignore")
+        w.writeheader()
+        w.writerows(linhas)
+    return len(linhas)
 
 
 def main():
@@ -111,6 +280,8 @@ def main():
         fechar(a[1], int(a[2]), a[3], a[4])
     elif len(a) == 2 and a[0] == "resumo":
         print(resumo(ler(a[1])))
+    elif len(a) == 2 and a[0] == "relatorio":
+        print(f"{relatorio(a[1])} partidas em {os.path.join(a[1], 'resumo-completo.csv')}")
     else:
         print(__doc__)
 

@@ -47,8 +47,15 @@ if [ "${SKY_COMPOSITOR:-}" = gamescope ] && [ -f /opt/skystation/bin/sky-toast ]
     python3 /opt/skystation/bin/sky-toast >"$LOG_DIR/toast.log" 2>&1 &
     TOAST_PID=$!
 fi
+# 11.7: benchmark do próprio sistema (menu, serviços, temperatura). Só mede com a Medição de
+# desempenho ligada no menu; desligada, só confere a cada 30 s.
+SYSMON_PID=""
+if [ -f /opt/skystation/bin/sky-sysmon ]; then
+    python3 /opt/skystation/bin/sky-sysmon >"$LOG_DIR/sysmon.log" 2>&1 &
+    SYSMON_PID=$!
+fi
 encerrar() {
-    kill "$HOME_PID" $NOTIFY_PID $NET_PID $TOAST_PID 2>/dev/null
+    kill "$HOME_PID" $NOTIFY_PID $NET_PID $TOAST_PID $SYSMON_PID 2>/dev/null
     # a central pode ter sido ligada depois, pelo menu: encerra pelo PID que ela mesma anota
     CPID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("pid",""))' "$RUN_DIR/central.json" 2>/dev/null)"
     [ -n "$CPID" ] && kill "$CPID" 2>/dev/null

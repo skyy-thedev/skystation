@@ -152,6 +152,11 @@ var settings: Control = null
 var home_dir: String = OS.get_environment("HOME")
 var conf_dir: String = home_dir + "/.config/skystation"
 var run_dir: String = OS.get_environment("XDG_RUNTIME_DIR") + "/skystation"
+# 11.7: com a Medição de desempenho ligada, o menu anota o próprio FPS a cada segundo (sky-sysmon lê)
+var bench_menu: bool = false
+var bench_quadros: int = 0
+var bench_t: float = 0.0
+var bench_pior: float = 0.0
 var net: Dictionary = {}        # Fase 10: o que o sky-net sabe da SkyNetwork (net.json)
 var net_sig: String = ""        # para só refazer o menu quando algo mudou de verdade
 var avatar_cache: Dictionary = {}   # Fase 10.5: id do ícone de perfil -> textura (ou null se não existe)
@@ -272,6 +277,7 @@ const NOTIF_ICONS := {"central": "download", "controle": "pad", "usb": "usb", "p
 
 func _ready() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_HIDDEN   # console: o ponteiro só aparece nos apps que usam mouse
+	bench_menu = _fps_on()
 	_setup_actions()
 	font = ThemeDB.fallback_font
 	var fv := FontVariation.new()
@@ -333,6 +339,15 @@ func _exit_tree() -> void:
 
 func _process(delta: float) -> void:
 	t += delta
+	if bench_menu and running_pid == -1:
+		bench_quadros += 1
+		bench_t += delta
+		bench_pior = max(bench_pior, delta)
+		if bench_t >= 1.0:
+			_write_text(run_dir + "/menu.fps", "%.1f %.1f" % [bench_quadros / bench_t, bench_pior * 1000.0])
+			bench_quadros = 0
+			bench_t = 0.0
+			bench_pior = 0.0
 	if running_pid != -1:
 		if not OS.is_process_running(running_pid):
 			_on_game_closed()
@@ -1230,7 +1245,7 @@ func _build_cats() -> void:
 		_act("Ligar pelo controle", _wake_txt(), "wake_pad", "pad"),
 		_act("Gestos no touchpad", _touch_txt(), "touchpad", "pad"),
 		_act("Este aparelho", _hw_txt(), "hwprofile", "info"),
-		_act("Medição de FPS", "Ligada: contador e log nos jogos" if _fps_on() else "Desligada", "fps", "gauge"),
+		_act("Medição de desempenho", _fps_txt(), "fps", "gauge"),
 		_act("Avisos por cima do jogo", _overlay_txt(), "gamescope", "bell"),
 		_act("Informações do sistema", "Hardware e versão", "settings:3", "info"),
 		_act("Atualizar o SkyStation", _update_txt(), "update", "refresh"),
@@ -1328,7 +1343,7 @@ func _refresh_sys_items() -> void:
 				"sounds":
 					it["sub"] = "Ligados" if sounds_on else "Desligados"
 				"fps":
-					it["sub"] = "Ligada: contador e log nos jogos" if _fps_on() else "Desligada"
+					it["sub"] = _fps_txt()
 				"gamescope":
 					it["sub"] = _overlay_txt()
 				"music":
@@ -1576,7 +1591,25 @@ func _on_settings_closed() -> void:
 
 
 func _fps_on() -> bool:
-	return FileAccess.file_exists(conf_dir + "/mangohud.on")
+	return FileAccess.file_exists(conf_dir + "/mangohud.on") or FileAccess.file_exists(conf_dir + "/bench.on")
+
+
+# 11.7: três modos. 0 = desligada; 1 = só grava (nada na tela); 2 = contador na tela + grava
+func _bench_modo() -> int:
+	if FileAccess.file_exists(conf_dir + "/mangohud.on"):
+		return 2
+	if FileAccess.file_exists(conf_dir + "/bench.on"):
+		return 1
+	return 0
+
+
+func _fps_txt() -> String:
+	match _bench_modo():
+		2:
+			return "Contador na tela + gravação (jogos e sistema)"
+		1:
+			return "Só gravação, sem contador (jogos e sistema)"
+	return "Desligada"
 
 
 # Fase 9.3: avisos por cima do jogo = trocar o compositor cage pelo gamescope (vale ao reabrir)
@@ -1606,12 +1639,21 @@ func _toggle_gamescope() -> void:
 
 
 func _toggle_fps() -> void:
-	if _fps_on():
-		DirAccess.remove_absolute(conf_dir + "/mangohud.on")
-		_toast("Medição de FPS desligada")
-	else:
-		_write_text(conf_dir + "/mangohud.on", "1")
-		_toast("Medição de FPS ligada: contador na tela + log em ~/skystation/benchmarks")
+	# desligada → só gravação → contador na tela → desligada
+	match _bench_modo():
+		0:
+			_write_text(conf_dir + "/bench.on", "1")
+			_toast("Medição ligada: grava jogos e sistema em SKYROMS/benchmarks, sem contador na tela", 4.0)
+		1:
+			DirAccess.remove_absolute(conf_dir + "/bench.on")
+			_write_text(conf_dir + "/mangohud.on", "1")
+			_toast("Medição com contador de FPS na tela + gravação")
+		_:
+			DirAccess.remove_absolute(conf_dir + "/mangohud.on")
+			DirAccess.remove_absolute(conf_dir + "/bench.on")
+			DirAccess.remove_absolute(run_dir + "/menu.fps")
+			_toast("Medição de desempenho desligada")
+	bench_menu = _fps_on()
 
 
 func _start_update(rollback: bool = false) -> void:
@@ -1732,7 +1774,7 @@ func _toggle_panel() -> void:
 		if it.get("kind", "") == "shot":
 			panel_items.append(["Ver captura", "play"])
 			panel_items.append(["Apagar captura", "delete_shot"])
-		panel_items.append(["Medição de FPS: " + ("ligada" if _fps_on() else "desligada"), "fps"])
+		panel_items.append(["Medição de desempenho: " + ["desligada", "só gravação", "com contador"][_bench_modo()], "fps"])
 		panel_items.append(["Tema: " + _theme_name(), "theme"])
 		panel_items.append(["Recarregar jogos", "reload"])
 		panel_items.append(["Configurações", "settings"])

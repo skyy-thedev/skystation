@@ -169,6 +169,27 @@ x360)
     # Xbox 360 (Fase 7.1, experimental): Xenia Canary para Linux. Só em PC forte, como o PS3.
     XENIA=/opt/xenia/xenia_canary
     [ -x "$XENIA" ] || fail "Emulador de Xbox 360 não instalado. Rode a Fase 7.1 (fase7-1.sh)."
+    # 11.7: alguns jogos vão melhor no Xenia Edge (fork do Canary focado em Vulkan e Linux, em
+    # /opt/xenia-edge). Escolha por jogo: ~/.config/skystation/x360-build/<id do jogo> com "edge" ou
+    # "canary" (vale mais), senão a lista abaixo. Sem o Edge instalado, fica no Canary.
+    GAME_ID="$(cat "${XDG_RUNTIME_DIR:-/tmp}/skystation/game.id" 2>/dev/null)"
+    BUILD="$(tr -d '[:space:]' 2>/dev/null <"$HOME/.config/skystation/x360-build/$GAME_ID")"
+    if [ -z "$BUILD" ]; then
+        case "$GAME_ID" in
+            # Dante's Inferno: a imagem congela no começo da luta contra a Morte no Canary (20/11)
+            x360-Dante*) BUILD=edge ;;
+            *) BUILD=canary ;;
+        esac
+    fi
+    if [ "$BUILD" = edge ]; then
+        if [ -x /opt/xenia-edge/xenia_edge ]; then
+            XENIA=/opt/xenia-edge/xenia_edge
+        else
+            echo "sky-emu: $GAME_ID pede o Xenia Edge, que não está instalado; abrindo no Canary" >&2
+            BUILD="canary (o Edge não está instalado)"
+        fi
+    fi
+    echo "Xenia: $BUILD" >>"${XDG_RUNTIME_DIR:-/tmp}/skystation/game.ajustes"
     if [ "$(nproc)" -lt 6 ] && [ ! -f "$HOME/.config/skystation/x360-forcar" ]; then
         fail "Xbox 360 precisa de um processador com 6+ threads (este tem $(nproc)). Dê boot com o pendrive num PC mais forte."
     fi

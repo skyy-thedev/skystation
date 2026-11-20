@@ -23,6 +23,7 @@ skystation/
 │   ├── fase6-0.sh    desempenho por jogo (PS2), Modo TV, Central web, copiar disco (cdrdao, chdman)
 │   ├── fase7-0.sh    Central web em segundo plano, som de ligar na TV, PS3 (RPCS3), boot em outro PC
 │   ├── fase7-1.sh    GameCube, Wii, DS, 3DS, GB/GBA, NES, Mega Drive (RetroArch) e Xbox 360 (Xenia)
+│   ├── xenia-edge.sh Xenia Edge ao lado do Canary (jogos de Xbox 360 que vão melhor nele)
 │   ├── skyroms-hd.sh jogos direto do HD/SSD do PC: pasta SKYROMS → /mnt/skyroms (skystation-skyroms-hd)
 │   ├── atualizar-menu.sh  "Atualizar o SkyStation" do menu, sem sudo (serviço + .path do systemd)
 │   ├── marca.sh      identidade do sistema (comando skystation-marca, reaplicado pelo pacman)
@@ -207,6 +208,21 @@ Ao abrir um jogo de PS3, o `sky-ps3` baixa (1x por semana) a base oficial de pat
 os recomendados para jogos da lista em `console/bin/skypatches.py`. Hoje: **God of War III** (sem MLAA,
 sem motion blur, sem profundidade de campo, FPS destravado). O que foi ligado fica em
 `SKYROMS/diag-patches.txt`. Jogos que já rodam no limite do console (RE5, MK, Naruto) não precisam.
+
+## Medição de desempenho: jogos e sistema (Fase 11.7)
+
+Sistema → **Medição de desempenho** tem três modos: desligada, **só gravação** (nada na tela) e
+**com contador**. Ligada, grava em `SKYROMS/benchmarks`:
+- **Jogos** (`sky-bench`): o `resumo.csv` ganhou métricas por tempo, e não por linha do log:
+  FPS médio (quadros ÷ segundos), pior e melhor segundo, 1% e 0,1% low, engasgos por minuto,
+  segundos carregando, tempo abaixo da meta (60, ou 30 em jogo travado), tempo a 95 °C ou mais,
+  clocks, RAM/VRAM/swap, o **gargalo** provável (temperatura, GPU, CPU/emulador ou ok) e os
+  **ajustes** aplicados (perfil do RPCS3, patches, build do Xenia). `detalhes/` tem cada partida em
+  blocos de 5 min. `sky-bench relatorio <pasta>` refaz `resumo-completo.csv` com todos os logs.
+- **Sistema** (`sky-sysmon`): a cada 2 s, `sistema/sistema-AAAA-MM-DD.csv` com o estado (menu, jogo,
+  Home), FPS do menu, CPU, temperatura, GPU, RAM, bateria e a CPU/memória de cada parte do
+  SkyStation (menu, Home, avisos, rede, central, compositor, áudio, jogo). `sistema/boot.csv`: tempo
+  de boot e até o menu ficar pronto. `sky-sysmon resumo <pasta>` faz `resumo-sistema.csv`.
 
 ## Benchmarks com nome do jogo (Fase 8.2)
 
