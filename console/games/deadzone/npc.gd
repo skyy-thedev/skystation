@@ -64,7 +64,7 @@ func _process(d: float) -> void:
 
 func _draw() -> void:
 	draw_circle(Vector2(2, 2), 13, Color(0, 0, 0, 0.35))
-	if A.boneco(self, "personagens/" + id, olhar, fase, false, 60.0):
+	if A.boneco(self, "personagens/" + id, olhar, fase, false, 78.0):
 		_marcador()
 		return
 	var corpo := Vector2(0, -18 + sin(fase) * 0.8)
@@ -80,6 +80,6 @@ func _draw() -> void:
 func _marcador() -> void:
 	# marcador: tem conversa
 	if not sumir and main.historia.tem_conversa(id):
-		var y := -66 + sin(fase * 2.0) * 3
+		var y := -94 + sin(fase * 2.0) * 3
 		draw_circle(Vector2(0, y), 9, Color(1, 0.82, 0.4, 0.95))
 		draw_string(ThemeDB.fallback_font, Vector2(-4, y + 5), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.1, 0.1, 0.1))

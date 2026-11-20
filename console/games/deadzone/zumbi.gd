@@ -182,17 +182,17 @@ func _draw() -> void:
 	var esc0 := 1.35 if tipo == "brutamontes" else 1.0
 	draw_circle(Vector2(2, 2), 13 * esc0, Color(0, 0, 0, 0.35))
 	var mod := Color(4, 4, 4) if t_flash > 0.0 else Color.WHITE
-	if A.boneco(self, "zumbis/" + tipo, frente, fase, true, 60.0 * esc0, mod, false):
+	if A.boneco(self, "zumbis/" + tipo, frente, fase, true, 76.0 * (1.2 if tipo == "brutamontes" else 1.0), mod, false):
 		if tipo == "irradiado":
 			draw_circle(Vector2(0, -30), 20, Color(0.4, 1.0, 0.3, 0.12))
 		if alerta:
-			draw_circle(Vector2(0, -64 * esc0), 3, Color(1, 0.2, 0.15))
+			draw_circle(Vector2(0, -86 * esc0), 3, Color(1, 0.2, 0.15))
 		if t_fogo > 0.0:
 			for k in 3:
 				draw_circle(Vector2(randf_range(-10, 10), randf_range(-50, -10)), randf_range(5, 9), Color(1, randf_range(0.4, 0.8), 0.1, 0.8))
 		if hp < hp_max:
-			draw_rect(Rect2(-14, -70 * esc0, 28, 4), Color(0, 0, 0, 0.6))
-			draw_rect(Rect2(-14, -70 * esc0, 28 * maxf(0.0, hp / hp_max), 4), Color("e85d5d"))
+			draw_rect(Rect2(-14, -82 * esc0, 28, 4), Color(0, 0, 0, 0.6))
+			draw_rect(Rect2(-14, -82 * esc0, 28 * maxf(0.0, hp / hp_max), 4), Color("e85d5d"))
 		return
 	var lado := frente.orthogonal()
 	var bal := sin(fase) * 4.0

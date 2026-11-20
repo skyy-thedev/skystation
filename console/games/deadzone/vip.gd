@@ -159,7 +159,7 @@ func _draw() -> void:
 		draw_string(ThemeDB.fallback_font, Vector2(-40, -24), "Iara caída: %.0f s" % t_caido, HORIZONTAL_ALIGNMENT_CENTER, 80, 12, Color("ff8a8a"))
 		return
 	var mod := Color(1.6, 0.5, 0.5) if t_dano > 0.0 else Color.WHITE
-	if A.boneco(self, "personagens/iara", mira, passo, velocity.length() > 10.0, 50.0, mod):
+	if A.boneco(self, "personagens/iara", mira, passo, velocity.length() > 10.0, 64.0, mod):
 		_draw_rotulos()
 		return
 	var lado := mira.orthogonal()
@@ -178,7 +178,7 @@ func _draw() -> void:
 
 func _draw_rotulos() -> void:
 	if esperar:
-		draw_string(ThemeDB.fallback_font, Vector2(-30, -50), "esperando", HORIZONTAL_ALIGNMENT_CENTER, 60, 11, Color(1, 1, 1, 0.7))
+		draw_string(ThemeDB.fallback_font, Vector2(-30, -78), "esperando", HORIZONTAL_ALIGNMENT_CENTER, 60, 11, Color(1, 1, 1, 0.7))
 	if hp < hp_max:
-		draw_rect(Rect2(-14, -54, 28, 4), Color(0, 0, 0, 0.6))
-		draw_rect(Rect2(-14, -54, 28 * hp / hp_max, 4), Color("7ff0c4"))
+		draw_rect(Rect2(-14, -72, 28, 4), Color(0, 0, 0, 0.6))
+		draw_rect(Rect2(-14, -72, 28 * hp / hp_max, 4), Color("7ff0c4"))

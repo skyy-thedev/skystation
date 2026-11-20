@@ -162,7 +162,7 @@ arte do projeto e recortada por `tools/deadzone_fatiar.py` (fundo magenta → tr
 carros, texturas emendáveis) para `console/games/deadzone/arte/`. O jogo lê os arquivos direto (`arte.gd`,
 pasta com `.gdignore`); se uma imagem faltar, volta ao desenho antigo. Cutscenes são quadros de HQ em tela cheia
 com zoom lento, legenda e balão (`historia.gd` marca a fala com página e quadro); diálogos mostram o retrato com
-a expressão de cada fala. Os personagens em jogo e os zumbis ainda são desenhados pelo código. Os sons são
+a expressão de cada fala. Os sons são
 sintetizados. Fontes: Bangers e Comic Neue (OFL). A bíblia da história e o roteiro dos capítulos estão no projeto
 (`claude/zona-morta.md`).
 - **História:** 2032, um acidente no reator experimental de Angra dos Reis transforma quem respirou a nuvem em
@@ -191,7 +191,8 @@ sintetizados. Fontes: Bangers e Comic Neue (OFL). A bíblia da história e o rot
   **Onomatopeias** de gibi no mundo (BLAM!, BUUM!, POW!, NHAC!, SPLAT!…) junto do som, com tremor de tela nos
   tiros fortes. **Personagens e zumbis prontos para a arte:** `arte.gd/boneco()` desenha
   `arte/personagens/<nome>_<baixo|cima|esq|dir>.png` e `arte/zumbis/<tipo>_<frente|lado>.png` com pulinho,
-  balanço e respiração; enquanto os arquivos não existem, fica o boneco antigo.
+  balanço e respiração; enquanto os arquivos não existem, fica o boneco antigo. Já estão lá Corvo, Iara, Rocha,
+  Nina e Tião (frente, costas e lado; o lado que falta é o outro espelhado) e os 5 zumbis.
 - **Testes:** `console/tests/deadzone/roteiro.gd` joga o capítulo inteiro (31 checagens, inclusive salvar e
   carregar) e `controles.gd` aperta os botões; os dois rodam no CI do launcher.
 

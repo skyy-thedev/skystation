@@ -517,7 +517,7 @@ func _draw() -> void:
 		draw_string(ThemeDB.fallback_font, Vector2(-40, -24), "%s caído: %.0f s" % [nome, t_caido], HORIZONTAL_ALIGNMENT_CENTER, 80, 12, Color("ff8a8a"))
 		return
 	var mod := Color(1.6, 0.5, 0.5) if t_dano > 0.0 else Color.WHITE
-	if A.boneco(self, "personagens/" + ("iara" if vip else "corvo"), mira, passo, andando, 50.0 if vip else 62.0, mod):
+	if A.boneco(self, "personagens/" + ("iara" if vip else "corvo"), mira, passo, andando, 64.0 if vip else 80.0, mod):
 		_draw_extras(mira.orthogonal(), Vector2(0, -30), true)
 		return
 	var corpo := Vector2(0, -18)
@@ -555,7 +555,7 @@ func _draw() -> void:
 
 func _draw_extras(lado: Vector2, corpo: Vector2, arte: bool) -> void:
 	## o que vale para os dois jeitos de desenhar: tiros, tocha, barra de ação, P1/P2
-	var topo := -76.0 if arte else -64.0
+	var topo := -94.0 if arte else -64.0
 	if tocha_t > 0.0 and arte:
 		var t := corpo - lado * 12 + mira * 6
 		draw_circle(t + Vector2(0, -14), 5 + sin(Time.get_ticks_msec() * 0.02) * 1.5, Color(1, 0.6, 0.15, 0.95))
