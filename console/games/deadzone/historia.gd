@@ -81,27 +81,38 @@ func iniciar() -> void:
 		main.aviso("Sobrevivência: aguente o máximo de dias que conseguir.", Color("ffd166"))
 		return
 	dizer([
-		{"quem": "", "txt": "2032. O mundo seguia normal."},
-		{"quem": "", "txt": "Até o acidente no reator experimental de Angra dos Reis. A nuvem viajou com o vento. Quem respirou, mudou."},
-		{"quem": "", "txt": "Sobrou quem estava longe demais… ou debaixo da terra, nos bunkers."},
-		{"quem": "", "txt": "Um ano depois. Bunker de Sumaré, interior de São Paulo."},
-		{"quem": "Rocha", "txt": "Corvo. Você é o melhor mercenário que sobrou. E o mais barato."},
-		{"quem": "Corvo", "txt": "Qual é o serviço, comandante?"},
-		{"quem": "Rocha", "txt": "Levar uma carga até o Bunker do Rio de Janeiro. Quinhentos quilômetros de estrada morta, cidade queimada e radiação."},
-		{"quem": "Corvo", "txt": "Que carga?"},
-		{"quem": "Rocha", "txt": "Ela. O nome dela é Iara. Não faça perguntas e não deixe ninguém encostar nela."},
-		{"quem": "Iara", "txt": "Eu sei me cuidar sozinha, tá?"},
-		{"quem": "Rocha", "txt": "O pagamento: um lugar no Bunker do Rio. Comida, água limpa, ar filtrado. Para sempre."},
-		{"quem": "Corvo", "txt": "…", "opcoes": [
+		_q("c1_abertura", 0, {"quem": "", "txt": "2032. Angra dos Reis. O reator experimental falhou numa terça-feira à tarde."}),
+		_q("c1_abertura", 1, {"quem": "", "txt": "A nuvem verde chegou a São Paulo antes do jornal da noite. Ninguém sabia o que era. Todo mundo filmou."}),
+		_q("c1_abertura", 2, {"quem": "", "txt": "Quem respirou, mudou."}),
+		_q("c1_abertura", 3, {"quem": "", "txt": "Quem chegou a tempo num bunker fechou a porta. E não abriu mais para ninguém."}),
+		_q("c1_contrato", 0, {"quem": "", "txt": "Um ano depois. Bunker de Sumaré, interior de São Paulo."}),
+		_q("c1_contrato", 0, {"quem": "Rocha", "txt": "Corvo. Você é o melhor mercenário que sobrou. E o mais barato."}),
+		_q("c1_contrato", 0, {"quem": "Corvo", "txt": "Os outros três morreram. Isso me deixa caro. Qual é o serviço?"}),
+		_q("c1_contrato", 0, {"quem": "Rocha", "txt": "Uma entrega. Daqui até o Bunker do Rio de Janeiro."}),
+		_q("c1_contrato", 0, {"quem": "Corvo", "txt": "Quinhentos quilômetros. Duas capitais queimadas. Uma serra. Que carga?"}),
+		_q("c1_contrato", 1, {"quem": "Rocha", "txt": "Ela. O nome é Iara. Não faz pergunta e não deixa ninguém encostar nela."}),
+		_q("c1_contrato", 1, {"quem": "Iara", "txt": "Oi! Eu tô ouvindo, tá? O vidro não é à prova de som."}),
+		_q("c1_contrato", 1, {"quem": "Corvo", "txt": "Eu não levo criança."}),
+		_q("c1_contrato", 1, {"quem": "Iara", "txt": "E eu não ando com tiozão que fede a cigarro. Olha só: já temos uma coisa em comum."}),
+		{"quem": "Rocha", "cara": "sorriso", "txt": "O pagamento: um lugar no Bunker do Rio. Comida, água limpa, ar filtrado. Pra sempre."},
+		{"quem": "Corvo", "cara": "neutro", "txt": "…", "opcoes": [
 			{"txt": "\"Fechado.\"", "set": {"contrato": "aceitou"}, "seguir": [
-				{"quem": "Rocha", "txt": "Sabia que podia contar com a sua ganância."}]},
-			{"txt": "\"Quero metade adiantada.\"", "set": {"contrato": "adiantado"}, "faz": _adiantamento, "seguir": [
-				{"quem": "Rocha", "txt": "Você não muda. Leva umas balas a mais. É tudo que eu tenho."}]},
+				{"quem": "Rocha", "cara": "rindo", "txt": "Sabia que dava pra contar com a sua ganância."}]},
+			{"txt": "\"Metade adiantada.\"", "set": {"contrato": "adiantado"}, "faz": _adiantamento, "seguir": [
+				{"quem": "Rocha", "cara": "duvida", "txt": "Você não muda. Leva seis balas. É o que sobrou no cofre."}]},
 			{"txt": "\"Quem é ela de verdade?\"", "set": {"contrato": "perguntou"}, "seguir": [
-				{"quem": "Rocha", "txt": "Alguém que vale mais do que nós dois juntos. Pegue seu equipamento e vá."},
-				{"quem": "Iara", "txt": "(baixinho) Eu também queria saber o que eu sou pra eles."}]},
+				{"quem": "Rocha", "cara": "culpado", "txt": "Alguém que vale mais que nós dois juntos. Pega o equipamento e some."},
+				{"quem": "Iara", "cara": "triste", "txt": "(baixinho) Eu também queria saber o que eu sou pra eles."}]},
 		]},
 	], _depois_intro)
+
+
+func _q(pagina: String, quadro: int, f: Dictionary) -> Dictionary:
+	## fala mostrada em cima de um quadro de HQ (arte/hq/<pagina>.jpg). Sem a imagem, vira fala normal.
+	var r := f.duplicate()
+	r["hq"] = pagina
+	r["q"] = quadro
+	return r
 
 
 func _adiantamento() -> void:
@@ -181,32 +192,41 @@ func evento(nome: String, dados: Dictionary) -> void:
 			if etapa == 1 and dados.get("tipo", "") == "arsenal":
 				_proxima()
 				dizer([
-					{"quem": "Corvo", "txt": "Faca, balas, iodo pra radiação. Já viajei com menos."},
-					{"quem": "Iara", "txt": "Você sempre fala sozinho assim?"},
-					{"quem": "Corvo", "txt": "Só quando tem gente ouvindo. Fica perto de mim. Se eu mandar esperar (✕ perto de você), você espera."},
+					{"quem": "Corvo", "txt": "Faca, seis balas, iodo pra radiação. Não é a Teimosa, mas corta. Já atravessei estado com menos."},
+					{"quem": "Iara", "cara": "deboche", "txt": "Você sempre narra o que tá fazendo? Parece tio gravando vídeo."},
+					{"quem": "Corvo", "cara": "irritado", "txt": "Só quando tem plateia. Regra um: fica perto. Regra dois: se eu mandar esperar (✕ perto de você), você espera."},
+					{"quem": "Iara", "cara": "rindo", "txt": "E a regra três?"},
+					{"quem": "Corvo", "cara": "neutro", "txt": "Não tem regra três. Ninguém chega na três."},
 				])
 		"saiu":
 			if etapa == 2:
 				_proxima()
 				dizer([
-					{"quem": "Iara", "txt": "Faz um ano que eu não vejo o céu."},
-					{"quem": "Corvo", "txt": "Não se acostuma. Aqui em cima tudo quer te matar. Até o ar."},
-					{"quem": "Corvo", "txt": "Ouviu esse estalo? É o contador geiger. Quanto mais rápido, mais radiação. A gente contorna."},
+					_q("c1_contrato", 2, {"quem": "Iara", "txt": "Faz um ano que eu não vejo o céu."}),
+					_q("c1_contrato", 2, {"quem": "Corvo", "txt": "Não se acostuma. Aqui em cima tudo quer te matar. Até o ar."}),
+					{"quem": "Corvo", "cara": "preocupado", "txt": "Ouviu esse estalo? Contador geiger. Quanto mais rápido, mais radiação. A gente contorna."},
+					{"quem": "Iara", "cara": "deboche", "txt": "Os torrados lá fora gemem igual panela de pressão. Vou chamar de Queimados. Os rápidos são os Corredores."},
+					{"quem": "Corvo", "cara": "neutro", "txt": "Dá nome se quiser. Só não dá carinho."},
 				])
 		"gasolina":
 			if etapa == 4:
 				_proxima()
-				dizer([{"quem": "Corvo", "txt": "Dez litros. Agora um carro que ainda pegue. Os bons piscam o farol."}])
+				dizer([
+					{"quem": "Corvo", "txt": "Dez litros. Agora um carro que ainda pegue. Os bons piscam o farol."},
+					{"quem": "Iara", "cara": "rindo", "txt": "Tipo vaga-lume. Fofo."},
+				])
 		"abasteceu":
 			if etapa == 5:
 				_proxima()
 				dizer([
-					{"quem": "Iara", "txt": "Ele pegou! Ele pegou mesmo!"},
-					{"quem": "Corvo", "txt": "Cinto. Pedágio da Anhanguera, ao norte. Depois disso, São Paulo."},
+					{"quem": "Iara", "cara": "rindo", "txt": "Ele pegou! Ele pegou mesmo!"},
+					{"quem": "Corvo", "cara": "sorriso", "txt": "Cinto. Pedágio da Anhanguera, ao norte. Depois disso, São Paulo."},
+					{"quem": "Iara", "cara": "deboche", "txt": "Posso escolher a música?"},
+					{"quem": "Corvo", "cara": "neutro", "txt": "Não tem rádio. Não tem música. E não tem você escolhendo."},
 				])
 		"iara_mordida":
 			if not revelado and etapa >= 2 and main.estado == main.JOGANDO:
-				_revelacao("Um deles pegou o braço da Iara!")
+				_revelacao("Um deles pegou o braço da Iara!", false)
 		"dormiu":
 			if secundario != "":
 				secundario = ""
@@ -239,30 +259,44 @@ func checar_saida() -> void:
 
 # ---------------------------------------------------------------- o segredo da Iara
 
-func _revelacao(como: String) -> void:
+func _revelacao(como: String, hq := true) -> void:
+	## hq = a emboscada da sala do rádio (tem página de quadrinho). Mordida no meio da rua = só retratos.
 	revelado = true
+	var pg := "c1_mordida_arma" if hq else ""
+	var arma := [
+		_talvez(hq, "c1_mordida_arma", 1, {"quem": "Iara", "cara": "chorando", "txt": "Faz. Se for pra virar uma daquelas coisas… faz."}),
+		_talvez(hq, "c1_mordida_arma", 1, {"quem": "Corvo", "cara": "preocupado", "txt": "Vou contar. Um minuto, cinco, dez. Se você mudar, eu não erro."}),
+		_talvez(hq, "c1_mordida_arma", 2, {"quem": "", "txt": "Dez minutos. Nada acontece."}),
+		_talvez(hq, "c1_mordida_arma", 2, {"quem": "Iara", "cara": "triste", "txt": "Eu não viro. Nunca virei. Essa é a terceira mordida."}),
+	]
+	var esperou := [
+		_talvez(hq, "c1_mordida_mao", 1, {"quem": "Iara", "cara": "chorando", "txt": "Fica comigo. Por favor. Não me deixa sozinha."}),
+		_talvez(hq, "c1_mordida_mao", 1, {"quem": "Corvo", "cara": "preocupado", "txt": "Tô aqui. Respira. Conta comigo: um… dois…"}),
+		_talvez(hq, "c1_mordida_mao", 2, {"quem": "Iara", "cara": "triste", "txt": "Eu não viro. Nunca virei. Essa é a terceira mordida."}),
+	]
 	dizer([
-		{"quem": "", "txt": como},
-		{"quem": "Iara", "txt": "Ele… ele me mordeu."},
-		{"quem": "Corvo", "txt": "Mostra o braço. Agora."},
-		{"quem": "Corvo", "txt": "…", "opcoes": [
-			{"txt": "Apontar a arma para ela", "set": {"mordida": "arma"}, "seguir": [
-				{"quem": "Iara", "txt": "Faz. Se for pra virar uma daquelas coisas… faz."}]},
-			{"txt": "Segurar a mão dela e esperar", "set": {"mordida": "esperou"}, "seguir": [
-				{"quem": "Iara", "txt": "Fica comigo. Por favor. Não me deixa sozinha."}]},
+		_talvez(hq, pg, 0, {"quem": "", "txt": como}),
+		_talvez(hq, pg, 0, {"quem": "Iara", "cara": "medo", "txt": "Ele… ele me mordeu."}),
+		_talvez(hq, pg, 0, {"quem": "Corvo", "cara": "grito", "txt": "Mostra o braço. AGORA."}),
+		{"quem": "Corvo", "cara": "medo", "txt": "…", "opcoes": [
+			{"txt": "Apontar a arma para ela", "set": {"mordida": "arma"}, "seguir": arma},
+			{"txt": "Segurar a mão dela e esperar", "set": {"mordida": "esperou"}, "seguir": esperou},
 		]},
-		{"quem": "", "txt": "Um minuto. Cinco. Dez. Nada acontece."},
-		{"quem": "Iara", "txt": "Eu não viro. Nunca virei. Já fui mordida três vezes."},
-		{"quem": "Corvo", "txt": "Imune."},
-		{"quem": "Iara", "txt": "Por isso o Rio me quer. Tem um hospital lá. Querem me abrir e descobrir por quê."},
-		{"quem": "Corvo", "txt": "…", "opcoes": [
+		{"quem": "Corvo", "cara": "preocupado", "txt": "Imune."},
+		{"quem": "Iara", "cara": "triste", "txt": "Por isso o Rio me quer. Tem um hospital lá. Querem me abrir pra descobrir por quê."},
+		{"quem": "Iara", "cara": "determinada", "txt": "Minha avó dizia que o sangue guarani lembra de tudo. Acho que o meu lembra como não morrer."},
+		{"quem": "Corvo", "cara": "neutro", "txt": "…", "opcoes": [
 			{"txt": "\"Contrato é contrato. Vamos pro Rio.\"", "set": {"rumo": "contrato"}, "seguir": [
-				{"quem": "Iara", "txt": "Claro. Eu sou só a carga."}]},
+				{"quem": "Iara", "cara": "brava", "txt": "Claro. Eu sou só a carga. Esqueci."}]},
 			{"txt": "\"Ninguém vai te abrir enquanto eu estiver vivo.\"", "set": {"rumo": "protetor"}, "seguir": [
-				{"quem": "Iara", "txt": "…Você nem me conhece."},
-				{"quem": "Corvo", "txt": "Conheço o suficiente."}]},
+				{"quem": "Iara", "cara": "triste", "txt": "…Você nem me conhece."},
+				{"quem": "Corvo", "cara": "neutro", "txt": "Conheço o suficiente. Eu tinha uma filha da sua idade. Bia. Também falava demais."}]},
 		]},
 	])
+
+
+func _talvez(hq: bool, pagina: String, quadro: int, f: Dictionary) -> Dictionary:
+	return _q(pagina, quadro, f) if hq and pagina != "" else f
 
 
 # ---------------------------------------------------------------- rádio e pessoas
@@ -282,18 +316,19 @@ func usar_radio() -> void:
 		main.aviso("Só chiado…", Color(1, 1, 1, 0.6))
 		return
 	dizer([
-		{"quem": "Rádio", "txt": "Chhh… Bunker Rio, Dra. Helena Vasconcelos. Identifique-se."},
-		{"quem": "Corvo", "txt": "Corvo. Escolta do Bunker Sumaré. Estou com a carga."},
-		{"quem": "Helena", "txt": "Ela está bem? Algum ferimento? Qualquer arranhão, qualquer mordida, você me avisa na hora."},
-		{"quem": "Corvo", "txt": "Por quê?"},
-		{"quem": "Helena", "txt": "Porque esse é o meu trabalho. A rota: pedágio da Anhanguera, depois São Paulo por baixo, pelo metrô. A superfície da capital está quente demais."},
-		{"quem": "Corvo", "txt": "…", "opcoes": [
+		{"quem": "Rádio", "txt": "Chhh… Bunker Rio, aqui é a Dra. Helena Vasconcelos. Identifique-se, meu bem."},
+		{"quem": "Corvo", "txt": "Corvo. Escolta do Bunker Sumaré. Tô com a carga."},
+		{"quem": "Helena", "cara": "calma", "txt": "Que alívio. Ela está bem? Algum arranhão, alguma mordida? Qualquer coisa, você me avisa na hora, tá bom?"},
+		{"quem": "Corvo", "cara": "irritado", "txt": "Por quê?"},
+		{"quem": "Helena", "cara": "fria", "txt": "Porque esse é o meu trabalho, meu bem. Rota: pedágio da Anhanguera, depois São Paulo por baixo, pelo metrô. A superfície da capital está quente demais."},
+		{"quem": "Iara", "cara": "brava", "txt": "Pergunta se ela vai me dar pirulito depois da agulha."},
+		{"quem": "Corvo", "cara": "neutro", "txt": "…", "opcoes": [
 			{"txt": "\"Ela chega inteira. Palavra.\"", "set": {"helena": "promessa"}, "seguir": [
-				{"quem": "Helena", "txt": "Eu vou cobrar essa palavra, Corvo."}]},
+				{"quem": "Helena", "cara": "calma", "txt": "Vou cobrar essa palavra, Corvo."}]},
 			{"txt": "\"O que ela tem de tão especial?\"", "set": {"helena": "desconfia"}, "seguir": [
-				{"quem": "Helena", "txt": "Entregue a garota e talvez eu te conte."}]},
+				{"quem": "Helena", "cara": "fria", "txt": "Entregue a garota e talvez eu te conte. Talvez."}]},
 		]},
-		{"quem": "Helena", "txt": "E cuidado com o pedágio. Tem um tal de Tião lá. Ele ouve este rádio também. Câmbio."},
+		{"quem": "Helena", "cara": "calma", "txt": "E cuidado no pedágio. Tem um tal de Tião lá. Ele escuta este rádio também. Câmbio, meu bem."},
 	], _depois_radio, true)
 
 
@@ -330,12 +365,12 @@ func falar(id: String) -> void:
 			if etapa == 0:
 				iniciar()
 			else:
-				dizer([{"quem": "Rocha", "txt": "Ainda aqui? A estrada não vai ficar mais segura esperando."}])
+				dizer([{"quem": "Rocha", "cara": "bravo", "txt": "Ainda aqui? A estrada não fica mais segura enquanto você enrola."}])
 
 
 func _nina() -> void:
 	if falou.has("nina"):
-		dizer([{"quem": "Nina", "txt": "Vai logo. A noite aqui é pior do que você imagina."}])
+		dizer([{"quem": "Nina", "cara": "rindo", "txt": "Vai logo, coroa. A noite aqui come gente."}])
 		return
 	falou["nina"] = true
 	var tem_bandagem := false
@@ -345,24 +380,24 @@ func _nina() -> void:
 	var ops := []
 	if tem_bandagem:
 		ops.append({"txt": "Dar uma bandagem", "set": {"nina": "ajudou"}, "faz": _dar_bandagem, "seguir": [
-			{"quem": "Nina", "txt": "…Obrigada. Pouca gente ainda faz isso."},
-			{"quem": "Nina", "txt": "No pátio da garagem tem um carro que ainda pega. Marquei no seu mapa. Só falta gasolina."},
-			{"quem": "Nina", "txt": "E se vocês forem pela Serra… procurem as trilhas dos índios. Se um menino de uma perna só aparecer assobiando, sigam ele."},
-			{"quem": "Iara", "txt": "O Saci? Minha avó contava essa."},
-			{"quem": "Nina", "txt": "Sua avó sabia das coisas."},
+			{"quem": "Nina", "cara": "rindo", "txt": "Valeu, coroa. Tá ligado que quase ninguém faz mais isso?"},
+			{"quem": "Nina", "cara": "rindo", "txt": "No pátio da garagem tem um carro que ainda pega. Marquei no teu mapa. Só falta a gasosa."},
+			{"quem": "Nina", "cara": "medo", "txt": "E se forem pela Serra, procura as trilhas dos índios. Se aparecer um moleque de uma perna só assobiando, segue ele. Não pergunta. Segue."},
+			{"quem": "Iara", "cara": "rindo", "txt": "O Saci? Minha avó contava essa!"},
+			{"quem": "Nina", "cara": "rindo", "txt": "Tua avó era das minhas."},
 		]})
 	ops.append({"txt": "\"Não tenho nada pra você.\"", "set": {"nina": "recusou"}, "seguir": [
-		{"quem": "Nina", "txt": "Claro que não. Ninguém tem."},
-		{"quem": "Iara", "txt": "A gente podia ter ajudado."},
+		{"quem": "Nina", "cara": "brava", "txt": "Suave. Ninguém tem nada mesmo. Mundo lindo esse."},
+		{"quem": "Iara", "cara": "brava", "txt": "A gente podia ter ajudado."},
 	]})
 	ops.append({"txt": "\"Passa a mochila.\"", "set": {"nina": "roubou"}, "faz": _roubar_nina, "seguir": [
-		{"quem": "Nina", "txt": "…Toma. Espero que valha a pena, monstro."},
-		{"quem": "Iara", "txt": "…"},
+		{"quem": "Nina", "cara": "brava", "txt": "…Toma. Espero que te engasgue, monstro."},
+		{"quem": "Iara", "cara": "triste", "txt": "…"},
 	]})
 	dizer([
-		{"quem": "Nina", "txt": "Não atira! Eu tô viva, tá? Só… meu braço tá aberto."},
-		{"quem": "Nina", "txt": "Você tem uma bandagem? Por favor." if tem_bandagem else "Você tem alguma coisa pra estancar isso? Qualquer coisa."},
-		{"quem": "Corvo", "txt": "…", "opcoes": ops},
+		{"quem": "Nina", "cara": "medo", "txt": "Ô, ô, abaixa isso aí! Tô viva, mano, tô viva! Só o braço que tá aberto."},
+		{"quem": "Nina", "cara": "dor", "txt": "Tem bandagem aí? Na moral, eu pago depois. Com juros." if tem_bandagem else "Tem alguma coisa pra estancar isso? Pano, fita, sei lá, qualquer coisa."},
+		{"quem": "Corvo", "cara": "neutro", "txt": "…", "opcoes": ops},
 	], _depois_nina)
 
 
@@ -387,10 +422,10 @@ func _depois_nina() -> void:
 
 func _tiao() -> void:
 	if etapa < 6:
-		dizer([{"quem": "Tião", "txt": "Pedágio do Tião. Sem carro e sem gasolina você não chega nem em Campinas. Volta quando tiver os dois."}])
+		dizer([{"quem": "Tião", "cara": "locutor", "txt": "Freguês sem carro é freguês a pé! Volta com carro e gasolina, que o Tião abre a cancela."}])
 		return
 	if etapa == 6 and not _de_carro_perto():
-		dizer([{"quem": "Tião", "txt": "Cadê o carro? Volta com ele, que eu abro a cancela."}])
+		dizer([{"quem": "Tião", "cara": "ganancia", "txt": "Cadê o carro, freguês? Volta com ele que a gente conversa."}])
 		return
 	etapa = 7
 	var tem_fogo := false
@@ -401,26 +436,38 @@ func _tiao() -> void:
 	var ops := []
 	if tem_fogo:
 		ops.append({"txt": "Entregar a sua arma de fogo", "set": {"ponte": "arma"}, "faz": _entregar_arma,
-			"seguir": [{"quem": "Tião", "txt": "Boa escolha. Arma é o que mais falta do lado de lá."}]})
+			"seguir": [{"quem": "Tião", "cara": "ganancia", "txt": "Boa escolha! Arma é o que mais falta do lado de lá."}] + _saida()})
 	ops.append({"txt": "Dar metade da gasolina", "set": {"ponte": "gasolina"}, "faz": _metade_gasolina,
-		"seguir": [{"quem": "Tião", "txt": "Metade. Vai dar pra chegar em São Paulo… se você não se perder."}]})
+		"seguir": [{"quem": "Tião", "cara": "ganancia", "txt": "Metade! Dá pra chegar em São Paulo… se você não se perder, freguês."}] + _saida()})
 	ops.append({"txt": "Ameaçar: \"Abre a cancela, Tião.\"", "set": {"ponte": "ameaca"}, "seguir": [
-		{"quem": "Tião", "txt": "Calma, calma! Tá aberta! Mas a doutora do rádio vai saber disso."}]})
+		{"quem": "Tião", "cara": "assustado", "txt": "Calma, calma, CALMA! Tá aberta! Mas a doutora do rádio vai ficar sabendo disso, viu?"}] + _saida()})
 	ops.append({"txt": "Entregar a Iara", "set": {"ponte": "vendeu"}, "seguir": [
-		{"quem": "Iara", "txt": "Corvo…? Corvo, não. NÃO!"},
-		{"quem": "Tião", "txt": "Homem de negócios. Toma a sua liberdade, mercenário."},
-		{"quem": "", "txt": "O carro segue sozinho para o norte. No retrovisor, a Iara para de gritar."}]})
+		{"quem": "Iara", "cara": "grito", "txt": "Corvo…? Corvo, não. NÃO!"},
+		{"quem": "Tião", "cara": "ganancia", "txt": "Homem de negócios! Toma a sua liberdade, freguês."},
+		_q("c1_pedagio_vendeu", 2, {"quem": "", "txt": "O carro segue sozinho para o norte. No retrovisor, a Iara para de gritar."})]})
 	var falas := [
-		{"quem": "Tião", "txt": "Opa, opa. Carro bonito. Pedágio do Tião: ninguém passa de graça."},
-		{"quem": "Tião", "txt": "E essa aí… é a menina que a doutora do Rio procura? O rádio não fala de outra coisa. Ela vale um bunker inteiro."},
-		{"quem": "Iara", "txt": "Corvo…"},
-		{"quem": "Tião", "txt": "Escolhe: sua arma de fogo, metade da gasolina… ou a menina." if tem_fogo else "Escolhe: metade da gasolina… ou a menina."},
-		{"quem": "Corvo", "txt": "…", "opcoes": ops},
+		_q("c1_pedagio", 0, {"quem": "Tião", "txt": "Atenção, meu povo! Aqui é o Tião, na Rádio Pedágio AM, a única que ainda toca! E olha só: freguês novo!"}),
+		_q("c1_pedagio", 0, {"quem": "Tião", "txt": "Carro bonito, hein, freguês? Pedágio do Tião: ninguém passa de graça."}),
+		{"quem": "Tião", "cara": "ganancia", "txt": "E essa mocinha aí… é a menina que a doutora do Rio procura? O rádio não fala de outra coisa. Ela vale um bunker inteiro."},
+		{"quem": "Iara", "cara": "medo", "txt": "Corvo…"},
+		{"quem": "Tião", "cara": "locutor", "txt": "Escolhe: sua arma de fogo, metade da gasolina… ou a menina. Promoção de hoje!" if tem_fogo else "Escolhe: metade da gasolina… ou a menina. Promoção de hoje!"},
+		{"quem": "Corvo", "cara": "irritado", "txt": "…", "opcoes": ops},
 	]
 	if escolhas.get("nina") == "ajudou":
-		falas.insert(2, {"quem": "Nina", "txt": "Deixa eles passarem, Tião. Eles me ajudaram."})
-		falas.insert(3, {"quem": "Tião", "txt": "Nina?! …Tá. Mas a regra é a regra."})
+		falas.insert(2, {"quem": "Nina", "cara": "rindo", "txt": "Deixa eles passarem, Tião. Eles me ajudaram."})
+		falas.insert(3, {"quem": "Tião", "cara": "assustado", "txt": "Nina?! …Tá, tá. Mas regra é regra, minha filha."})
 	dizer(falas, main.fim_capitulo)
+
+
+func _saida() -> Array:
+	## fim do capítulo quando a Iara segue no carro
+	return [
+		_q("c1_pedagio", 1, {"quem": "Iara", "txt": "Você ia me trocar? Fala a verdade."}),
+		_q("c1_pedagio", 1, {"quem": "Corvo", "txt": "Pensei. Três segundos."}),
+		_q("c1_pedagio", 1, {"quem": "Iara", "txt": "…E aí?"}),
+		_q("c1_pedagio", 1, {"quem": "Corvo", "txt": "E aí que eu sou ruim de conta."}),
+		_q("c1_pedagio", 2, {"quem": "", "txt": "A cancela sobe. Atrás deles, a Rádio Pedágio AM toca para ninguém. Na frente: São Paulo."}),
+	]
 
 
 func _entregar_arma() -> void:

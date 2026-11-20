@@ -4,6 +4,11 @@ extends Node2D
 ## A origem do nó é o "pé" do objeto: o Godot ordena pelo Y e quem está mais embaixo é desenhado na frente (2.5D).
 
 const D := preload("res://dados.gd")
+const A := preload("res://arte.gd")
+## peça desenhada para cada tipo: [arquivo, largura no mundo]
+const SPRITE := {"armario": ["armario", 62.0], "geladeira": ["geladeira", 44.0], "prateleira": ["prateleira", 70.0],
+	"arsenal": ["armario", 56.0], "ferramentas": ["ferramentas", 46.0], "radio": ["radio", 66.0],
+	"tambor": ["tambor", 44.0], "bomba": ["bomba", 46.0], "cama": ["cama", 88.0], "fogueira": ["fogueira", 62.0]}
 const LOOT := ["armario", "geladeira", "prateleira", "arsenal", "ferramentas", "mochila", "tambor"]
 
 var main: Node2D
@@ -250,6 +255,8 @@ func _caixa(base: Vector2, alt: float, cor_lado: Color, cor_topo: Color) -> void
 
 
 func _draw() -> void:
+	if _draw_arte():
+		return
 	var t := 0.45 if aberto else 1.0
 	match tipo:
 		"armario":
@@ -343,3 +350,51 @@ func _draw() -> void:
 			var f := 0.8 + sin(fase) * 0.2
 			draw_circle(Vector2(0, -8), 12 * f, Color(1.0, 0.45, 0.1, 0.9))
 			draw_circle(Vector2(0, -12), 7 * f, Color(1.0, 0.8, 0.3, 0.95))
+
+
+func _draw_arte() -> bool:
+	## versão desenhada (arte/pecas). false = usa as formas antigas
+	if SPRITE.has(tipo):
+		var sp: Array = SPRITE[tipo]
+		var mod := Color.WHITE
+		if aberto:
+			mod = Color(0.62, 0.6, 0.58)          # já revirado: fica apagado
+		if tipo == "arsenal":
+			mod = mod * Color(0.7, 0.8, 1.0)       # armário da polícia: frio, azulado
+		if tipo == "fogueira":
+			mod = Color(1, 1, 1, clampf(vida / 30.0, 0.35, 1.0))
+		var base := 6.0 if tipo != "cama" else 46.0
+		if not A.peca(self, sp[0], sp[1], base, mod):
+			return false
+		if tipo == "radio" and main.historia.radio_ativo() and sin(fase) > 0.0:
+			draw_circle(Vector2(-6, -48), 4, Color(1, 0.25, 0.2))
+		if tipo == "tambor":
+			draw_circle(Vector2(0, 0), 28, Color(0.4, 1.0, 0.3, 0.10))
+		if tipo == "fogueira":
+			var f := 0.8 + sin(fase) * 0.2
+			draw_circle(Vector2(0, -22), 10 * f, Color(1.0, 0.75, 0.3, 0.35))
+		if tipo == "bomba":
+			draw_string(ThemeDB.fallback_font, Vector2(-30, -78), "%d L" % (usos * 10), HORIZONTAL_ALIGNMENT_CENTER, 60, 12, Color("ffd166"))
+		return true
+	match tipo:
+		"arvore":
+			if madeira <= 0:
+				return false
+			var al := 1.0
+			for j in main.jogadores:
+				if j.global_position.y < global_position.y and j.global_position.distance_to(global_position + Vector2(0, -90)) < 80:
+					al = 0.35
+			var mod := Color(1, 1, 1, al) if madeira >= 4 else Color(0.85, 0.85, 0.7, al)
+			return A.peca(self, "arvore", 170.0, 14.0, mod)
+		"porta":
+			if not horiz:
+				return false
+			if aco:
+				if tabuas:
+					return A.peca(self, "porta_bunker", largura + 20.0, 8.0)
+				return false
+			if tabuas:
+				var a := clampf(vida / 160.0, 0.45, 1.0)
+				return A.peca(self, "barricada", largura, 10.0, Color(a, a, a))
+			return false
+	return false

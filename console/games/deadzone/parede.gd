@@ -4,6 +4,7 @@ extends StaticBody2D
 ## Quando um jogador está atrás (ao norte), a parede fica meio transparente para ele não sumir.
 
 const ALTURA := 58.0
+const A := preload("res://arte.gd")
 
 var main: Node2D
 var tam := Vector2(64, 14)    # base: largura x profundidade
@@ -27,6 +28,7 @@ func _ready() -> void:
 	pol.polygon = PackedVector2Array([a, Vector2(tam.x / 2, -tam.y), Vector2(tam.x / 2, 0), Vector2(-tam.x / 2, 0)])
 	oc.occluder = pol
 	add_child(oc)
+	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 
 
 func _process(_d: float) -> void:
@@ -50,6 +52,12 @@ func _draw() -> void:
 	var a := transp
 	draw_rect(Rect2(-w / 2 + 6, -p + 4, w, p + 8), Color(0, 0, 0, 0.32 * a))          # sombra no chão
 	draw_rect(Rect2(-w / 2, -ALTURA, w, ALTURA), Color(cor, a))                        # face da frente
+	var tx := A.tex("chao/parede_concreto.png" if cor.s < 0.12 else "chao/parede_tijolo.png", 128)
+	if tx:
+		# a textura "anda" junto com o mundo (x global), então pedaços vizinhos emendam
+		var ox := fposmod(global_position.x - w / 2, 128.0)
+		draw_texture_rect_region(tx, Rect2(-w / 2, -ALTURA, w, ALTURA), Rect2(ox, 30, w, ALTURA),
+			Color(cor.lightened(0.55), a), false, false)
 	draw_rect(Rect2(-w / 2, -ALTURA - p, w, p), Color(topo, a))                        # topo
 	draw_line(Vector2(-w / 2, -ALTURA), Vector2(w / 2, -ALTURA), Color(1, 1, 1, 0.10 * a), 2)
 	draw_line(Vector2(-w / 2, -8), Vector2(w / 2, -8), Color(0, 0, 0, 0.25 * a), 3)     # rodapé

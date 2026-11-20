@@ -3,6 +3,7 @@ extends CharacterBody2D
 ## (chave no contato, farol piscando) andam se tiverem gasolina. Viatura = carro da polícia (loot melhor).
 
 const D := preload("res://dados.gd")
+const A := preload("res://arte.gd")
 
 var main: Node2D
 var viatura := false
@@ -190,6 +191,8 @@ func _mover(d: float) -> void:
 
 
 func _draw() -> void:
+	if _draw_arte():
+		return
 	# 2.5D: sombra no chão, chassi, cabine com vidros e teto, tudo girado para onde o carro aponta
 	var w := TAM.x
 	var h := TAM.y
@@ -227,3 +230,29 @@ func _draw() -> void:
 	if saqueado and not funciona:
 		draw_rect(Rect2(-w / 2 - 14, -h / 2 + 4, 14, h - 8), corpo.darkened(0.2))   # porta-malas aberto
 	draw_set_transform(Vector2.ZERO, 0.0)
+
+
+func _draw_arte() -> bool:
+	## a arte é um carro em 3/4 virado para a direita: espelha quando ele aponta para a esquerda
+	## e inclina o resto do ângulo (em pé ou deitado, ele continua parecendo um carro de quadrinho)
+	var nome := "viatura" if viatura else ("carro_bom" if funciona else "carro_quebrado")
+	var t := A.tex("pecas/%s.png" % nome, 240)
+	if t == null:
+		return false
+	var esq := cos(angulo) < 0.0
+	var inc := angulo - PI if esq else angulo
+	inc = wrapf(inc, -PI, PI)
+	var larg := 150.0
+	var alt := t.get_height() * larg / t.get_width()
+	draw_set_transform(Vector2(0, 4), inc, Vector2(-1, 1) if esq else Vector2.ONE)
+	var mod := Color.WHITE
+	if saqueado and not funciona:
+		mod = Color(0.7, 0.68, 0.65)
+	draw_texture_rect(t, Rect2(-larg / 2, -alt + 22, larg, alt), false, mod)
+	if viatura and motorista != null:
+		var on := fmod(t_pisca, 0.6) < 0.3
+		draw_circle(Vector2(-4, -alt + 34), 6, Color(1, 0.2, 0.2, 0.9) if on else Color(0.2, 0.4, 1, 0.9))
+	if funciona and motorista == null and fmod(t_pisca, 2.0) > 1.6:
+		draw_circle(Vector2(larg / 2 - 10, -6), 9, Color(1, 1, 0.6, 0.85))   # farol piscando: "eu ainda pego"
+	draw_set_transform(Vector2.ZERO, 0.0)
+	return true

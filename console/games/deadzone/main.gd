@@ -4,6 +4,7 @@ extends Node2D
 ## o mundo é ordenado pelo Y (quem está mais embaixo na tela aparece na frente).
 
 const D := preload("res://dados.gd")
+const Arte := preload("res://arte.gd")
 const T := 64
 const MAPA := 72
 const QUADRA := 18
@@ -227,6 +228,7 @@ func _nova_partida(p_modo := "historia", p_semente := -1) -> void:
 	move_child(mundo, 0)
 	chao = Node2D.new()
 	chao.z_index = -10
+	chao.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 	chao.draw.connect(_desenhar_chao)
 	mundo.add_child(chao)
 	camada_sangue = Node2D.new()
@@ -1047,6 +1049,15 @@ func _ler_recorde() -> void:
 
 # ---------------------------------------------------------------- chão (desenhado uma vez)
 
+func _piso(r: Rect2, cor: Color, nome: String, lado_tex := 192, mod := Color.WHITE) -> void:
+	## chão com textura repetida (arte/chao); sem a imagem, fica a cor chapada de antes
+	var t := Arte.tex("chao/%s.png" % nome, lado_tex)
+	if t:
+		chao.draw_texture_rect(t, r, true, mod)
+	else:
+		chao.draw_rect(r, cor)
+
+
 func _desenhar_chao() -> void:
 	var n := chao
 	var lado := MAPA * T
@@ -1057,14 +1068,14 @@ func _desenhar_chao() -> void:
 	for i in 260:
 		var p := Vector2(r2.randf() * lado, -r2.randf() * 11.5 * T - 0.5 * T)
 		n.draw_line(p, p + Vector2(r2.randf_range(20, 60), 0), Color(0.5, 0.7, 0.8, 0.25), 2)
-	n.draw_rect(Rect2(-T, -1.2 * T, lado + 2 * T, 1.2 * T), Color("3b4a2e"))
-	n.draw_rect(Rect2(36 * T, -12 * T, 4 * T, 12 * T), Color("4a4a4e"))
+	_piso(Rect2(-T, -1.2 * T, lado + 2 * T, 1.2 * T), Color("3b4a2e"), "chao_mato")
+	_piso(Rect2(36 * T, -12 * T, 4 * T, 12 * T), Color("4a4a4e"), "chao_asfalto", 192, Color(0.8, 0.8, 0.8))
 	var y := -12.0 * T
 	while y < 0:
 		n.draw_line(Vector2(36 * T, y), Vector2(40 * T, y), Color(0, 0, 0, 0.2), 2)
 		y += 24
 	# mato
-	n.draw_rect(Rect2(0, 0, lado, lado), Color("4a5a3a"))
+	_piso(Rect2(0, 0, lado, lado), Color("4a5a3a"), "chao_mato", 224, Color(0.82, 0.86, 0.78))
 	r2.seed = 7
 	for i in 1100:
 		var p := Vector2(r2.randf() * lado, r2.randf() * lado)
@@ -1072,12 +1083,12 @@ func _desenhar_chao() -> void:
 	# calçadas, ruas e faixas
 	for i in range(0, MAPA, QUADRA):
 		var x := i * T
-		n.draw_rect(Rect2(x - 12, 0, 4 * T + 24, lado), Color("8a8a84"))
-		n.draw_rect(Rect2(0, x - 12, lado, 4 * T + 24), Color("8a8a84"))
+		_piso(Rect2(x - 12, 0, 4 * T + 24, lado), Color("8a8a84"), "chao_calcada", 128, Color(0.78, 0.78, 0.76))
+		_piso(Rect2(0, x - 12, lado, 4 * T + 24), Color("8a8a84"), "chao_calcada", 128, Color(0.78, 0.78, 0.76))
 	for i in range(0, MAPA, QUADRA):
 		var x := i * T
-		n.draw_rect(Rect2(x, 0, 4 * T, lado), Color("3a3c40"))
-		n.draw_rect(Rect2(0, x, lado, 4 * T), Color("3a3c40"))
+		_piso(Rect2(x, 0, 4 * T, lado), Color("3a3c40"), "chao_asfalto")
+		_piso(Rect2(0, x, lado, 4 * T), Color("3a3c40"), "chao_asfalto")
 	for i in range(0, MAPA, QUADRA):
 		var x := i * T + 2 * T
 		var yy := 0
@@ -1103,7 +1114,13 @@ func _desenhar_chao() -> void:
 		# piso das construções
 	for p in predios:
 		var r: Rect2 = p["r"]
-		n.draw_rect(r, p["piso"])
+		match p["tipo"]:
+			"casa":
+				_piso(r, p["piso"], "chao_madeira", 160)
+			"patio":
+				_piso(r, p["piso"], "chao_terra", 192)
+			_:
+				_piso(r, p["piso"], "chao_concreto", 192, p["piso"].lightened(0.45))
 		if p["tipo"] == "casa":
 			var yy: float = r.position.y
 			while yy < r.end.y:

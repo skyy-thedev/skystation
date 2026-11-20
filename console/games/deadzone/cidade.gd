@@ -63,6 +63,7 @@ func gerar(main: Node2D) -> void:
 		if c and c.funciona:
 			funcionais -= 1
 	_radiacao(n, inicio)
+	_enfeites(n)
 
 
 func _embaralhar(a: Array) -> void:
@@ -338,3 +339,72 @@ func _radiacao(n: int, inicio: Vector2i) -> void:
 			if not m._ocupado(p):
 				_objeto("tambor", p)
 		feitas += 1
+
+
+# ---------------------------------------------------------------- enfeites (só arte)
+
+func _deco(nome: String, p: Vector2, larg: float, bloco := Vector2.ZERO, r: RandomNumberGenerator = null) -> void:
+	var d := preload("res://deco.gd").new()
+	d.nome = nome
+	d.position = p
+	d.largura = larg
+	d.bloco = bloco
+	d.espelho = r != null and r.randf() < 0.5
+	m.mundo.add_child(d)
+	if bloco != Vector2.ZERO:
+		m.bloqueios.append(Rect2(p - Vector2(bloco.x / 2, bloco.y), bloco).grow(16))
+
+
+func _na_rua(p: Vector2) -> bool:
+	var q := float(QUADRA * T)
+	return fposmod(p.x, q) < 4 * T + 14 or fposmod(p.y, q) < 4 * T + 14
+
+
+func _enfeites(n: int) -> void:
+	## usa um sorteio próprio: o mapa de quem já tem save continua igual
+	var r := RandomNumberGenerator.new()
+	r.seed = rng.seed + 7919
+	var lado := MAPA * T
+	# postes e orelhões na beira das ruas
+	for k in n:
+		var x := float(k * QUADRA * T + 4 * T + 10)
+		var y := 5.0 * T
+		while y < lado - 2 * T:
+			var p1 := Vector2(x, y)
+			var p2 := Vector2(y, x)
+			for p in [p1, p2]:
+				if fposmod(p.x if p == p2 else p.y, QUADRA * T) > 5 * T and not m._ocupado(p):
+					if r.randf() < 0.22:
+						_deco("orelhao", p, 34.0, Vector2(16, 10), r)
+					else:
+						_deco("poste", p, 54.0, Vector2(10, 8), r)
+			y += r.randf_range(6.0, 9.0) * T
+	# Kombis largadas no meio da rua
+	var kombis := 0
+	var tent := 0
+	while kombis < 7 and tent < 60:
+		tent += 1
+		var faixa := r.randi_range(0, n - 1) * QUADRA
+		var ao_longo := r.randf_range(5.0, MAPA - 5.0) * T
+		var p := Vector2(faixa * T + 2 * T, ao_longo) if r.randf() < 0.5 else Vector2(ao_longo, faixa * T + 2 * T)
+		var caixa := Rect2(p - Vector2(80, 70), Vector2(160, 90))
+		if m.bloqueios.any(func(b): return b.intersects(caixa)) or p.distance_to(m.locais["inicio"]) < 500:
+			continue
+		_deco("kombi", p, 130.0, Vector2(110, 34), r)
+		kombis += 1
+	# caminhão tombado espalhando tambores numa zona quente
+	if not m.radiacao.is_empty():
+		var z: Dictionary = m.radiacao[r.randi_range(0, m.radiacao.size() - 1)]
+		var p: Vector2 = z["pos"] + Vector2(r.randf_range(-60, 60), r.randf_range(-60, 60))
+		if not m._ocupado(p):
+			_deco("caminhao_tombado", p, 190.0, Vector2(150, 40), r)
+	# mato seco
+	var mato := 0
+	tent = 0
+	while mato < 70 and tent < 400:
+		tent += 1
+		var p := Vector2(r.randf_range(T, lado - T), r.randf_range(T, lado - T))
+		if _na_rua(p) or m._ocupado(p) or m.predios.any(func(pr): return pr["r"].grow(30).has_point(p)):
+			continue
+		_deco("arbusto", p, r.randf_range(56.0, 84.0), Vector2.ZERO, r)
+		mato += 1
