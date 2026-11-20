@@ -1,5 +1,5 @@
 #!/bin/bash
-# SkyStation: jogos na nuvem (Fase 11.6) — Xbox Cloud Gaming e GeForce NOW.
+# SkyStation: jogos na nuvem (Fase 11.8) — Xbox Cloud Gaming e GeForce NOW.
 #   sky-nuvem xcloud       abre xbox.com/play no Chromium em tela cheia (modo app, sem barra)
 #   sky-nuvem geforcenow   abre o app oficial da NVIDIA (Flatpak); se ainda não estiver instalado,
 #                          pede a instalação ao sistema e, enquanto isso, abre a versão web

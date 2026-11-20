@@ -1,5 +1,5 @@
 #!/bin/bash
-# SkyStation: instala o app oficial do GeForce NOW (Fase 11.6). Comando: skystation-nuvem
+# SkyStation: instala o app oficial do GeForce NOW (Fase 11.8). Comando: skystation-nuvem
 # Roda como root pelo serviço skystation-nuvem (pedido em /var/lib/skystation/pedidos/geforcenow,
 # feito pelo sky-nuvem na primeira vez que o app é aberto, ou pelo skystation-atualizar).
 # O app vem do repositório Flatpak da própria NVIDIA (não é o Flathub); o runtime ocupa ~2 GB.

@@ -108,7 +108,7 @@ Unit=skystation-potencia.service
 [Install]
 WantedBy=paths.target
 UNIT
-# Jogos na nuvem (Fase 11.6): o app do GeForce NOW (~2 GB) é instalado em segundo plano, pedido pelo
+# Jogos na nuvem (Fase 11.8): o app do GeForce NOW (~2 GB) é instalado em segundo plano, pedido pelo
 # sky-nuvem na primeira abertura (pedidos/geforcenow). Sem travar a atualização nem o menu.
 cat >/etc/systemd/system/skystation-nuvem.service <<'UNIT'
 [Unit]
@@ -198,7 +198,7 @@ if [ -d /run/systemd/system ]; then
     systemctl restart skystation-nuvem.path >/dev/null 2>&1 || true
 fi
 
-# Fase 11.6: Xbox Cloud Gaming roda no Chromium (a Microsoft não tem app do Xbox para Linux);
+# Fase 11.8: Xbox Cloud Gaming roda no Chromium (a Microsoft não tem app do Xbox para Linux);
 # o flatpak é para o app oficial do GeForce NOW, que fica para depois (serviço acima).
 for p in chromium flatpak; do
     pacman -Q "$p" >/dev/null 2>&1 && continue
