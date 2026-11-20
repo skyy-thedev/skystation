@@ -12,6 +12,11 @@ A cada 2 s grava uma linha em <benchmarks>/sistema/sistema-AAAA-MM-DD.csv:
   gpu_pct, gpu_mhz, vram_mb
   ram_mb, ram_livre_mb, swap_mb
   bateria_pct, bateria_w (consumo; vazio na tomada se o notebook não informa)
+  disco_le_mb, disco_grava_mb  MB lidos/gravados nos 2 s; iowait_pct
+  espera_io_ms, espera_cpu_ms, espera_mem_ms  quanto tempo algo ficou parado esperando disco, CPU ou
+                memória nesses 2 s (PSI do kernel)
+  eventos       o que o SkyStation fez nesses 2 s (troféus conferidos, sincronia da rede…), lido de
+                $XDG_RUNTIME_DIR/skystation/eventos.log
   cpu_<grupo> e mb_<grupo>: CPU (% de um núcleo) e memória de cada parte do SkyStation:
     menu (launcher Godot), home, avisos (sky-notify), rede (sky-net), central, toast,
     compositor (cage/gamescope/Xwayland), audio (pipewire/wireplumber), jogo (o jogo inteiro)
@@ -47,7 +52,8 @@ GRUPOS = {
     "audio": [r"pipewire", r"wireplumber"],
 }
 CAB = (["hora", "estado", "fps_menu", "ms_pior_menu", "cpu_pct", "cpu_mhz", "cpu_temp", "carga_1min", "gpu_pct", "gpu_mhz",
-        "vram_mb", "ram_mb", "ram_livre_mb", "swap_mb", "bateria_pct", "bateria_w"]
+        "vram_mb", "ram_mb", "ram_livre_mb", "swap_mb", "bateria_pct", "bateria_w",
+        "disco_le_mb", "disco_grava_mb", "iowait_pct", "espera_io_ms", "espera_cpu_ms", "espera_mem_ms", "eventos"]
        + [f"cpu_{g}" for g in list(GRUPOS) + ["jogo"]] + [f"mb_{g}" for g in list(GRUPOS) + ["jogo"]])
 TICKS = os.sysconf("SC_CLK_TCK")
 PAGINA = os.sysconf("SC_PAGE_SIZE")
@@ -170,6 +176,42 @@ def processos():
     return out
 
 
+def disco():
+    """MB lidos e gravados (acumulado) em todos os discos de verdade (sem loop/ram/zram e sem partições)."""
+    le = gr = 0
+    for l in ler("/proc/diskstats").splitlines():
+        c = l.split()
+        if len(c) < 10 or re.match(r"(loop|ram|zram|dm-|sr)", c[2]) or re.search(r"(\d+p\d+|[a-z]\d+)$", c[2]):
+            continue
+        le += int(c[5])
+        gr += int(c[9])
+    return le * 512 / 1048576, gr * 512 / 1048576
+
+
+def iowait():
+    v = ler("/proc/stat").splitlines()[0].split()[1:]
+    return int(v[4]) if len(v) > 4 else 0
+
+
+def pressao(tipo):
+    """Tempo total (µs) em que alguma tarefa ficou parada esperando CPU, disco ou memória (PSI do kernel)."""
+    m = re.search(r"some .*total=(\d+)", ler(f"/proc/pressure/{tipo}"))
+    return int(m.group(1)) if m else None
+
+
+def eventos_desde(t):
+    """Linhas de $RUN/eventos.log (\"<unix> <nome>\") desde t: troféus conferidos, sincronia da rede…"""
+    out = []
+    for l in ler(os.path.join(RUN, "eventos.log")).splitlines()[-50:]:
+        p = l.split(" ", 1)
+        try:
+            if float(p[0]) >= t and len(p) > 1:
+                out.append(p[1].strip()[:30])
+        except ValueError:
+            continue
+    return " ".join(out)[:120]
+
+
 def estado():
     if os.path.exists(os.path.join(RUN, "game.pid")):
         return "home" if os.path.exists(os.path.join(RUN, "menu.aberto")) else "jogo"
@@ -194,9 +236,10 @@ class Medidor:
         agora = time.monotonic()
         total, ocioso = cpu_total()
         procs = processos()
+        extra = (disco(), iowait(), pressao("io"), pressao("cpu"), pressao("memory"), time.time())
         linha = None
         if self.antes:
-            t0, tot0, oc0, procs0 = self.antes
+            t0, tot0, oc0, procs0, ex0 = self.antes
             dt = agora - t0
             dtot = max(1, total - tot0)
             cpu = round(100 * (1 - (ocioso - oc0) / dtot), 1)
@@ -218,12 +261,25 @@ class Medidor:
             for g, (c, m) in por_g.items():
                 linha[f"cpu_{g}"] = round(c, 1)
                 linha[f"mb_{g}"] = round(m)
-        self.antes = (agora, total, ocioso, procs)
+            # 20/nov: disco e esperas, para explicar as travadas longas (60–600 ms) com CPU e GPU sobrando
+            (le, gr), iow, pio, pcpu, pmem, quando = extra
+            (le0, gr0), iow0, pio0, pcpu0, pmem0, quando0 = ex0
+            d = lambda a, b: round((a - b) / 1000) if a is not None and b is not None else ""
+            linha.update(disco_le_mb=round(le - le0, 1), disco_grava_mb=round(gr - gr0, 1),
+                         iowait_pct=round(100 * (iow - iow0) / dtot, 1), espera_io_ms=d(pio, pio0),
+                         espera_cpu_ms=d(pcpu, pcpu0), espera_mem_ms=d(pmem, pmem0), eventos=eventos_desde(quando0))
+        self.antes = (agora, total, ocioso, procs, extra)
         return linha
 
 
 def gravar(linha, destino):
     os.makedirs(os.path.dirname(destino), exist_ok=True)
+    if os.path.exists(destino):
+        # colunas novas no meio do dia: o arquivo antigo vira <nome>-antes.csv
+        with open(destino, encoding="utf-8") as f:
+            if f.readline().strip().split(";") != CAB:
+                f.close()
+                os.replace(destino, destino[:-4] + f"-antes-{time.strftime('%H%M%S')}.csv")
     novo = not os.path.exists(destino)
     with open(destino, "a", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=CAB, delimiter=";")

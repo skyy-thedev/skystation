@@ -96,6 +96,7 @@ class Rede:
         self.mensagens = []       # as mais recentes recebidas, para as telas
         self.feed = []            # últimos troféus dos amigos
         self.trofeus_enviados = None
+        self.trofeus_mtime = None
         self.primeira = True
         self.falhas = 0
 
@@ -115,6 +116,11 @@ class Rede:
                 self.perfis_mtime = m
 
     def sincronizar(self, cfg):
+        try:   # 20/nov: marca no benchmark do sistema (sky-sysmon) para cruzar com travadas nos jogos
+            with open(os.path.join(skynet.RUN, "eventos.log"), "a") as f:
+                f.write(f"{time.time():.3f} rede\n")
+        except OSError:
+            pass
         perfil, _ = skynet.perfis()
         if perfil != self.perfil:
             self.trocar_perfil(perfil)
@@ -199,13 +205,23 @@ class Rede:
             pass
 
     def enviar_trofeus(self, cfg, perfil):
+        # só relista (um processo Python a mais) quando o trofeus.json mudou; antes rodava a cada 30 s,
+        # inclusive no meio do jogo
+        try:
+            mt = os.path.getmtime(os.path.join(skynet.SKY, "saves/trofeus.json"))
+        except OSError:
+            return
+        if mt == self.trofeus_mtime:
+            return
         lista = meus_trofeus()
         chave = json.dumps(sorted(t["trofeu"] for t in lista))
         if not lista or chave == self.trofeus_enviados:
+            self.trofeus_mtime = mt
             return
         st, _ = api("POST", "/api/trofeus", {"trofeus": lista[:100]}, perfil=perfil, cfg=cfg)
         if st == 200:
             self.trofeus_enviados = chave
+            self.trofeus_mtime = mt
 
 
 def pedido_imediato():

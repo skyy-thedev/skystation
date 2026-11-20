@@ -88,6 +88,8 @@ ok(r["gargalo"] == "temperatura", f"gargalo: temperatura (97 °C e clock caindo)
 ok("Frame limit" in r["ajustes"], "ajustes do perfil anotados")
 det = os.path.join(pasta, "detalhes")
 ok(os.path.isdir(det) and any(n.endswith(".txt") for n in os.listdir(det)), "detalhes em blocos de 5 min")
+txt = open(os.path.join(det, os.listdir(det)[0]), encoding="utf-8").read()
+ok("travadas acima de 50 ms (1)" in txt and "200 ms" in txt, "a travada de 200 ms aparece com a hora nos detalhes")
 saida = bench("relatorio", pasta)
 ok("1 partidas" in saida, "relatório refeito com os CSVs da pasta")
 

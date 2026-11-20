@@ -8,7 +8,8 @@ O MangoHud grava um CSV por partida, uma linha por quadro, com o nome do emulado
 
 que (1) renomeia o CSV para "2026-11-15 10-51 · Resident Evil 5 (rpcs3).csv", (2) acrescenta uma
 linha em <pasta>/resumo.csv e (3) grava <pasta>/detalhes/<mesmo nome>.txt com a partida em blocos
-de 5 minutos (FPS, temperatura, clocks), para achar em que momento o jogo pesou.
+de 5 minutos (FPS, temperatura, clocks), para achar em que momento o jogo pesou, e a lista das
+travadas acima de 50 ms com o que o sistema fazia na hora (disco, esperas, eventos do sky-sysmon).
 
 Métricas (11.7). Como o log tem uma linha por quadro, a mediana das linhas pesa demais os trechos
 rápidos (a 60 FPS entram 60 linhas por segundo; a 15 FPS, só 15). Por isso tudo é medido por tempo:
@@ -167,7 +168,47 @@ def limpo(t):
     return re.sub(r'[\\/:*?"<>|\n\r\t]+', " ", t).strip()[:80] or "jogo"
 
 
-def gravar_detalhes(pasta, nome, titulo, r, blocos):
+def travadas(dados, inicio_abs):
+    """Quadros acima de 50 ms, juntando os que caem no mesmo segundo: [(unix, pior ms, quadros)]."""
+    if not dados or "elapsed" not in dados[0]:
+        return []
+    t0 = dados[0]["elapsed"]
+    out = []
+    for d in dados:
+        ft = d.get("frametime") or 0
+        if ft <= 50:
+            continue
+        t = inicio_abs + (d["elapsed"] - t0) / 1e9
+        if out and t - out[-1][0] < 1.0:
+            out[-1] = (out[-1][0], max(out[-1][1], ft), out[-1][2] + 1)
+        else:
+            out.append((t, ft, 1))
+    return out
+
+
+def cruzar_sistema(pasta, travs):
+    """Para cada travada, a amostra do sky-sysmon (2 s) que a cobre: disco, esperas e eventos."""
+    linhas = {}
+    for dia in sorted({time.strftime("%Y-%m-%d", time.localtime(t)) for t, _, _ in travs}):
+        try:
+            with open(os.path.join(pasta, "sistema", f"sistema-{dia}.csv"), encoding="utf-8") as f:
+                for x in csv.DictReader(f, delimiter=";"):
+                    linhas[(dia, x.get("hora", ""))] = x
+        except OSError:
+            continue
+    res = []
+    for t, ms, n in travs:
+        achou = None
+        for k in range(0, 4):   # a amostra fecha até ~2 s depois do quadro
+            tt = time.localtime(t + k)
+            achou = linhas.get((time.strftime("%Y-%m-%d", tt), time.strftime("%H:%M:%S", tt)))
+            if achou:
+                break
+        res.append((t, ms, n, achou))
+    return res
+
+
+def gravar_detalhes(pasta, nome, titulo, r, blocos, travs=None):
     d = os.path.join(pasta, "detalhes")
     try:
         os.makedirs(d, exist_ok=True)
@@ -180,6 +221,16 @@ def gravar_detalhes(pasta, nome, titulo, r, blocos):
             for b in blocos:
                 f.write(f"  {b['inicio_min']:4d} min | {b['fps_medio']:6.1f} | {b['temp']:3d} | {b['cpu_mhz']:5d}"
                         f" | {b['gpu_uso']:3d} | {b['gpu_mhz']:5d}\n")
+            if travs:
+                f.write(f"\ntravadas acima de 50 ms ({len(travs)}): hora | pior quadro | quadros | o que o sistema"
+                        " fazia nesses 2 s (disco lido MB, espera de disco/CPU/memória em ms, eventos)\n")
+                for t, ms, n, x in cruzar_sistema(pasta, travs)[:120]:
+                    ctx = "sem amostra do sistema"
+                    if x:
+                        ctx = (f"disco {x.get('disco_le_mb', '?')} MB, espera disco {x.get('espera_io_ms', '?')}"
+                               f" / CPU {x.get('espera_cpu_ms', '?')} / mem {x.get('espera_mem_ms', '?')} ms,"
+                               f" CPU {x.get('cpu_pct', '?')}%, {x.get('eventos') or '-'}")
+                    f.write(f"  {time.strftime('%H:%M:%S', time.localtime(t))} | {ms:6.0f} ms | {n:3d} | {ctx}\n")
     except OSError:
         pass
 
@@ -236,15 +287,23 @@ def fechar(pasta, inicio, gid, titulo):
             destino, novo = path, n
         blocos = []
         try:
-            r = resumo(ler(destino), blocos)
+            dados = ler(destino)
+            r = resumo(dados, blocos)
         except (OSError, ValueError, KeyError):
-            r = None
+            dados, r = [], None
         if not r:
             continue
+        # o nome original do MangoHud tem a hora exata do começo do log (rpcs3_2026-11-20_15-11-05.csv)
+        m = re.search(r"_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\.csv$", n)
+        try:
+            ini_abs = time.mktime(time.strptime(m.group(1), "%Y-%m-%d_%H-%M-%S")) if m else float(inicio)
+        except ValueError:
+            ini_abs = float(inicio)
+        travs = travadas(dados, ini_abs)
         linha = {"data": time.strftime("%Y-%m-%d %H:%M", time.localtime(inicio)), "jogo": titulo, "id": gid,
                  "emulador": emu, "arquivo": novo, "ajustes": ajustes, **r}
         acrescentar(os.path.join(pasta, "resumo.csv"), linha)
-        gravar_detalhes(pasta, novo, titulo, r, blocos)
+        gravar_detalhes(pasta, novo, titulo, r, blocos, travs)
 
 
 def relatorio(pasta):

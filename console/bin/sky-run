@@ -74,6 +74,7 @@ echo "$child" >"$RUN/game.pid"
 # (o som sai por cima do jogo) e o troféu aparece como NOVO no menu Home e no aviso ao voltar.
 if [ -x /opt/skystation/bin/sky-trofeus ]; then
     ( while sleep 60; do kill -0 "$child" 2>/dev/null || break
+          echo "$(date +%s.%N) trofeus" >>"$RUN/eventos.log"
           /opt/skystation/bin/sky-trofeus conferir >/dev/null 2>&1
       done ) &
     TROF_PID=$!
