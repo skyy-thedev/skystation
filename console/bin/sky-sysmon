@@ -15,6 +15,7 @@ A cada 2 s grava uma linha em <benchmarks>/sistema/sistema-AAAA-MM-DD.csv:
   disco_le_mb, disco_grava_mb  MB lidos/gravados nos 2 s; iowait_pct
   espera_io_ms, espera_cpu_ms, espera_mem_ms  quanto tempo algo ficou parado esperando disco, CPU ou
                 memória nesses 2 s (PSI do kernel)
+  jogo_le_kb, jogo_grava_kb  quanto o jogo leu e gravou no disco nesses 2 s
   eventos       o que o SkyStation fez nesses 2 s (troféus conferidos, sincronia da rede…), lido de
                 $XDG_RUNTIME_DIR/skystation/eventos.log
   cpu_<grupo> e mb_<grupo>: CPU (% de um núcleo) e memória de cada parte do SkyStation:
@@ -53,7 +54,8 @@ GRUPOS = {
 }
 CAB = (["hora", "estado", "fps_menu", "ms_pior_menu", "cpu_pct", "cpu_mhz", "cpu_temp", "carga_1min", "gpu_pct", "gpu_mhz",
         "vram_mb", "ram_mb", "ram_livre_mb", "swap_mb", "bateria_pct", "bateria_w",
-        "disco_le_mb", "disco_grava_mb", "iowait_pct", "espera_io_ms", "espera_cpu_ms", "espera_mem_ms", "eventos"]
+        "disco_le_mb", "disco_grava_mb", "iowait_pct", "espera_io_ms", "espera_cpu_ms", "espera_mem_ms", "eventos",
+        "jogo_le_kb", "jogo_grava_kb"]
        + [f"cpu_{g}" for g in list(GRUPOS) + ["jogo"]] + [f"mb_{g}" for g in list(GRUPOS) + ["jogo"]])
 TICKS = os.sysconf("SC_CLK_TCK")
 PAGINA = os.sysconf("SC_PAGE_SIZE")
@@ -172,7 +174,11 @@ def processos():
                     grupo = g
                     break
         if grupo:
-            out[pid] = (grupo, ticks, mb)
+            io = (0, 0)
+            if grupo == "jogo":   # 20/nov: quanto o jogo lê e grava (achar quem trava esperando o disco)
+                m = dict(l.split(": ") for l in ler(d + "/io").splitlines() if ": " in l)
+                io = (int(m.get("read_bytes", 0)), int(m.get("write_bytes", 0)))
+            out[pid] = (grupo, ticks, mb, io)
     return out
 
 
@@ -244,10 +250,13 @@ class Medidor:
             dtot = max(1, total - tot0)
             cpu = round(100 * (1 - (ocioso - oc0) / dtot), 1)
             por_g = {g: [0.0, 0.0] for g in list(GRUPOS) + ["jogo"]}
-            for pid, (g, ticks, mb) in procs.items():
+            jle = jgr = 0
+            for pid, (g, ticks, mb, io) in procs.items():
                 antes = procs0.get(pid)
                 if antes and antes[0] == g:
                     por_g[g][0] += (ticks - antes[1]) / TICKS / dt * 100
+                    jle += max(0, io[0] - antes[3][0])
+                    jgr += max(0, io[1] - antes[3][1])
                 por_g[g][1] += mb
             gp, gm, vr = gpu()
             ram, livre, swap = memoria()
@@ -267,7 +276,8 @@ class Medidor:
             d = lambda a, b: round((a - b) / 1000) if a is not None and b is not None else ""
             linha.update(disco_le_mb=round(le - le0, 1), disco_grava_mb=round(gr - gr0, 1),
                          iowait_pct=round(100 * (iow - iow0) / dtot, 1), espera_io_ms=d(pio, pio0),
-                         espera_cpu_ms=d(pcpu, pcpu0), espera_mem_ms=d(pmem, pmem0), eventos=eventos_desde(quando0))
+                         espera_cpu_ms=d(pcpu, pcpu0), espera_mem_ms=d(pmem, pmem0), eventos=eventos_desde(quando0),
+                         jogo_le_kb=round(jle / 1024), jogo_grava_kb=round(jgr / 1024))
         self.antes = (agora, total, ocioso, procs, extra)
         return linha
 

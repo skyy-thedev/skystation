@@ -12,12 +12,17 @@ Fase 5.9: desempenho por jogo (menu Y do jogo), guardado em ~/.config/skystation
   maximo  -> EE Cycle Rate -2 + EE Cycle Skip 1 + MTVU (mais FPS; alguns jogos engasgam ou falham)
 """
 import json
+import re
 import configparser
 import os
 import sys
 
 profile, sky, bios = sys.argv[1], sys.argv[2], sys.argv[3]
 game_id = sys.argv[4] if len(sys.argv) > 4 else ""
+# 20/nov: o id vem do nome do arquivo com "_" no lugar dos espaços (ps2-Guitar_Hero_III_-_Legends_of_Rock).
+# As listas abaixo procuram nomes com espaço ("guitar hero"), então nenhum jogo de nome composto era achado:
+# o Guitar Hero nunca recebeu os ajustes de jogo pesado, de leitura sem espera nem de ritmo. Normaliza aqui.
+nome_jogo = re.sub(r"[_\-]+", " ", game_id.lower())
 
 # Desempenho por jogo.
 SPEED = {
@@ -35,8 +40,7 @@ PESADOS = ("need for speed", "gran turismo", "god of war", "shadow of the coloss
            "ratchet", "jak ", "jak and", "black", "midnight club", "tekken 5", "soulcalibur", "final fantasy xii",
            "ace combat", "killzone", "driv3r", "true crime", "the getaway", "mercenaries", "juiced", "test drive", "guitar hero", "rock band")
 if speed == "auto":
-    nome = game_id.lower()
-    speed = "rapido" if any(p in nome for p in PESADOS) else "normal"
+    speed = "rapido" if any(p in nome_jogo for p in PESADOS) else "normal"
 
 # Renderer do PCSX2: 12 = OpenGL, 14 = Vulkan.
 # HD 4400 (notebook): OpenGL é o driver maduro; o Vulkan dessa geração é incompleto.
@@ -83,7 +87,7 @@ for k, v in PROFILES.get(profile, PROFILES["leve"]).items():
 # acelera 0,1% para casar com a tela e usa a sincronia da tela como relógio (SyncToHostRefreshRate +
 # UseVSyncForTiming, que só valem com VsyncEnable). O áudio acompanha pelo esticamento de tempo.
 RITMO = ("guitar hero", "rock band", "band hero", "dj hero", "singstar", "taiko")
-ritmo = any(p in game_id.lower() for p in RITMO)
+ritmo = any(p in nome_jogo for p in RITMO)
 for k in ("VsyncEnable", "SyncToHostRefreshRate", "UseVSyncForTiming"):
     put("EmuCore/GS", k, "true" if ritmo else "false")
 for k, v in SPEED.get(speed, SPEED["normal"]).items():
@@ -101,7 +105,7 @@ for k in ("OsdShowSpeed", "OsdShowFPS", "OsdShowCPU", "OsdShowGPU", "OsdShowReso
 # volta da placa de vídeo. 3 = não esperar essa leitura. Só nestes jogos e no modo Máximo, porque algum
 # efeito que dependa da leitura pode piscar ou sumir.
 SEM_ESPERA = ("guitar hero", "rock band")
-sem_espera = speed == "maximo" or any(p in game_id.lower() for p in SEM_ESPERA)
+sem_espera = speed == "maximo" or any(p in nome_jogo for p in SEM_ESPERA)
 put("EmuCore/GS", "HWDownloadMode", "3" if sem_espera else "0")
 put("EmuCore/Speedhacks", "vuThread", "true" if speed != "normal" and (os.cpu_count() or 1) >= 4 else "false")
 
@@ -125,6 +129,12 @@ pad = dict(cp.items("Pad1")) if cp.has_section("Pad1") else {}
 if not any(str(v).startswith("SDL-") for v in pad.values()):
     for k, v in SDL_PAD.items():
         put("Pad1", k, v)
+
+# 20/nov: sem log em arquivo. O benchmark do sistema mostrou o PCSX2 parado 200–800 ms esperando o disco
+# a cada 10–30 s no Guitar Hero III, sem ler nada do jogo (só gravações pequenas). A pasta do PCSX2 fica no
+# pendrive, onde uma gravação pequena pode demorar centenas de ms, e o log em arquivo escreve no meio do jogo.
+put("Logging", "EnableFileLogging", "false")
+put("Logging", "EnableSystemConsole", "false")
 
 # 11.7: o benchmark da partida registra o que foi aplicado
 try:

@@ -229,7 +229,8 @@ def gravar_detalhes(pasta, nome, titulo, r, blocos, travs=None):
                     if x:
                         ctx = (f"disco {x.get('disco_le_mb', '?')} MB, espera disco {x.get('espera_io_ms', '?')}"
                                f" / CPU {x.get('espera_cpu_ms', '?')} / mem {x.get('espera_mem_ms', '?')} ms,"
-                               f" CPU {x.get('cpu_pct', '?')}%, {x.get('eventos') or '-'}")
+                               f" CPU {x.get('cpu_pct', '?')}%, jogo gravou {x.get('jogo_grava_kb', '?')} KB,"
+                               f" {x.get('eventos') or '-'}")
                     f.write(f"  {time.strftime('%H:%M:%S', time.localtime(t))} | {ms:6.0f} ms | {n:3d} | {ctx}\n")
     except OSError:
         pass
