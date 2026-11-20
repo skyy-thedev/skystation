@@ -76,15 +76,16 @@ put("Folders", "Savestates", os.path.join(sky, "states", "ps2"))
 put("Filenames", "BIOS", bios)
 for k, v in PROFILES.get(profile, PROFILES["leve"]).items():
     put("EmuCore/GS", k, v)
-# 20/nov: jogos de ritmo na resolução original do PS2, também no Ryzen. O benchmark do Guitar Hero III
-# mostrou quadros de 18–22 ms e, com a sincronia de tela, o jogo caía em degraus exatos de 30 e 15 FPS
-# (quadros de 33,3 e 66,7 ms em sequência): basta um quadro passar de 16,7 ms para a tela esperar o
-# próximo ciclo. Em 1x a parte gráfica (GS) e a placa de vídeo fazem 1/4 dos pixels, sobra folga para
-# segurar os 16,7 ms. Num jogo de ritmo, nota no tempo vale mais que imagem nítida.
+# Jogos de ritmo (20/nov). Primeira tentativa: 1x de resolução. A foto do contador do PCSX2 no Guitar
+# Hero III, já sem o bug do menu, mostrou GS 3,3 ms e GPU 3,8 ms em 2x: a parte gráfica tem folga de sobra,
+# então a resolução volta a 2x. O que sobra são as travadinhas de ritmo: o PS2 NTSC roda a 59,94 Hz e a
+# tela a 60 Hz; sem sincronia, a cada ~17 s um quadro aparece duas vezes (a nota "pula"). Agora o PCSX2
+# acelera 0,1% para casar com a tela e usa a sincronia da tela como relógio (SyncToHostRefreshRate +
+# UseVSyncForTiming, que só valem com VsyncEnable). O áudio acompanha pelo esticamento de tempo.
 RITMO = ("guitar hero", "rock band", "band hero", "dj hero", "singstar", "taiko")
 ritmo = any(p in game_id.lower() for p in RITMO)
-if ritmo and profile == "potente":
-    put("EmuCore/GS", "upscale_multiplier", "1")
+for k in ("VsyncEnable", "SyncToHostRefreshRate", "UseVSyncForTiming"):
+    put("EmuCore/GS", k, "true" if ritmo else "false")
 for k, v in SPEED.get(speed, SPEED["normal"]).items():
     put("EmuCore/Speedhacks", k, v)
 # MTVU (VU1 numa thread própria): padrão do PCSX2 é desligado; nos modos rápido/máximo liga se
@@ -130,7 +131,8 @@ try:
     run = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
     with open(os.path.join(run, "game.ajustes"), "a", encoding="utf-8") as f:
         f.write(f"PCSX2: {profile}, {speed}, resolução {cp.get('EmuCore/GS', 'upscale_multiplier')}x"
-                + (", leitura da GPU sem espera" if sem_espera else "") + "\n")
+                + (", leitura da GPU sem espera" if sem_espera else "")
+                + (", sincronia com a tela (60 Hz)" if ritmo else "") + "\n")
 except OSError:
     pass
 
