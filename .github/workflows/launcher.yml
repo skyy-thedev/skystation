@@ -40,6 +40,11 @@ jobs:
             test "${PIPESTATUS[0]}" = 0
             ! grep -E "SCRIPT ERROR|Parse Error|Compile Error" "/tmp/$f.log"
           done
+      - name: Leitor de tarefas não fica girando depois que o processo termina (bug de 20/nov)
+        run: |
+          cp console/tests/launcher/pipe.gd console/launcher/zz_pipe.gd
+          timeout 60 ./godot --headless --path console/launcher --script res://zz_pipe.gd 2>&1 | tee /tmp/pipe.log
+          grep -q "RESULTADO: tudo certo" /tmp/pipe.log
       - name: Confere os jogos feitos no Godot (DEADZONE…)
         run: |
           for proj in console/games/*/project.godot; do

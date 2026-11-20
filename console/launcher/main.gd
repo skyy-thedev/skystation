@@ -2558,14 +2558,24 @@ func _central_off() -> void:
 	_refresh_sys_items()
 
 
-func _pipe_reader(pipe: FileAccess, cb: String) -> void:
-	# lê a saída de um processo linha a linha (numa thread) e repassa para a tela
+func _pipe_reader(pipe: FileAccess, cb: String, pid: int = -1) -> void:
+	# lê a saída de um processo linha a linha (numa thread) e repassa para a tela.
+	# 20/nov: o cano do execute_with_pipe nunca marca eof_reached no Godot 4.5. Depois que o
+	# processo terminava, get_line() devolvia "" na hora, para sempre: a thread ficava girando
+	# e gastava um núcleo inteiro (o menu a 108% de CPU durante os jogos, o notebook a 100 °C).
+	# Agora, linha vazia + processo encerrado = fim; e uma linha vazia de verdade espera 20 ms.
 	while pipe.is_open():
 		var line := pipe.get_line()
-		if line == "" and pipe.eof_reached():
-			break
 		if line != "":
 			call_deferred(cb, line)
+			continue
+		if pipe.eof_reached() or pid < 0 or not OS.is_process_running(pid):
+			var resto := pipe.get_line()   # o que ainda estiver no cano
+			while resto != "":
+				call_deferred(cb, resto)
+				resto = pipe.get_line()
+			break
+		OS.delay_msec(20)
 	call_deferred(cb, "{\"evento\": \"fim\"}")
 
 
@@ -2597,7 +2607,7 @@ func _run_job(args: Array, title: String, tool: String = "sky-jogos") -> void:
 	busy_msg = title
 	job_cancel_hint = args[0] in ["copiar-disco", "compactar", "conferir"]
 	job_thread = Thread.new()
-	job_thread.start(_pipe_reader.bind(info["stdio"], "_on_job_line"))
+	job_thread.start(_pipe_reader.bind(info["stdio"], "_on_job_line", int(info.get("pid", -1))))
 
 
 func _on_job_line(line: String) -> void:
@@ -2785,6 +2795,7 @@ func _tick_idle(delta: float) -> void:
 	dim_t = move_toward(dim_t, 1.0 if dimmed else 0.0, delta * 1.5)
 	if not dimmed and idle_t >= IDLE_DIM:
 		dimmed = true
+		Engine.max_fps = 20   # 20/nov: tela escurecida não precisa de 60 quadros (menos calor parado)
 		panel_open = false
 		slider_kind = ""
 		_bg(_run_json.bind(SKY_BIN + "/sky-config", ["brilho", "get"]), _on_dim_brightness)
@@ -2811,6 +2822,7 @@ func _on_dim_brightness(r: Dictionary) -> void:
 
 func _wake() -> void:
 	dimmed = false
+	_apply_power_mode()
 	idle_t = 0.0
 	off_countdown = -1.0
 	if saved_brightness > 0:
