@@ -24,3 +24,8 @@ func _ready() -> void:
 
 func _draw() -> void:
 	A.peca(self, nome, largura, 8.0, Color.WHITE, espelho)
+
+
+func desenhar_sombra(ci: CanvasItem) -> void:
+	## chamada pelo grupo de sombras do sol (main._desenhar_sombras)
+	A.sombra_peca(ci, nome, largura, position, 8.0, espelho)

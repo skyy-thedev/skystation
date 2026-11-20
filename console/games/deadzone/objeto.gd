@@ -398,3 +398,8 @@ func _draw_arte() -> bool:
 				return A.peca(self, "barricada", largura, 10.0, Color(a, a, a))
 			return false
 	return false
+
+
+func desenhar_sombra(ci: CanvasItem) -> void:
+	if tipo == "arvore" and madeira > 0:
+		A.sombra_peca(ci, "arvore", 170.0, position, 14.0)

@@ -57,6 +57,13 @@ var sons: Node
 var musica: Node
 var tex_luz: Texture2D
 var tex_cone: Texture2D
+var mat_chao: ShaderMaterial        # chão e paredes sem padrão repetido (chao.gdshader)
+var sombras_sol: CanvasGroup        # sombras do sol (paredes, enfeites): um grupo só, para não escurecer em dobro
+var sombras_no: Node2D
+var casters: Array = []             # [Rect2 da base, altura] de cada parede para a sombra do sol
+var enfeites_sombra: Array = []     # nós com sprite que projetam sombra (árvores, Kombis…)
+var luzes_noite: Array = []         # [PointLight2D, energia, pisca] (postes, luz do bunker)
+var sol_k := -1.0
 
 
 func _ready() -> void:
@@ -64,6 +71,13 @@ func _ready() -> void:
 	_ler_recorde()
 	tex_luz = _textura_luz(false)
 	tex_cone = _textura_luz(true)
+	var ruido := FastNoiseLite.new()
+	ruido.seed = 2033
+	ruido.frequency = 0.012
+	ruido.fractal_octaves = 3
+	mat_chao = ShaderMaterial.new()
+	mat_chao.shader = preload("res://chao.gdshader")
+	mat_chao.set_shader_parameter("ruido", ImageTexture.create_from_image(ruido.get_seamless_image(256, 256)))
 	var ui := CanvasLayer.new()
 	ui.layer = 5
 	add_child(ui)
@@ -235,7 +249,20 @@ func _nova_partida(p_modo := "historia", p_semente := -1) -> void:
 	chao.z_index = -10
 	chao.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 	chao.draw.connect(_desenhar_chao)
+	chao.material = mat_chao
 	mundo.add_child(chao)
+	sombras_sol = CanvasGroup.new()
+	sombras_sol.z_index = -8
+	sombras_sol.fit_margin = 0.0
+	sombras_sol.clear_margin = 0.0
+	mundo.add_child(sombras_sol)
+	sombras_no = Node2D.new()
+	sombras_no.draw.connect(_desenhar_sombras)
+	sombras_sol.add_child(sombras_no)
+	casters.clear()
+	enfeites_sombra.clear()
+	luzes_noite.clear()
+	sol_k = -1.0
 	camada_sangue = Node2D.new()
 	camada_sangue.z_index = -9
 	camada_sangue.draw.connect(_desenhar_sangue)
@@ -268,6 +295,7 @@ func _nova_partida(p_modo := "historia", p_semente := -1) -> void:
 	for i in 16:
 		_nascer_zumbi()
 	_npc("tiao", locais["ponte"])
+	_preparar_luz()
 	_ciclo()
 
 
@@ -1022,14 +1050,86 @@ func noite() -> float:
 
 
 func _ciclo() -> void:
+	## cor do ambiente: manhã fria, meio-dia neutro, fim de tarde laranja, noite de lua (azul, dá para ver
+	## os vultos), madrugada. As luzes da cidade acendem com a noite.
 	var n := noite()
-	var dia_cor := Color(1.0, 0.97, 0.92)
-	var tarde := Color(0.95, 0.72, 0.55)
-	var noite_cor := Color(0.07, 0.08, 0.15)
-	var c := dia_cor.lerp(noite_cor, n)
-	if tempo > 160.0 and tempo < 200.0:
-		c = dia_cor.lerp(tarde, clampf((tempo - 160.0) / 20.0, 0.0, 1.0)).lerp(noite_cor, n)
+	var c := Color(1.0, 0.97, 0.92)
+	if tempo < 30.0:
+		c = Color(0.86, 0.84, 0.95).lerp(c, tempo / 30.0)                    # amanhecer
+	elif tempo > 140.0 and tempo < 200.0:
+		c = c.lerp(Color(1.0, 0.7, 0.5), clampf((tempo - 140.0) / 40.0, 0.0, 1.0))   # entardecer
+	c = c.lerp(Color(0.2, 0.23, 0.38), n)
 	escuro.color = c
+	# sol: some à noite e a sombra cresce no fim da tarde (luz vem de cima à direita, como na arte das peças)
+	var k := 0.5 + clampf((tempo - 100.0) / 90.0, 0.0, 1.0) * 0.9
+	Arte.sol_v = Vector2(-0.62, 0.34) * k
+	Arte.sol_a = (1.0 - n) * (0.42 if tempo < 150.0 else 0.42 + (tempo - 150.0) / 50.0 * 0.12)
+	if sombras_sol:
+		sombras_sol.self_modulate.a = Arte.sol_a
+		if absf(k - sol_k) > 0.04:
+			sol_k = k
+			sombras_no.queue_redraw()
+	var t := Time.get_ticks_msec() * 0.001
+	for l in luzes_noite:
+		var luz: PointLight2D = l[0]
+		var e: float = l[1] * (n if l[3] else 1.0)
+		if l[2]:                                  # lâmpada com mau contato
+			e *= 0.35 if fmod(t * 1.7 + l[1] * 13.0, 3.0) < 0.12 or sin(t * 23.0 + l[1]) > 0.93 else 1.0
+		luz.energy = e
+		luz.visible = e > 0.02
+
+
+func _preparar_luz() -> void:
+	## junta o que faz sombra do sol e acende as luzes fixas (postes que ainda funcionam, bunker)
+	var r := RandomNumberGenerator.new()
+	r.seed = semente + 4242
+	for c in mundo.get_children():
+		if c.get_script() == preload("res://parede.gd"):
+			casters.append([Rect2(c.position.x - c.tam.x / 2, c.position.y - c.tam.y, c.tam.x, c.tam.y), 58.0])
+			c.material = mat_chao
+		elif c.get_script() == preload("res://deco.gd"):
+			if c.nome in ["poste", "orelhao", "arbusto"]:
+				enfeites_sombra.append(c)
+			if c.nome == "poste" and r.randf() < 0.35:
+				var l := nova_luz(Color(1.0, 0.72, 0.4), 1.9, false)   # sem sombra: o poste fica colado nas paredes
+				l.position = Vector2(0, -4)
+				c.add_child(l)
+				luzes_noite.append([l, 0.95, r.randf() < 0.3, true])
+		elif c.get_script() == preload("res://objeto.gd") and c.tipo == "arvore":
+			enfeites_sombra.append(c)
+	if locais.has("bunker"):
+		# bunker: luz fria de lâmpada fluorescente, ligada o tempo todo
+		var b: Rect2 = predios[locais["bunker"]]["r"]
+		var y := b.position.y + 140.0
+		while y < b.end.y - 60.0:
+			var x := b.position.x + 160.0
+			while x < b.end.x - 80.0:
+				var l := nova_luz(Color(0.8, 0.95, 1.0), 3.0, true)
+				l.position = Vector2(x, y)
+				mundo.add_child(l)
+				luzes_noite.append([l, 1.25, r.randf() < 0.25, false])
+				x += 320.0
+			y += 300.0
+	sombras_no.queue_redraw()
+	chao.queue_redraw()
+
+
+func _desenhar_sombras() -> void:
+	## sombra do sol: cada parede é uma caixa; a sombra é o casco convexo da base + a base empurrada pelo sol.
+	## Tudo em preto opaco aqui; a transparência vem do CanvasGroup, então sombras que se cruzam não somam.
+	var n := sombras_no
+	for c in casters:
+		var b: Rect2 = c[0]
+		var d: Vector2 = Arte.sol_v * float(c[1])
+		var pts := PackedVector2Array([b.position, Vector2(b.end.x, b.position.y), b.end, Vector2(b.position.x, b.end.y)])
+		for i in 4:
+			pts.append(pts[i] + d)
+		var casco := Geometry2D.convex_hull(pts)
+		if casco.size() >= 3:
+			n.draw_colored_polygon(casco, Color.BLACK)
+	for e in enfeites_sombra:
+		if is_instance_valid(e) and e.has_method("desenhar_sombra"):
+			e.desenhar_sombra(n)
 
 
 func fim_de_jogo() -> void:
@@ -1091,9 +1191,12 @@ func _desenhar_chao() -> void:
 	# mato
 	_piso(Rect2(0, 0, lado, lado), Color("4a5a3a"), "chao_mato", 224, Color(0.82, 0.86, 0.78))
 	r2.seed = 7
-	for i in 1100:
+	for i in 700:
+		# manchas macias (terra, mato mais escuro): borda difusa em vez de bolinha de borda dura
 		var p := Vector2(r2.randf() * lado, r2.randf() * lado)
-		n.draw_circle(p, r2.randf_range(8, 30), Color(0.25, 0.32, 0.2, 0.25))
+		var tam := Vector2(r2.randf_range(60, 200), r2.randf_range(40, 140))
+		var cor := Color(0.2, 0.24, 0.12, 0.35) if r2.randf() < 0.6 else Color(0.45, 0.36, 0.2, 0.3)
+		n.draw_texture_rect(tex_luz, Rect2(p - tam / 2, tam), false, cor)
 	# calçadas, ruas e faixas
 	for i in range(0, MAPA, QUADRA):
 		var x := i * T
@@ -1110,11 +1213,14 @@ func _desenhar_chao() -> void:
 			n.draw_rect(Rect2(x - 3, yy, 6, 36), Color(0.9, 0.8, 0.3, 0.5))
 			n.draw_rect(Rect2(yy, x - 3, 36, 6), Color(0.9, 0.8, 0.3, 0.5))
 			yy += 90
-	# rachaduras e lixo
+	# manchas de óleo e de queimado nas ruas, poças de sujeira: quebram a repetição do asfalto
 	r2.seed = 11
-	for i in 500:
-		var p := Vector2(r2.randf() * lado, r2.randf() * lado)
-		n.draw_line(p, p + Vector2(r2.randf_range(-30, 30), r2.randf_range(-30, 30)), Color(0, 0, 0, 0.18), 2)
+	for i in 420:
+		var faixa := r2.randi_range(0, MAPA / QUADRA - 1) * QUADRA * T
+		var ao_longo := r2.randf() * lado
+		var p := Vector2(faixa + r2.randf_range(10, 4 * T - 10), ao_longo) if r2.randf() < 0.5 else Vector2(ao_longo, faixa + r2.randf_range(10, 4 * T - 10))
+		var tam := Vector2(r2.randf_range(30, 120), r2.randf_range(20, 70))
+		n.draw_texture_rect(tex_luz, Rect2(p - tam / 2, tam), false, Color(0.02, 0.02, 0.03, r2.randf_range(0.25, 0.55)))
 	# zonas de radiação: chão manchado e plantas mortas
 	for z in radiacao:
 		var c: Vector2 = z["pos"]
@@ -1135,20 +1241,28 @@ func _desenhar_chao() -> void:
 				_piso(r, p["piso"], "chao_terra", 192)
 			_:
 				_piso(r, p["piso"], "chao_concreto", 192, p["piso"].lightened(0.45))
-		if p["tipo"] == "casa":
-			var yy: float = r.position.y
-			while yy < r.end.y:
-				n.draw_line(Vector2(r.position.x, yy), Vector2(r.end.x, yy), Color(0, 0, 0, 0.12), 2)
-				yy += 22
-		elif p["tipo"] != "patio":
-			var xx: float = r.position.x
-			while xx < r.end.x:
-				n.draw_line(Vector2(xx, r.position.y), Vector2(xx, r.end.y), Color(0, 0, 0, 0.08), 1)
-				xx += 48
+		# canto mais escuro dentro das construções (sem sol direto)
+		if p["tipo"] != "patio":
+			n.draw_rect(r, Color(0.05, 0.04, 0.08, 0.16))
 		if p.has("nome"):
 			n.draw_string(ThemeDB.fallback_font, r.position + Vector2(20, r.size.y - 20), p["nome"].to_upper(),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color(1, 1, 1, 0.12))
 
+
+	# "oclusão de ambiente": o chão escurece colado no pé de cada parede, como na vida real
+	for c in casters:
+		var b: Rect2 = c[0]
+		_ao(b.position, Vector2(b.end.x, b.position.y), Vector2(0, -1))
+		_ao(Vector2(b.position.x, b.end.y), b.end, Vector2(0, 1))
+		_ao(b.position, Vector2(b.position.x, b.end.y), Vector2(-1, 0))
+		_ao(Vector2(b.end.x, b.position.y), b.end, Vector2(1, 0))
+
+
+func _ao(a: Vector2, b: Vector2, fora: Vector2) -> void:
+	var d := fora * 24.0
+	var forte := Color(0, 0, 0, 0.42)
+	var nada := Color(0, 0, 0, 0)
+	chao.draw_polygon(PackedVector2Array([a, b, b + d, a + d]), PackedColorArray([forte, forte, nada, nada]))
 
 func _desenhar_sangue() -> void:
 	var n := camada_sangue

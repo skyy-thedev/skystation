@@ -5,6 +5,9 @@ extends RefCounted
 
 static var _cache := {}
 static var _fontes := {}
+## sol: quanto a sombra anda no chão por pixel de altura (main._ciclo atualiza) e a força dela
+static var sol_v := Vector2(-0.31, 0.17)
+static var sol_a := 0.4
 
 
 static func tex(rel: String, lado_max := 0) -> Texture2D:
@@ -84,9 +87,28 @@ static func boneco(ci: CanvasItem, nome: String, frente: Vector2, fase: float, a
 	var h := altura
 	var w := t.get_width() * h / t.get_height()
 	var esc := Vector2(1.0 + pulo * 0.008, 1.0 - pulo * 0.01 + resp)
+	if sol_a > 0.02:
+		sombra(ci, t, Rect2(-w / 2, -h, w, h), Vector2.ZERO, Color(0, 0, 0, sol_a * 0.85), espelho)
 	if espelho:
 		esc.x = -esc.x
 	ci.draw_set_transform(Vector2(0, -pulo), giro, esc)
 	ci.draw_texture_rect(t, Rect2(-w / 2, -h, w, h), false, mod)
 	ci.draw_set_transform(Vector2.ZERO)
 	return true
+
+
+static func sombra(ci: CanvasItem, t: Texture2D, r: Rect2, origem: Vector2, cor: Color, espelho := false) -> void:
+	## a silhueta da imagem "deitada" no chão na direção do sol: o ponto a h px de altura vai para
+	## origem + sol_v * h. É só uma matriz com cisalhamento; a imagem é a mesma, pintada de preto.
+	var x := Vector2(-1, 0) if espelho else Vector2(1, 0)
+	ci.draw_set_transform_matrix(Transform2D(x, Vector2(-sol_v.x, -sol_v.y), origem))
+	ci.draw_texture_rect(t, r, false, cor)
+	ci.draw_set_transform_matrix(Transform2D.IDENTITY)
+
+
+static func sombra_peca(ci: CanvasItem, nome: String, largura: float, origem: Vector2, base := 0.0, espelho := false) -> void:
+	var t := tex("pecas/%s.png" % nome, int(largura * 1.6))
+	if t == null:
+		return
+	var h := t.get_height() * largura / t.get_width()
+	sombra(ci, t, Rect2(-largura / 2, base - h, largura, h), origem, Color.BLACK, espelho)

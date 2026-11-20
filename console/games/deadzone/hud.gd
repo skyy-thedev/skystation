@@ -128,7 +128,20 @@ func _draw() -> void:
 			_capitulo(w, h)
 
 
+var _tex_vinheta: Texture2D
+
+
 func _vinheta(w: float, h: float) -> void:
+	# cantos escuros, como lente de câmera: mais forte à noite. Prende o olho no centro da tela.
+	if _tex_vinheta == null:
+		var img := Image.create(128, 128, false, Image.FORMAT_RGBA8)
+		for y in 128:
+			for x in 128:
+				var d := Vector2((x - 63.5) / 63.5, (y - 63.5) / 63.5).length()
+				var a := clampf((d - 0.55) / 0.85, 0.0, 1.0)
+				img.set_pixel(x, y, Color(0, 0, 0, a * a))
+		_tex_vinheta = ImageTexture.create_from_image(img)
+	draw_texture_rect(_tex_vinheta, Rect2(0, 0, w, h), false, Color(1, 1, 1, 0.55 + 0.35 * main.noite()))
 	var perigo := 0.0
 	for j in main.jogadores:
 		perigo = maxf(perigo, maxf(1.0 - j.hp / j.hp_max * 2.5, j.t_dano * 2.0))

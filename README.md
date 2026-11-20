@@ -193,6 +193,12 @@ sintetizados. Fontes: Bangers e Comic Neue (OFL). A bíblia da história e o rot
   `arte/personagens/<nome>_<baixo|cima|esq|dir>.png` e `arte/zumbis/<tipo>_<frente|lado>.png` com pulinho,
   balanço e respiração; enquanto os arquivos não existem, fica o boneco antigo. Já estão lá Corvo, Iara, Rocha,
   Nina e Tião (frente, costas e lado; o lado que falta é o outro espelhado) e os 5 zumbis.
+- **Chão sem padrão e luz:** `chao.gdshader` lê cada textura duas vezes (uma girada e em outra escala) e um ruído
+  do mundo escolhe qual aparece, com manchas largas de claro/escuro e quente/frio por cima; manchas de óleo nas
+  ruas e chão mais escuro colado no pé das paredes. Sol com sombras: paredes (casco convexo da base empurrada
+  pelo sol, num `CanvasGroup` para as sombras não somarem), personagens, carros, árvores e postes; a sombra
+  cresce no fim da tarde e some à noite. Ciclo de cor (amanhecer, dia, entardecer laranja, noite de lua azul),
+  postes que ainda funcionam (alguns piscam), luz fria no bunker e vinheta nos cantos da tela.
 - **Testes:** `console/tests/deadzone/roteiro.gd` joga o capítulo inteiro (31 checagens, inclusive salvar e
   carregar) e `controles.gd` aperta os botões; os dois rodam no CI do launcher.
 
