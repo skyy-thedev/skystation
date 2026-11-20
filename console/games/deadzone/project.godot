@@ -1,10 +1,10 @@
-; Zona Morta (título provisório): primeiro jogo oficial da SkyStation. Godot 4, sem arquivos de arte:
+; DEADZONE: primeiro jogo oficial da SkyStation. Godot 4, sem arquivos de arte:
 ; tudo é desenhado pelo código, então o jogo inteiro tem poucos KB.
 config_version=5
 
 [application]
 
-config/name="Zona Morta"
+config/name="DEADZONE"
 run/main_scene="res://main.tscn"
 config/features=PackedStringArray("4.3", "GL Compatibility")
 boot_splash/show_image=false

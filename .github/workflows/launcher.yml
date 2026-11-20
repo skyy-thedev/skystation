@@ -4,9 +4,9 @@ name: Launcher (GDScript)
 # oficial confere os scripts do launcher a cada mudança, antes de chegarem ao console.
 on:
   push:
-    paths: ["console/launcher/**", "console/games/**/*.gd", "console/tests/zona-morta/**", ".github/workflows/launcher.yml"]
+    paths: ["console/launcher/**", "console/games/**/*.gd", "console/tests/deadzone/**", ".github/workflows/launcher.yml"]
   pull_request:
-    paths: ["console/launcher/**", "console/games/**/*.gd", "console/tests/zona-morta/**", ".github/workflows/launcher.yml"]
+    paths: ["console/launcher/**", "console/games/**/*.gd", "console/tests/deadzone/**", ".github/workflows/launcher.yml"]
 
 permissions:
   contents: read
@@ -40,7 +40,7 @@ jobs:
             test "${PIPESTATUS[0]}" = 0
             ! grep -E "SCRIPT ERROR|Parse Error|Compile Error" "/tmp/$f.log"
           done
-      - name: Confere os jogos feitos no Godot (Zona Morta…)
+      - name: Confere os jogos feitos no Godot (DEADZONE…)
         run: |
           for proj in console/games/*/project.godot; do
             d="$(dirname "$proj")"
@@ -51,11 +51,11 @@ jobs:
               ! grep -E "SCRIPT ERROR|Parse Error|Compile Error" /tmp/jogo.log
             done
           done
-      - name: Zona Morta jogado por um roteiro (história inteira, coop, controles)
+      - name: DEADZONE jogado por um roteiro (história inteira, coop, controles)
         run: |
           for t in roteiro controles; do
-            cp "console/tests/zona-morta/$t.gd" "console/games/zona-morta/zz_$t.gd"
-            timeout 300 ./godot --headless --path console/games/zona-morta --script "res://zz_$t.gd" 2>&1 | tee "/tmp/zm-$t.log"
+            cp "console/tests/deadzone/$t.gd" "console/games/deadzone/zz_$t.gd"
+            timeout 300 ./godot --headless --path console/games/deadzone --script "res://zz_$t.gd" 2>&1 | tee "/tmp/zm-$t.log"
             test "${PIPESTATUS[0]}" = 0
             grep -q "RESULTADO: tudo certo" "/tmp/zm-$t.log"
           done

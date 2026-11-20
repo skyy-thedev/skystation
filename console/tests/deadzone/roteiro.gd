@@ -1,8 +1,8 @@
 extends SceneTree
 ## Joga o Capítulo 1 inteiro sem ninguém no controle: abertura, bunker, rádio, a mordida da Iara, posto, carro,
 ## coop, dormir (salva), carregar o save, pedágio e o fim do capítulo. Fotos com ZM_FOTOS=/pasta.
-##   cp console/tests/zona-morta/roteiro.gd console/games/zona-morta/zz_roteiro.gd
-##   godot --headless --path console/games/zona-morta --script res://zz_roteiro.gd
+##   cp console/tests/deadzone/roteiro.gd console/games/deadzone/zz_roteiro.gd
+##   godot --headless --path console/games/deadzone --script res://zz_roteiro.gd
 
 var m: Node
 var n := 0

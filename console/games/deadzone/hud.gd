@@ -335,7 +335,7 @@ func _controles(p: Vector2) -> void:
 
 func _titulo(w: float, h: float) -> void:
 	draw_rect(Rect2(0, 0, w, h), Color(0, 0, 0, 0.55))
-	_txt("ZONA MORTA", Vector2(0, h * 0.24), 72, VERMELHO, w, HORIZONTAL_ALIGNMENT_CENTER)
+	_txt("DEADZONE", Vector2(0, h * 0.24), 72, VERMELHO, w, HORIZONTAL_ALIGNMENT_CENTER)
 	_txt("Versão 0.3 · Jogo oficial da SkyStation · Brasil, 2033", Vector2(0, h * 0.24 + 40), 17, Color(1, 1, 1, 0.6), w, HORIZONTAL_ALIGNMENT_CENTER)
 	var ops: Array = main.opcoes_titulo()
 	for i in ops.size():

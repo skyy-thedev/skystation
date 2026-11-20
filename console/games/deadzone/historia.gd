@@ -5,7 +5,7 @@ extends Node
 ## A carga é a Iara — e ela é imune. No Rio, um hospital quer estudá-la. A estrada vai mudar os dois.
 ##
 ## Capítulo 1 — "A Carga" (Sumaré): sair do bunker, achar a rota, descobrir o segredo da Iara, chegar ao pedágio.
-## (os próximos capítulos estão descritos em claude/zona-morta.md: São Paulo, a Serra, o Rio, e depois o norte)
+## (os próximos capítulos estão descritos em claude/zona-morta.md (bíblia) e no doc "DEADZONE — Direção de arte": São Paulo, a Serra, o Rio, e depois o norte)
 
 var main: Node2D
 var etapa := 0

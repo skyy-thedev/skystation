@@ -1,5 +1,5 @@
 extends Node2D
-## Zona Morta 0.2 — o "maestro": cria a cidade, os jogadores (coop local até 2), os zumbis, o dia e a noite,
+## DEADZONE — o "maestro": cria a cidade, os jogadores (coop local até 2), os zumbis, o dia e a noite,
 ## e passa a vez para a história (historia.gd) e para a tela (hud.gd). Tudo desenhado por código, em 2.5D:
 ## o mundo é ordenado pelo Y (quem está mais embaixo na tela aparece na frente).
 
