@@ -58,7 +58,7 @@ jobs:
           done
       - name: DEADZONE jogado por um roteiro (história inteira, coop, controles)
         run: |
-          for t in roteiro controles furtivo; do
+          for t in roteiro controles furtivo tensao; do
             cp "console/tests/deadzone/$t.gd" "console/games/deadzone/zz_$t.gd"
             timeout 300 ./godot --headless --path console/games/deadzone --script "res://zz_$t.gd" 2>&1 | tee "/tmp/zm-$t.log"
             test "${PIPESTATUS[0]}" = 0

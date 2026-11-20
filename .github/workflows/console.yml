@@ -52,6 +52,8 @@ jobs:
         run: /usr/bin/python3 console/tests/teste-security.py
       - name: Benchmarks (jogos e sistema)
         run: /usr/bin/python3 console/tests/teste-bench.py
+      - name: Som no alto-falante do controle (sky-controle-som)
+        run: /usr/bin/python3 console/tests/teste-controle-som.py
       - name: Desenho do menu (conversa e teclado)
         run: |
           mkdir -p imagens

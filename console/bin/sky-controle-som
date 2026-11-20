@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""SkyStation: som do jogo saindo do alto-falante do controle, como nos exclusivos de PS4/PS5.
+
+O DualShock 4 e o DualSense ligados no CABO USB aparecem no Linux como uma placa de som
+("Wireless Controller" / "DualSense Wireless Controller"). Este programa acha essas placas no
+PipeWire e toca arquivos .wav nelas, um controle por jogador.
+
+    sky-controle-som lista                  controles com saída de som (um por linha: n<TAB>nome)
+    sky-controle-som tocar ARQ.wav [VOL] [N]  toca no controle N (1 = primeiro), VOL de 0 a 1
+    sky-controle-som servidor               lê comandos no stdin, uma linha cada:
+                                              tocar ARQ.wav VOL N
+                                            (o DEADZONE abre assim e manda os gemidos dos zumbis)
+
+Pelo Bluetooth não dá: o Linux não manda áudio para o controle sem fio.
+DualSense: o áudio USB sai no fone do controle por padrão. Para usar o alto-falante, o programa
+manda ao controle (pelo hidraw) o relatório que escolhe a saída "alto-falante" e o volume, como o
+PS5 faz. Isso foi escrito a partir da documentação pública do relatório 0x02; se o seu controle não
+tocar pelo alto-falante, rode `sky-controle-som lista` e mande a saída.
+"""
+import glob
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+SONY = "054c"
+DUALSENSE = ("0ce6", "0df2")
+DS4 = ("05c4", "09cc", "0ba0")
+
+
+def _sinks():
+    """Saídas de som (PipeWire) que são controles Sony, em ordem estável."""
+    nomes = []
+    if shutil.which("pactl"):
+        try:
+            out = subprocess.run(["pactl", "list", "short", "sinks"], capture_output=True, text=True, timeout=3).stdout
+            for linha in out.splitlines():
+                partes = linha.split("\t")
+                if len(partes) > 1:
+                    nomes.append(partes[1])
+        except (OSError, subprocess.SubprocessError):
+            pass
+    elif shutil.which("pw-dump"):
+        try:
+            dados = json.loads(subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5).stdout)
+            for o in dados:
+                props = o.get("info", {}).get("props", {})
+                if props.get("media.class") == "Audio/Sink":
+                    nomes.append(props.get("node.name", ""))
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+    achados = [n for n in nomes if any(k in n for k in ("Sony", "Wireless_Controller", "DualSense", "054c"))]
+    return sorted(achados)
+
+
+def _hidraws():
+    """[(caminho /dev/hidrawN, produto)] dos controles Sony ligados no USB."""
+    r = []
+    for d in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
+        try:
+            uevent = open(os.path.join(d, "device", "uevent")).read()
+        except OSError:
+            continue
+        for linha in uevent.splitlines():
+            if linha.startswith("HID_ID="):
+                bus, ven, pro = linha.split("=")[1].split(":")
+                ven, pro = ven[-4:].lower(), pro[-4:].lower()
+                if ven == SONY and bus.endswith("0003"):          # 0003 = USB
+                    r.append(("/dev/" + os.path.basename(d), pro))
+    return r
+
+
+def ligar_altofalante():
+    """Manda para cada DualSense/DS4 no USB o relatório que joga o áudio no alto-falante."""
+    for caminho, pro in _hidraws():
+        try:
+            if pro in DUALSENSE:
+                rel = bytearray(48)
+                rel[0] = 0x02
+                rel[1] = 0x20 | 0x80        # valid_flag0: volume do alto-falante + controle de áudio
+                rel[6] = 0x64               # volume do alto-falante
+                rel[8] = 0x30               # saída: só o alto-falante
+                with open(caminho, "wb", buffering=0) as f:
+                    f.write(bytes(rel))
+            elif pro in DS4:
+                rel = bytearray(32)
+                rel[0] = 0x05
+                rel[1] = 0xF0               # volumes (fone esq/dir, mic, alto-falante)
+                rel[19] = rel[20] = 0x40
+                rel[22] = 0x40              # volume do alto-falante
+                with open(caminho, "wb", buffering=0) as f:
+                    f.write(bytes(rel))
+        except OSError:
+            pass                            # sem permissão no hidraw: o som vai para o fone do controle
+
+
+def tocar(arq, vol=0.8, n=1, sinks=None):
+    sinks = sinks if sinks is not None else _sinks()
+    if not sinks or not os.path.exists(arq):
+        return False
+    alvo = sinks[min(max(n, 1), len(sinks)) - 1]
+    vol = max(0.0, min(1.0, vol))
+    if shutil.which("pw-play"):
+        cmd = ["pw-play", "--target", alvo, "--volume", "%.2f" % vol, arq]
+    elif shutil.which("paplay"):
+        cmd = ["paplay", "--device=" + alvo, "--volume=%d" % int(vol * 65536), arq]
+    else:
+        return False
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return True
+
+
+def servidor():
+    sinks = _sinks()
+    ligar_altofalante()
+    print("controles %d" % len(sinks), flush=True)
+    vistos = 0
+    for linha in sys.stdin:
+        p = linha.split()
+        if not p:
+            continue
+        if p[0] == "tocar" and len(p) >= 2:
+            vistos += 1
+            if vistos % 50 == 0:                # controle plugado/desplugado no meio do jogo
+                sinks = _sinks()
+            tocar(p[1], float(p[2]) if len(p) > 2 else 0.8, int(p[3]) if len(p) > 3 else 1, sinks)
+        elif p[0] == "atualizar":
+            sinks = _sinks()
+            ligar_altofalante()
+        elif p[0] == "sair":
+            break
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "lista"
+    if cmd == "lista":
+        for i, s in enumerate(_sinks()):
+            print("%d\t%s" % (i + 1, s))
+        for c, pro in _hidraws():
+            print("hid\t%s\t%s" % (c, "DualSense" if pro in DUALSENSE else ("DualShock 4" if pro in DS4 else pro)))
+    elif cmd == "tocar" and len(sys.argv) > 2:
+        ligar_altofalante()
+        ok = tocar(sys.argv[2], float(sys.argv[3]) if len(sys.argv) > 3 else 0.8, int(sys.argv[4]) if len(sys.argv) > 4 else 1)
+        sys.exit(0 if ok else 1)
+    elif cmd == "servidor":
+        servidor()
+    else:
+        print(__doc__)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

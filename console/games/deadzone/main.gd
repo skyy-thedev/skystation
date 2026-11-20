@@ -45,6 +45,10 @@ var avisou_noite := false
 var recorde := {"dias": 0, "mortes": 0, "nivel": 0}
 var novo_recorde := false
 var modo := "historia"
+## quem joga em cada modo: [jogador 1, jogador 2]. No solo da história a Iara vem junto controlada pelo jogo;
+## no coop cada dupla tem a própria história (historia_coop.gd)
+const DUPLAS := {"historia": ["corvo", "iara"], "coop_cr": ["corvo", "rocha"], "coop_in": ["iara", "nina"],
+	"sobrevivencia": ["corvo", "nina"]}
 
 var mundo: Node2D
 var chao: Node2D
@@ -247,7 +251,7 @@ func _nova_partida(p_modo := "historia", p_semente := -1) -> void:
 	rng.seed = semente
 
 	historia = Node.new()
-	historia.set_script(preload("res://historia.gd"))
+	historia.set_script(preload("res://historia_coop.gd") if modo.begins_with("coop_") else preload("res://historia.gd"))
 	historia.main = self
 	historia.modo = modo
 	add_child(historia)
@@ -287,8 +291,9 @@ func _nova_partida(p_modo := "historia", p_semente := -1) -> void:
 	n_gerados = objetos.size()
 	rng.seed = semente + 7     # daqui para frente o sorteio não precisa repetir
 
-	_novo_jogador(1, locais["inicio"])
-	_npc("rocha", locais["rocha"])
+	_novo_jogador(1, locais["iara"] if modo == "coop_in" else locais["inicio"])
+	if modo != "coop_cr":
+		_npc("rocha", locais["rocha"])          # no coop do Corvo e do Rocha, o Rocha é jogador
 	if modo == "historia":
 		vip = CharacterBody2D.new()
 		vip.set_script(preload("res://vip.gd"))
@@ -317,26 +322,24 @@ func _novo_jogador(n: int, p: Vector2) -> Node2D:
 	j.set_script(preload("res://jogador.gd"))
 	j.main = self
 	j.n = n
-	if n == 2 and modo == "historia":
-		j.nome = "Iara"              # no coop, o jogador 2 é a carga
-		j.vip = true
-		j.hp_max = 80.0
-		j.hp = 80.0
-		j.cor_roupa = Color("2f6b4f")
-		j.cor_cabelo = Color("1b1410")
-	elif n == 2:
-		j.nome = "Lia"
-		j.cor_roupa = Color("b5523a")
-		j.cor_cabelo = Color("7a3b1a")
+	var dupla: Array = DUPLAS.get(modo, DUPLAS["historia"])
+	var pid: String = dupla[n - 1]
+	var info: Dictionary = D.PERSONAGENS[pid]
+	j.personagem = pid
+	j.nome = info["nome"]
+	j.vip = info.get("imune", false)             # a Iara: mordida não transforma, radiação não pega
+	j.fuma = info["fuma"]
+	j.vel_mult = info["vel"]
+	j.ruido_mult = info["ruido"]
+	j.hp_max = info["hp"]
+	j.hp = info["hp"]
+	j.cor_roupa = {"corvo": Color("3a6ea5"), "iara": Color("2f6b4f"), "nina": Color("5a4a6a"), "rocha": Color("4a5a3a")}[pid]
+	j.cor_cabelo = {"corvo": Color("3b2a1a"), "iara": Color("1b1410"), "nina": Color("c0405a"), "rocha": Color("d8d8d0")}[pid]
 	j.position = p
-	j.mochila = {"bandagem": 1}
-	if n == 1:
-		j.armas = ["punhos", "pistola"]
-		j.arma = "punhos"
-		j.pentes = {"pistola": 3}
-	else:
-		j.armas = ["punhos", "faca"]
-		j.arma = "faca"
+	j.mochila = info["mochila"].duplicate()
+	j.armas = info["armas"].duplicate()
+	j.arma = info["arma"]
+	j.pentes = info["pentes"].duplicate()
 	mundo.add_child(j)
 	jogadores.append(j)
 	return j
@@ -524,7 +527,16 @@ func raio_visao(j: Node) -> float:
 	var base := lerpf(430.0, 260.0, n)
 	if n > 0.3 and j.luz_chamativa():
 		base += 220.0 * n        # luz acesa no escuro chama atenção
+	if n > 0.3 and j.get("fumando") and j.fumando > 0.0:
+		base += 90.0 * n         # a brasa do cigarro também
 	return base
+
+
+func ouvir_ruido(j: Node2D) -> void:
+	## passos: quem está dentro do raio vem ver (sem anel no radar, o radar desenha o anel do jogador)
+	for z in zumbis:
+		if z.alvo == null and z.global_position.distance_to(j.global_position) < j.ruido:
+			z.ouvir(j.global_position)
 
 
 func barulho(origem: Vector2, raio: float) -> void:
@@ -893,6 +905,9 @@ func opcoes_titulo() -> Array:
 		var o: String = d.get("objetivo", "")
 		ops.append({"id": "continuar", "txt": "Continuar — dia %d%s" % [int(d["dia"]), (" · " + o) if o != "" else " · sobrevivência"]})
 	ops.append({"id": "historia", "txt": "Nova história: Capítulo 1 — A Carga"})
+	var dois := Input.get_connected_joypads().size() >= 2
+	ops.append({"id": "coop_cr", "txt": "Coop: Corvo e Rocha — O Preço do Ar%s" % ("" if dois else " (2º controle entra com Start)")})
+	ops.append({"id": "coop_in", "txt": "Coop: Iara e Nina — Fuga%s" % ("" if dois else " (2º controle entra com Start)")})
 	ops.append({"id": "sobrevivencia", "txt": "Sobrevivência (sem fim)"})
 	ops.append({"id": "sair", "txt": "Sair"})
 	return ops
@@ -912,7 +927,7 @@ func _menu_titulo() -> void:
 		match ops[menu_sel]["id"]:
 			"continuar":
 				carregar()
-			"historia", "sobrevivencia":
+			"historia", "sobrevivencia", "coop_cr", "coop_in":
 				var m: String = ops[menu_sel]["id"]
 				if m != modo or historia.etapa > 0:
 					_nova_partida(m)
@@ -1007,7 +1022,7 @@ func _menu_mochila() -> void:
 			else:
 				var info: Dictionary = D.ITENS.get(it["item"], {})
 				j.usar_item(it["item"])
-				if info.get("tipo", "") in ["comida", "cura", "luz"] and not j.uso.is_empty() or it["item"] == "tocha":
+				if info.get("tipo", "") in ["comida", "cura", "luz", "fumo"] and not j.uso.is_empty() or it["item"] == "tocha":
 					estado = JOGANDO                  # fecha para ver a animação de uso
 		else:
 			var rec: Dictionary = lista[menu_sel]
@@ -1082,7 +1097,7 @@ func _jogar(d: float) -> void:
 		camada_sangue.queue_redraw()
 
 	# Tião chama quando alguém chega perto da ponte
-	if modo == "historia" and not historia.concluido and historia.etapa >= 4 and not historia.falou.has("tiao_chamou"):
+	if historia.tiao_pode_chamar() and not historia.falou.has("tiao_chamou"):
 		for j in jogadores:
 			var p: Vector2 = j.carro.global_position if j.carro else j.global_position
 			if p.y < 2 * T and absf(p.x - 38 * T) < 4 * T:

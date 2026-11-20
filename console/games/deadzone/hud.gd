@@ -44,7 +44,8 @@ const ICONE := {"enlatado": "lata", "salgadinho": "lata", "carne_crua": "carne_c
 	"agua": "agua", "bandagem": "bandagem", "kit_medico": "bandagem", "iodo": "iodo", "madeira": "madeira", "pano": "pano",
 	"sucata": "sucata", "garrafa": "molotov", "pilhas": "pilha", "tocha": "tocha", "galao": "galao", "molotov": "molotov",
 	"balas_9mm": "bala_pistola", "cartuchos": "cartucho", "balas_rifle": "pente_rifle",
-	"faca": "faca", "taco": "taco", "machado": "machado", "pistola": "pistola", "espingarda": "espingarda", "rifle": "rifle"}
+	"faca": "faca", "taco": "taco", "machado": "machado", "pistola": "pistola", "espingarda": "espingarda", "rifle": "rifle",
+	"cigarro": "cigarro"}
 const PAPEL := Color("f3e9cd")
 const TINTA := Color("17130f")
 
@@ -166,6 +167,8 @@ func _vinheta(w: float, h: float) -> void:
 	var perigo := 0.0
 	for j in main.jogadores:
 		perigo = maxf(perigo, maxf(1.0 - j.hp / j.hp_max * 2.5, j.t_dano * 2.0))
+		if j.tensao > 75.0:
+			perigo = maxf(perigo, (j.tensao - 75.0) / 25.0 * (0.55 + 0.45 * absf(sin(t * 5.0))))
 	if perigo <= 0.0:
 		return
 	for i in 6:
@@ -214,6 +217,15 @@ func _fina(p: Vector2, larg: float, v: float, cor: Color, rotulo: String) -> voi
 
 
 func _cara_corvo(j: Node) -> String:
+	var tenso: bool = j.tensao > 70.0
+	if j.personagem == "rocha":
+		if j.t_dano > 0.0 or main.fase_alerta == "ALERTA":
+			return "grito"
+		return "bravo" if tenso else ("aviso" if main.fase_alerta != "" else "severo")
+	if j.personagem == "nina":
+		if j.t_dano > 0.0 or j.hp < j.hp_max * 0.35:
+			return "dor"
+		return "medo" if tenso or main.fase_alerta == "ALERTA" else ("brava" if main.fase_alerta != "" else "rindo")
 	if j.vip:
 		if j.hp < j.hp_max * 0.35:
 			return "chorando"
@@ -224,7 +236,7 @@ func _cara_corvo(j: Node) -> String:
 		return "ferido"
 	if main.fase_alerta == "ALERTA":
 		return "grito"
-	if main.fase_alerta != "" or j.agachado:
+	if main.fase_alerta != "" or j.agachado or tenso:
 		return "preocupado"
 	return "neutro"
 
@@ -233,7 +245,7 @@ func _jogador(j: Node, w: float, h: float) -> void:
 	# cartão de status (canto de cima à esquerda; o do jogador 2 vem embaixo)
 	var r := Rect2(22, 20 + (j.n - 1) * 168, 420, 150)
 	_cartao(r)
-	var foto := A.tex("retratos/%s_%s.png" % ["iara" if j.vip else "corvo", _cara_corvo(j)], 300)
+	var foto := A.tex("retratos/%s_%s.png" % [{"corvo": "corvo", "iara": "iara", "rocha": "rocha", "nina": "nina"}[j.personagem], _cara_corvo(j)], 300)
 	var fr := Rect2(r.position + Vector2(12, 12), Vector2(126, 126))
 	draw_rect(fr, Color("2a2622"))
 	if foto:
@@ -242,18 +254,25 @@ func _jogador(j: Node, w: float, h: float) -> void:
 	var x := fr.end.x + 14
 	_bangers(j.nome.to_upper(), Vector2(x, r.position.y + 42), 30, CORES_FALA.get(j.nome, Color.WHITE))
 	draw_string(fonte, Vector2(x + 118, r.position.y + 40), "NÍVEL %d" % j.nivel, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, AMARELO)
-	_vida(Vector2(x, r.position.y + 56), 250, 18, j.hp / j.hp_max)
+	_vida(Vector2(x, r.position.y + 56), 214, 18, j.hp / j.hp_max)
+	_tensao_hud(j, Rect2(r.end.x - 42, r.position.y + 14, 28, 122))
 	_fina(Vector2(x, r.position.y + 88), 150, j.estamina / 100.0, Color("4fd1ff"), "fôlego")
 	_fina(Vector2(x, r.position.y + 106), 150, j.fome / 100.0, Color("f0a35e"), "fome")
 	if j.rad > 0.5:
 		_fina(Vector2(x, r.position.y + 124), 150, j.rad / 100.0, Color("b8e04a") if j.rad <= 50 else VERMELHO, "radiação%s" % (" · iodo!" if j.rad > 50 else ""))
 	else:
 		_fina(Vector2(x, r.position.y + 124), 150, float(j.xp) / j.xp_proximo(), AMARELO, "experiência")
-	if j.agachado:
-		_bangers("AGACHADO", Vector2(r.end.x - 108, r.position.y + 136), 18, Color("9db4ff"), 4)
+	# etiquetas em cima do retrato (como legenda de quadrinho)
+	var tag_y := fr.end.y - 4
+	for tag in [["AGACHADO", Color("9db4ff"), j.agachado], ["FUMANDO %ds" % ceili(j.fumando), Color(0.9, 0.9, 0.88), j.fumando > 0.0]]:
+		if tag[2]:
+			var tw := fonte_tit.get_string_size(tag[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x
+			draw_rect(Rect2(fr.position.x + 4, tag_y - 20, tw + 12, 22), Color(0, 0, 0, 0.8))
+			_bangers(tag[0], Vector2(fr.position.x + 10, tag_y - 3), 17, tag[1], 3)
+			tag_y -= 24
 	# Iara (no solo ela anda sozinha): mini cartão
 	var vip = main.vip
-	if vip and j.n == 1:
+	if vip and is_instance_valid(vip) and j.n == 1:
 		var ri := Rect2(22, r.end.y + 10, 300, 70)
 		_cartao(ri)
 		var cara := "deboche"
@@ -273,6 +292,25 @@ func _jogador(j: Node, w: float, h: float) -> void:
 			draw_string(fonte, Vector2(q.end.x + 70, ri.position.y + 28), "esperando", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, AMARELO)
 		_vida(Vector2(q.end.x + 10, ri.position.y + 40), 200, 12, vip.hp / vip.hp_max, 8)
 	_caixas(j, w, h)
+
+
+func _tensao_hud(j: Node, r: Rect2) -> void:
+	## termômetro de tensão: sobe com zumbi perto, caçado, ferido, escuro, tiro; o coração bate junto
+	var v: float = j.tensao / 100.0
+	draw_rect(r.grow(2), TINTA)
+	draw_rect(r, Color(1, 1, 1, 0.06))
+	var cor := Color("7fd8ff").lerp(Color("ff3b3b"), v)
+	var alt := r.size.y * v
+	draw_rect(Rect2(r.position.x, r.end.y - alt, r.size.x, alt), cor)
+	var bate := 1.0 + (absf(sin(t * (3.0 + v * 6.0))) * 0.25 if v > 0.5 else 0.0)
+	_bangers("♥", r.position + Vector2(2, -2) + Vector2(0, 0), int(22 * bate), cor, 4)
+	if j.fuma:
+		# nicotina: fumante sem cigarro não acalma direito
+		var nr := Rect2(r.position.x - 12, r.position.y + 8, 6, r.size.y - 8)
+		draw_rect(nr, Color(1, 1, 1, 0.08))
+		draw_rect(Rect2(nr.position.x, nr.end.y - nr.size.y * j.nicotina / 100.0, 6, nr.size.y * j.nicotina / 100.0), Color(0.85, 0.85, 0.8, 0.8))
+	if j.tensao > 70.0 and fmod(t, 1.0) < 0.6:
+		_bangers("NERVOSO", Vector2(r.position.x - 108, r.end.y + 2), 16, Color("ff6b6b"), 4)
 
 
 func _caixas(j: Node, w: float, h: float) -> void:
@@ -319,11 +357,11 @@ func _caixas(j: Node, w: float, h: float) -> void:
 		_fina(Vector2(qi.end.x + 40, ri.position.y + 54), 60, j.bateria / 100.0, AMARELO if j.luz_on else Color(1, 1, 1, 0.4), "")
 	draw_string(fonte, Vector2(qi.end.x + 40, ri.position.y + 48), "luz " + luz, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.75))
 	var mx := ri.position.x + 12
-	for extra in [["molotov", j.qtd("molotov")], ["galao", int(j.gasolina)]]:
+	for extra in [["molotov", j.qtd("molotov")], ["galao", int(j.gasolina)], ["cigarro", j.qtd("cigarro") if j.fuma else 0]]:
 		if extra[1] > 0:
 			_icone(extra[0], Rect2(mx, ri.end.y - 32, 26, 26))
 			draw_string(fonte, Vector2(mx + 28, ri.end.y - 12), str(extra[1]) + (" L" if extra[0] == "galao" else ""), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color.WHITE)
-			mx += 74
+			mx += 66
 	if j.carro and j.carro.motorista == j:
 		var rc := Rect2(ra.position.x, ra.position.y - 50, 320, 40)
 		_cartao(rc)
@@ -454,7 +492,9 @@ func _radar(w: float, _h: float) -> void:
 				var an := d.angle()
 				draw_colored_polygon(PackedVector2Array([borda + Vector2.from_angle(an) * 10, borda + Vector2.from_angle(an + 2.4) * 8,
 					borda + Vector2.from_angle(an - 2.4) * 8]), Color(AMARELO, 1.0 if piscar else 0.5))
-	# você: seta branca no meio
+	# você: anel do seu ruído (quem está dentro ouve) e a seta
+	if j.ruido > 25.0 and main.fase_alerta != "ALERTA":
+		draw_arc(c, j.ruido * k, 0, TAU, 40, Color(1, 1, 1, 0.35), 1.5, true)
 	var m: Vector2 = j.mira
 	draw_colored_polygon(PackedVector2Array([c + m * 10, c + m.rotated(2.5) * 7, c + m.rotated(-2.5) * 7]), Color.WHITE)
 	draw_rect(r, TINTA, false, 4.0)
@@ -778,7 +818,7 @@ func _mochila(w: float, h: float) -> void:
 			acao = "CRIAR" if main.pode_criar(j, it) else "FALTA MATERIAL"
 		elif it.has("arma"):
 			acao = "PÔR NA MÃO"
-		elif D.ITENS.get(it["item"], {}).get("tipo", "") in ["comida", "cura", "luz"]:
+		elif D.ITENS.get(it["item"], {}).get("tipo", "") in ["comida", "cura", "luz", "fumo"]:
 			acao = "USAR"
 		if acao != "":
 			var rb := Rect2(dx, r.end.y - 96, dw, 52)
@@ -827,7 +867,7 @@ func _titulo(w: float, h: float) -> void:
 	_fundo("titulo", w, h)
 	draw_rect(Rect2(0, h * 0.33, w, h * 0.67), Color(0, 0, 0, 0.5))
 	_logo(Vector2(w / 2, h * 0.2), 132)
-	_txt("Versão 0.6 (demo) · Jogo oficial da SkyStation · Brasil, 2033", Vector2(0, h * 0.2 + 44), 18, Color(1, 1, 1, 0.8), w, HORIZONTAL_ALIGNMENT_CENTER)
+	_txt("Versão 0.7 (demo) · Jogo oficial da SkyStation · Brasil, 2033", Vector2(0, h * 0.2 + 44), 18, Color(1, 1, 1, 0.8), w, HORIZONTAL_ALIGNMENT_CENTER)
 	var ops: Array = main.opcoes_titulo()
 	for i in ops.size():
 		var y := h * 0.40 + i * 44
@@ -836,8 +876,8 @@ func _titulo(w: float, h: float) -> void:
 			draw_rect(Rect2(w / 2 - 280, y - 30, 560, 42), Color(1, 1, 1, 0.12))
 		_txt(ops[i]["txt"], Vector2(0, y), 21, Color.WHITE if sel else Color(1, 1, 1, 0.55), w, HORIZONTAL_ALIGNMENT_CENTER)
 	var y2 := h * 0.40 + ops.size() * 44 + 12
-	var coop := "Segundo controle conectado: no coop o jogador 2 é a Iara!" if Input.get_connected_joypads().has(1) \
-		else "Coop: conecte um segundo controle e aperte Options para jogar com a Iara."
+	var coop := "Segundo controle conectado! Na história o jogador 2 é a Iara; nos modos coop, cada dupla tem a sua história." \
+		if Input.get_connected_joypads().has(1) else "Coop: conecte o 2º controle e aperte Options. Corvo e Rocha ou Iara e Nina, cada dupla com a sua história."
 	_txt(coop, Vector2(0, y2), 15, AZUL, w, HORIZONTAL_ALIGNMENT_CENTER)
 	if main.recorde["dias"] > 0:
 		_txt("Recorde na sobrevivência: %d dias · %d zumbis · nível %d" % [main.recorde["dias"], main.recorde["mortes"], main.recorde["nivel"]],
@@ -889,20 +929,18 @@ func _capitulo(w: float, h: float) -> void:
 	if so_fade:
 		_txt(fade_texto, Vector2(0, h * 0.5), 24, Color(1, 1, 1, 0.8), w, HORIZONTAL_ALIGNMENT_CENTER)
 		return
-	_txt("CAPÍTULO 1 CONCLUÍDO", Vector2(0, h * 0.16), 44, AMARELO, w, HORIZONTAL_ALIGNMENT_CENTER)
-	_txt("A Carga · Sumaré", Vector2(0, h * 0.16 + 38), 20, Color(1, 1, 1, 0.6), w, HORIZONTAL_ALIGNMENT_CENTER)
+	var cap: Dictionary = main.historia.capitulo()
+	_txt(cap["titulo"], Vector2(0, h * 0.16), 44, AMARELO, w, HORIZONTAL_ALIGNMENT_CENTER)
+	_txt(cap["sub"], Vector2(0, h * 0.16 + 38), 20, Color(1, 1, 1, 0.6), w, HORIZONTAL_ALIGNMENT_CENTER)
 	var y := h * 0.29
 	_txt("Suas escolhas:", Vector2(0, y), 18, Color(1, 1, 1, 0.7), w, HORIZONTAL_ALIGNMENT_CENTER)
 	for l in main.historia.resumo():
 		y += 30
 		_txt(l, Vector2(0, y), 17, Color.WHITE, w, HORIZONTAL_ALIGNMENT_CENTER)
 	y += 50
-	if main.historia.vendeu():
-		_txt("Sozinho na Anhanguera. O pagamento do Tião pesa no banco do carona, vazio.", Vector2(0, y), 17, VERMELHO, w, HORIZONTAL_ALIGNMENT_CENTER)
-		_txt("Este caminho termina aqui. Ou não?", Vector2(0, y + 30), 17, VERMELHO, w, HORIZONTAL_ALIGNMENT_CENTER)
-	else:
-		_txt("A cancela sobe. À frente, a Anhanguera e, depois dela, São Paulo — por baixo da terra.", Vector2(0, y), 17, AZUL, w, HORIZONTAL_ALIGNMENT_CENTER)
-		_txt("Capítulo 2 — São Paulo: o metrô. Em breve.", Vector2(0, y + 30), 17, AZUL, w, HORIZONTAL_ALIGNMENT_CENTER)
+	var cor := VERMELHO if cap["cor"] == "vermelho" else AZUL
+	for i in cap["fim"].size():
+		_txt(cap["fim"][i], Vector2(0, y + i * 30), 17, cor, w, HORIZONTAL_ALIGNMENT_CENTER)
 	_txt("%d dia(s) · %d zumbis · nível %d" % [main.dia, main.mortes, main.jogadores[0].nivel], Vector2(0, y + 70), 15, Color(1, 1, 1, 0.6), w, HORIZONTAL_ALIGNMENT_CENTER)
 	_botao("cruz", Vector2(w / 2 - 70, h * 0.88 - 6))
 	_txt("Voltar ao título", Vector2(w / 2 - 56, h * 0.88), 18)

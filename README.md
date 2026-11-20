@@ -154,7 +154,7 @@ PS1, SNES, N64, NES, Mega Drive e Game Boy: o netplay do RetroArch com convite p
 - `sky-netplay hospedar|entrar|sala` faz o trabalho; o `sky-emu` deixa todo jogo de RetroArch pronto para virar sala.
 - PS1 e N64 podem perder a sincronia em alguns jogos (limitação dos núcleos); SNES, NES e Mega Drive são os mais estáveis.
 
-## DEADZONE — primeiro jogo oficial (versão 0.6 demo; antes "Zona Morta")
+## DEADZONE — primeiro jogo oficial (versão 0.7 demo; antes "Zona Morta")
 
 RPG de sobrevivência zumbi em **2.5D** (Godot, `console/games/deadzone`) com cara de **história em quadrinhos**.
 A arte (retratos, peças do mapa, ícones, chão, telas e páginas de HQ) foi gerada por IA a partir da direção de
@@ -211,9 +211,33 @@ sintetizados. Fontes: Bangers e Comic Neue (OFL). A bíblia da história e o rot
 - **Uso de item com animação:** enfaixar, comer, beber, iodo e pilhas levam um tempo (ícone com anel em cima da
   cabeça, você anda devagar); levar dano interrompe. **Mochila em cartas** (grade, entra deslizando, cartas
   aparecem uma a uma, detalhe com ícone grande; aba Criar mostra cada material com tenho/preciso; L1/R1 trocam aba).
+- **0.7 — ruído, tensão e coop com história própria:**
+  - **Ruído:** cada personagem faz barulho num raio (parado 0, agachado ~45 px, andando ~150, correndo ~380;
+    a Iara pisa mais leve, o Rocha mais pesado). Zumbi dentro do raio ouve e vem ver ("?"). O anel aparece no
+    chão e no radar; a visão continua nos cones do radar.
+  - **Tensão (0–100):** sobe com zumbi perto, sendo caçado, alerta, ferido, no escuro sem luz e a cada tiro;
+    desce quando está tudo calmo. Tensa, a mira foge (até ~16°, cone da mira aparece e fica vermelho), a mira
+    assistida desliga acima de 70, o coração dispara e a tela pulsa. Termômetro com ♥ no cartão de status.
+  - **Cigarro (Corvo e Rocha fumam):** acender leva 1,6 s; fumando (90 s) a tensão despenca e a mão firma,
+    mas tira 1 de vida a cada 30 s e a brasa aparece no escuro (te veem de mais longe). Fumante sem cigarro
+    há muito tempo (nicotina acaba em ~7 min) não consegue ficar calmo de verdade. Acha-se em armários,
+    prateleiras e porta-malas.
+  - **Som no alto-falante do controle** (`console/bin/sky-controle-som`): DualShock 4 e DualSense **no cabo
+    USB** aparecem como placa de som no PipeWire; zumbi colado em você geme no controle do jogador mais perto
+    (e não na TV). O jogo abre o programa uma vez e manda os comandos por um cano. Para o DualSense, o programa
+    escolhe a saída "alto-falante" pelo relatório HID 0x02 (escrito pela documentação pública, ainda não
+    conferido num controle de verdade). Por Bluetooth o Linux não manda áudio para o controle.
+  - **Coop com duplas jogáveis e histórias próprias** (`historia_coop.gd`): **Corvo e Rocha — "O Preço do
+    Ar"** (uma semana antes do contrato: os filtros de ar acabam, o comandante sai pela primeira vez em um ano,
+    mercado, rádio e o acordo com a Dra. Helena) e **Iara e Nina — "Fuga"** (a Iara ouve que vai ser vendida e
+    foge com a Nina: sair do bunker sem ser vista, suprimentos, o rádio que põe preço na cabeça dela, carro,
+    pedágio do Tião, rumo à Serra). Cada personagem tem vida, velocidade, ruído e armas próprias
+    (`dados.PERSONAGENS`).
 - **Testes:** `console/tests/deadzone/roteiro.gd` joga o capítulo inteiro (31 checagens, inclusive salvar e
   carregar), `controles.gd` aperta os botões e `furtivo.gd` testa cone de visão, "!", fases, abate silencioso,
-  agachar, uso de item (e a interrupção) e a mochila em grade; os três rodam no CI do launcher.
+  agachar, uso de item (e a interrupção) e a mochila em grade; `tensao.gd` testa ruído, tensão, cigarro e as
+  duplas do coop; os quatro rodam no CI do launcher. `console/tests/teste-controle-som.py` testa o
+  sky-controle-som com pactl/pw-play falsos.
 
 ## SkyStore (Fase 12, etapa 1: servidor)
 
