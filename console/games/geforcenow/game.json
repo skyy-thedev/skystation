@@ -1,0 +1,9 @@
+{
+  "title": "GeForce NOW",
+  "type": "app",
+  "exec": "/opt/skystation/bin/sky-nuvem geforcenow",
+  "cover": "cover.png",
+  "color": "#76b900",
+  "order": 73,
+  "description": "Jogue pela nuvem os jogos que você já tem na Steam, Epic e outras lojas, nos servidores da NVIDIA. Na primeira vez abre a versão web enquanto o app é instalado. Home do controle para sair."
+}

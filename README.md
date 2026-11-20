@@ -25,6 +25,7 @@ skystation/
 │   ├── fase7-1.sh    GameCube, Wii, DS, 3DS, GB/GBA, NES, Mega Drive (RetroArch) e Xbox 360 (Xenia)
 │   ├── xenia-edge.sh Xenia Edge ao lado do Canary (jogos de Xbox 360 que vão melhor nele)
 │   ├── skyroms-hd.sh jogos direto do HD/SSD do PC: pasta SKYROMS → /mnt/skyroms (skystation-skyroms-hd)
+│   ├── nuvem.sh      app do GeForce NOW (Flatpak da NVIDIA) em segundo plano (skystation-nuvem); o Xbox Cloud Gaming usa o Chromium
 │   ├── atualizar-menu.sh  "Atualizar o SkyStation" do menu, sem sudo (serviço + .path do systemd)
 │   ├── marca.sh      identidade do sistema (comando skystation-marca, reaplicado pelo pacman)
 │   ├── diag.sh       diagnóstico do boot (comando skystation-diag)

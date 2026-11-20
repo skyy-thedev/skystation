@@ -1,0 +1,9 @@
+{
+  "title": "Xbox Cloud Gaming",
+  "type": "app",
+  "exec": "/opt/skystation/bin/sky-nuvem xcloud",
+  "cover": "cover.png",
+  "color": "#22c55e",
+  "order": 72,
+  "description": "Jogos do Game Pass Ultimate pela nuvem: o jogo roda nos servidores da Microsoft e chega aqui como vídeo. Precisa de internet boa (cabo ajuda). Home do controle para sair."
+}

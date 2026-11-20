@@ -54,7 +54,7 @@ for pair in skystation-atualizar.sh:skystation-atualizar expandir.sh:skystation-
             diag.sh:skystation-diag marca.sh:skystation-marca diag-controle.sh:skystation-diag-controle \
             energia.sh:skystation-energia som-ligar.sh:skystation-som-ligar \
             atualizar-menu.sh:skystation-atualizar-menu diag-ps2.sh:skystation-diag-ps2 verificar.sh:skystation-verificar \
-            potencia.sh:skystation-potencia skyroms-hd.sh:skystation-skyroms-hd; do  # (o sky-backup vai junto com console/bin)
+            potencia.sh:skystation-potencia skyroms-hd.sh:skystation-skyroms-hd nuvem.sh:skystation-nuvem; do  # (o sky-backup vai junto com console/bin)
     f="$SRC/setup/${pair%%:*}"; [ -f "$f" ] || continue
     sed 's/\r$//' "$f" > "/usr/local/bin/${pair##*:}.new"
     chmod 755 "/usr/local/bin/${pair##*:}.new"
@@ -104,6 +104,31 @@ Description=SkyStation: pedido de potência (jogo/normal)
 [Path]
 PathExists=/var/lib/skystation/pedidos/potencia
 Unit=skystation-potencia.service
+
+[Install]
+WantedBy=paths.target
+UNIT
+# Jogos na nuvem (Fase 11.6): o app do GeForce NOW (~2 GB) é instalado em segundo plano, pedido pelo
+# sky-nuvem na primeira abertura (pedidos/geforcenow). Sem travar a atualização nem o menu.
+cat >/etc/systemd/system/skystation-nuvem.service <<'UNIT'
+[Unit]
+Description=SkyStation: instalar o app do GeForce NOW
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Nice=10
+ExecStart=/usr/local/bin/skystation-nuvem
+TimeoutStartSec=60min
+UNIT
+cat >/etc/systemd/system/skystation-nuvem.path <<'UNIT'
+[Unit]
+Description=SkyStation: pedido de instalação do GeForce NOW
+
+[Path]
+PathExists=/var/lib/skystation/pedidos/geforcenow
+Unit=skystation-nuvem.service
 
 [Install]
 WantedBy=paths.target
@@ -169,7 +194,18 @@ if [ -d /run/systemd/system ]; then
     systemctl restart skystation-potencia.path >/dev/null 2>&1 || true
     systemctl enable skystation-atualizar.path >/dev/null 2>&1 || true
     systemctl restart skystation-atualizar.path >/dev/null 2>&1 || true
+    systemctl enable skystation-nuvem.path >/dev/null 2>&1 || true
+    systemctl restart skystation-nuvem.path >/dev/null 2>&1 || true
 fi
+
+# Fase 11.6: Xbox Cloud Gaming roda no Chromium (a Microsoft não tem app do Xbox para Linux);
+# o flatpak é para o app oficial do GeForce NOW, que fica para depois (serviço acima).
+for p in chromium flatpak; do
+    pacman -Q "$p" >/dev/null 2>&1 && continue
+    if ! timeout 900 pacman -S --needed --noconfirm "$p" >/dev/null 2>&1; then
+        echo "    AVISO: não consegui instalar $p agora (sem internet?). Xbox Cloud Gaming/GeForce NOW ficam para a próxima atualização."
+    fi
+done
 
 # Fase 9.3: avisos por cima do jogo usam o gamescope (o compositor do Steam Deck) e o xprop (marca a
 # janela de aviso como overlay); o python-cairo desenha o aviso. Só instala; quem liga é o menu (Sistema → Avisos por cima do jogo).

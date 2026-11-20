@@ -1,0 +1,75 @@
+#!/bin/bash
+# SkyStation: jogos na nuvem (Fase 11.6) — Xbox Cloud Gaming e GeForce NOW.
+#   sky-nuvem xcloud       abre xbox.com/play no Chromium em tela cheia (modo app, sem barra)
+#   sky-nuvem geforcenow   abre o app oficial da NVIDIA (Flatpak); se ainda não estiver instalado,
+#                          pede a instalação ao sistema e, enquanto isso, abre a versão web
+#
+# O jogo roda nos servidores da Microsoft/NVIDIA; o console só recebe o vídeo e manda o controle.
+# O controle chega ao site pela Gamepad API do Chromium (o DS4 aparece como um controle comum).
+# Login fica salvo por perfil do SkyStation (~/.local/share/skystation/nuvem/<perfil>/).
+# Sair: botão Home do controle -> Fechar (o menu manda SIGTERM ao grupo; aqui fechamos tudo).
+set -u
+SERV="${1:-xcloud}"
+MSG="${SKY_MSG_FILE:-/dev/null}"
+PERFIL="${SKY_PROFILE:-padrao}"
+BASE="$HOME/.local/share/skystation/nuvem/$PERFIL"
+CONF="$HOME/.config/skystation"
+PEDIDOS=/var/lib/skystation/pedidos
+GFN_ID=com.nvidia.geforcenow
+
+CHROME="$(command -v chromium || command -v google-chrome-stable || command -v microsoft-edge-stable || true)"
+
+# Opcional: ~/.config/skystation/xcloud-ua com "windows" faz o xCloud ver um Edge no Windows.
+# Útil só se a imagem vier com resolução baixa (o Linux não é plataforma oficial do xCloud).
+UA_EDGE_WIN="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0"
+
+navegador() {   # navegador <url> <pasta de dados> [user-agent]
+    local url="$1" dir="$2" ua="${3:-}" pid
+    if [ -z "$CHROME" ]; then
+        echo "Navegador Chromium não instalado. Sistema → Atualizar o SkyStation (precisa de internet)." >"$MSG"
+        exit 1
+    fi
+    mkdir -p "$dir"
+    # Fechar pelo menu Home é um "crash" para o Chromium; sem isto ele abre com o aviso "restaurar páginas".
+    sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/; s/"exited_cleanly":false/"exited_cleanly":true/' \
+        "$dir/Default/Preferences" 2>/dev/null
+    local flags=(
+        --user-data-dir="$dir" --kiosk --app="$url"
+        --no-first-run --no-default-browser-check --disable-session-crashed-bubble --noerrdialogs
+        --disable-infobars --disable-translate --password-store=basic
+        --autoplay-policy=no-user-gesture-required
+        --ozone-platform-hint=auto                     # Wayland no cage, X11 dentro do gamescope
+        --enable-features=VaapiVideoDecoder,VaapiIgnoreDriverChecks,AcceleratedVideoDecodeLinuxGL
+        --check-for-update-interval=31536000
+    )
+    [ -n "$ua" ] && flags+=(--user-agent="$ua")
+    "$CHROME" "${flags[@]}" >/dev/null 2>&1 &
+    pid=$!
+    # O zygote do Chromium pode sobreviver ao SIGTERM do grupo: fecha pelo diretório de dados.
+    trap 'kill "$pid" 2>/dev/null; pkill -TERM -f -- "--user-data-dir=$dir" 2>/dev/null; exit 0' TERM INT HUP
+    wait "$pid"
+}
+
+case "$SERV" in
+    xcloud)
+        UA=""
+        [ "$(tr -d '[:space:]' 2>/dev/null <"$CONF/xcloud-ua")" = windows ] && UA="$UA_EDGE_WIN"
+        navegador "https://www.xbox.com/play" "$BASE/xcloud" "$UA"
+        ;;
+    geforcenow)
+        if command -v flatpak >/dev/null 2>&1 && flatpak info "$GFN_ID" >/dev/null 2>&1; then
+            flatpak run "$GFN_ID" >/dev/null 2>&1 &
+            pid=$!
+            trap 'flatpak kill "$GFN_ID" 2>/dev/null; kill "$pid" 2>/dev/null; exit 0' TERM INT HUP
+            wait "$pid"
+        else
+            # O app oficial (~2 GB com o runtime) é instalado pelo sistema, como root, em segundo plano
+            # (serviço skystation-nuvem). Até terminar, a versão web funciona no Chromium.
+            [ -d "$PEDIDOS" ] && : >"$PEDIDOS/geforcenow" 2>/dev/null
+            navegador "https://play.geforcenow.com" "$BASE/geforcenow"
+            echo "O app do GeForce NOW está sendo instalado (≈2 GB). Até terminar, abre a versão web." >"$MSG"
+        fi
+        ;;
+    *)
+        echo "uso: sky-nuvem xcloud|geforcenow" >&2; exit 2 ;;
+esac

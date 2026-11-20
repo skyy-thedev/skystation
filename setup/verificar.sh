@@ -129,6 +129,12 @@ v "Game Boy / Color / Advance" "$F71" test -f $C/mgba_libretro.so -a -f $C/gamba
 v "NES e Mega Drive" "$F71" sh -c "ls $C/nestopia_libretro.so $C/fceumm_libretro.so 2>/dev/null | grep -q . && test -f $C/genesis_plus_gx_libretro.so"
 v "Xbox 360 (Xenia, experimental)" "$F71" test -x /opt/xenia/xenia_canary
 
+echo "== 11.6 Jogos na nuvem"
+v "Chromium (Xbox Cloud Gaming)" "sudo skystation-atualizar" sh -c "command -v chromium || command -v google-chrome-stable"
+v "pedido do GeForce NOW ligado" "sudo skystation-atualizar" systemctl is-enabled --quiet skystation-nuvem.path
+if flatpak info com.nvidia.geforcenow >/dev/null 2>&1; then echo "  ✓ app do GeForce NOW instalado"
+else echo "  · app do GeForce NOW ainda não instalado: abra o GeForce NOW uma vez (usa a versão web até terminar; log em /var/log/skystation-instalar.log)"; fi
+
 echo
 if [ "$falhas" -eq 0 ]; then echo "Tudo certo: $ok de $ok verificações ✓"
 else echo "$ok ok, $falhas com problema (veja as dicas →)"; fi
