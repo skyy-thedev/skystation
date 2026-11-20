@@ -61,10 +61,27 @@ def limitar(im, lado):
     return im
 
 
+def sem_roxo(im):
+    """Fios finos ficam roxos (mistura com o magenta): vira cinza. Só para peças sem roxo de verdade."""
+    a = np.asarray(im).astype(np.int16).copy()
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    m = (np.minimum(r, b) - g) > 10
+    cinza = (r + g + b) // 3 * 0.85
+    for c in range(3):
+        a[..., c] = np.where(m, cinza, a[..., c])
+    return Image.fromarray(a.astype(np.uint8), "RGBA")
+
+
+ROXO_FALSO = ("arte/pecas/poste.png",)
+
+
 def peca(im, caixa, rel, lado=320, inset=6):
     l, t, r, b = caixa
     c = im.crop((l + inset, t + inset, r - inset, b - inset))
-    salvar(limitar(aparar(chave_magenta(c)), lado), rel)
+    c = limitar(aparar(chave_magenta(c)), lado)
+    if rel in ROXO_FALSO:
+        c = sem_roxo(c)
+    salvar(c, rel)
 
 
 # ---------- retratos ----------
@@ -258,3 +275,67 @@ paginas = {"1741ec96": "c1_abertura", "d8ae3207": "c1_contrato",
            "da6b8755": "c1_pedagio", "f754d973": "c1_pedagio_vendeu"}
 for k, n in paginas.items():
     salvar(abrir(k), "arte/hq/%s.jpg" % n, jpg=True)
+
+
+# ---------- personagens e zumbis (rodada 3) ----------
+def figuras(im, minimo=4000):
+    """Separa as figuras de uma folha de turnaround pelo fundo magenta: cada bloco grande = um desenho."""
+    from scipy import ndimage
+    rgba = chave_magenta(im)
+    a = np.asarray(rgba)[..., 3] > 20
+    a = ndimage.binary_dilation(a, iterations=4)          # junta facão, alça e mão que ficaram soltos
+    lab, n = ndimage.label(a)
+    caixas = []
+    for i, sl in enumerate(ndimage.find_objects(lab)):
+        ys, xs = sl
+        area = (lab[sl] == i + 1).sum()
+        if area >= minimo and (ys.stop - ys.start) > 120:     # linhas da grade e sujeira ficam de fora
+            caixas.append((xs.start, ys.start, xs.stop, ys.stop))
+    return rgba, sorted(caixas, key=lambda c: (c[1] > im.height * 0.4, c[0]))
+
+
+def maior_bloco(im):
+    """Fica só com o maior pedaço conectado (tira restos da figura vizinha)."""
+    from scipy import ndimage
+    a = np.asarray(im).copy()
+    lab, n = ndimage.label(a[..., 3] > 20)
+    if n > 1:
+        tam = ndimage.sum(np.ones_like(lab), lab, range(1, n + 1))
+        a[..., 3] = np.where(lab == 1 + int(np.argmax(tam)), a[..., 3], 0)
+    return aparar(Image.fromarray(a, "RGBA"))
+
+
+def personagem(nome_arq, prefixo, ordem, altura=300, faixas=None):
+    """ordem: direção de cada figura da esquerda para a direita (None = ignora).
+    faixas: (x0, x1) de cada figura, para quando duas se encostam (o facão de uma passa na outra)."""
+    rgba, cx = figuras(abrir(nome_arq))
+    if faixas:
+        cx = [(x0, 0, x1, rgba.height) for x0, x1 in faixas]
+        rgba_orig = rgba
+        rgba = rgba_orig
+    assert len(cx) >= len(ordem), (prefixo, len(cx))
+    for caixa, d in zip(cx, ordem):
+        if d is None:
+            continue
+        c = maior_bloco(rgba.crop(caixa)) if faixas else aparar(rgba.crop(caixa))
+        c = c.resize((max(1, int(c.width * altura / c.height)), altura), Image.LANCZOS) if c.height > altura else c
+        salvar(c, "arte/%s_%s.png" % (prefixo, d))
+
+
+if os.path.exists(os.path.join(UP, "c6ea5058-image.png")):
+    personagem("c6ea5058", "personagens/iara", ["baixo", "cima", "esq", "dir"])
+    personagem("57f7eef3", "personagens/corvo", ["baixo", "cima", None, "dir"],
+               faixas=[(0, 300), (300, 580), (570, 800), (790, 1024)])
+    personagem("3a57a35a", "personagens/rocha", ["baixo", "cima", "dir", "esq"])
+    personagem("db98d9f1", "personagens/nina", ["baixo", "cima", None, "dir"])
+    personagem("a6df28e3", "personagens/tiao", ["baixo", "cima", "dir", None])
+    rgba, cx = figuras(abrir("739fee80"))
+    tipos = ["andarilho", "corredor", "brutamontes", "policial", "irradiado"]
+    assert len(cx) == 10, len(cx)
+    for i, caixa in enumerate(cx):
+        lado = "frente" if i < 5 else "lado"
+        c = aparar(rgba.crop(caixa))
+        # todos na mesma tela de 290 px de altura, pé embaixo: o corredor agachado continua mais baixo no jogo
+        tela = Image.new("RGBA", (c.width, 290), (0, 0, 0, 0))
+        tela.alpha_composite(c, (0, 290 - c.height))
+        salvar(tela, "arte/zumbis/%s_%s.png" % (tipos[i % 5], lado))

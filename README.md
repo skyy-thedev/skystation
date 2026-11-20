@@ -154,7 +154,7 @@ PS1, SNES, N64, NES, Mega Drive e Game Boy: o netplay do RetroArch com convite p
 - `sky-netplay hospedar|entrar|sala` faz o trabalho; o `sky-emu` deixa todo jogo de RetroArch pronto para virar sala.
 - PS1 e N64 podem perder a sincronia em alguns jogos (limitação dos núcleos); SNES, NES e Mega Drive são os mais estáveis.
 
-## DEADZONE — primeiro jogo oficial (versão 0.4 demo; antes "Zona Morta")
+## DEADZONE — primeiro jogo oficial (versão 0.6 demo; antes "Zona Morta")
 
 RPG de sobrevivência zumbi em **2.5D** (Godot, `console/games/deadzone`) com cara de **história em quadrinhos**.
 A arte (retratos, peças do mapa, ícones, chão, telas e páginas de HQ) foi gerada por IA a partir da direção de
@@ -162,7 +162,7 @@ arte do projeto e recortada por `tools/deadzone_fatiar.py` (fundo magenta → tr
 carros, texturas emendáveis) para `console/games/deadzone/arte/`. O jogo lê os arquivos direto (`arte.gd`,
 pasta com `.gdignore`); se uma imagem faltar, volta ao desenho antigo. Cutscenes são quadros de HQ em tela cheia
 com zoom lento, legenda e balão (`historia.gd` marca a fala com página e quadro); diálogos mostram o retrato com
-a expressão de cada fala. Os personagens em jogo e os zumbis ainda são desenhados pelo código. Os sons são
+a expressão de cada fala. Os sons são
 sintetizados. Fontes: Bangers e Comic Neue (OFL). A bíblia da história e o roteiro dos capítulos estão no projeto
 (`claude/zona-morta.md`).
 - **História:** 2032, um acidente no reator experimental de Angra dos Reis transforma quem respirou a nuvem em
@@ -184,8 +184,36 @@ sintetizados. Fontes: Bangers e Comic Neue (OFL). A bíblia da história e o rot
 - **0.4:** diálogos reescritos com as vozes novas (Corvo seco, Iara debochada que apelida os zumbis, Rocha
   culpado, Helena "meu bem", Nina na gíria, Tião radialista do "freguês"); Kombis, postes, orelhões, mato seco e um
   caminhão tombado espalhados pela cidade (sorteio próprio, os saves antigos continuam com o mesmo mapa).
+- **0.5:** **trilha** em três camadas (`musica.gd`): o tema "Estrada Morta" (Am, 70 bpm) no título, nos
+  quadrinhos e no fim do capítulo; um zumbido de tensão explorando; e um pulso de cordas que cresce com o número
+  de zumbis atrás de você. Sem gravação, é sintetizada (violão por Karplus-Strong) numa thread na primeira vez e
+  guardada em `user://`; com `arte/musica/tema.ogg` (ou `tensao`/`perigo`, `.ogg` ou `.wav`) toca o arquivo.
+  **Onomatopeias** de gibi no mundo (BLAM!, BUUM!, POW!, NHAC!, SPLAT!…) junto do som, com tremor de tela nos
+  tiros fortes. **Personagens e zumbis prontos para a arte:** `arte.gd/boneco()` desenha
+  `arte/personagens/<nome>_<baixo|cima|esq|dir>.png` e `arte/zumbis/<tipo>_<frente|lado>.png` com pulinho,
+  balanço e respiração; enquanto os arquivos não existem, fica o boneco antigo. Já estão lá Corvo, Iara, Rocha,
+  Nina e Tião (frente, costas e lado; o lado que falta é o outro espelhado) e os 5 zumbis.
+- **Chão sem padrão e luz:** `chao.gdshader` lê cada textura duas vezes (uma girada e em outra escala) e um ruído
+  do mundo escolhe qual aparece, com manchas largas de claro/escuro e quente/frio por cima; manchas de óleo nas
+  ruas e chão mais escuro colado no pé das paredes. Sol com sombras: paredes (casco convexo da base empurrada
+  pelo sol, num `CanvasGroup` para as sombras não somarem), personagens, carros, árvores e postes; a sombra
+  cresce no fim da tarde e some à noite. Ciclo de cor (amanhecer, dia, entardecer laranja, noite de lua azul),
+  postes que ainda funcionam (alguns piscam), luz fria no bunker e vinheta nos cantos da tela.
+- **0.6 — furtividade no estilo Metal Gear:** zumbi só vê dentro do cone da frente (colado, sente de costas);
+  ver enche a desconfiança ("?" amarelo, ele vem conferir) e só cheia vira "!" (som de alerta, chama os vizinhos).
+  Fases globais **ALERTA → EVASÃO → CAUTELA** com cronômetro. **R3 agacha** (metade da velocidade, sem barulho de
+  passo, visto de mais perto). **R1 por trás** de quem não te viu = **abate silencioso**. Barulho de tiro e corrida
+  atrai para o local ("?"), não direto para você.
+- **HUD novo:** cartão de status com o retrato mudando de cara (dor, ferido, grito no alerta), vida em gomos,
+  fôlego/fome/radiação; mini cartão da Iara; **radar** (paredes, zumbis com cone de visão, Iara, barulhos em anel,
+  objetivo; embaralha em ALERTA); caixas de **ARMA** e **ITEM** como no Metal Gear (munição grande, anel de
+  recarga). Itens pegos voam até a caixa de item.
+- **Uso de item com animação:** enfaixar, comer, beber, iodo e pilhas levam um tempo (ícone com anel em cima da
+  cabeça, você anda devagar); levar dano interrompe. **Mochila em cartas** (grade, entra deslizando, cartas
+  aparecem uma a uma, detalhe com ícone grande; aba Criar mostra cada material com tenho/preciso; L1/R1 trocam aba).
 - **Testes:** `console/tests/deadzone/roteiro.gd` joga o capítulo inteiro (31 checagens, inclusive salvar e
-  carregar) e `controles.gd` aperta os botões; os dois rodam no CI do launcher.
+  carregar), `controles.gd` aperta os botões e `furtivo.gd` testa cone de visão, "!", fases, abate silencioso,
+  agachar, uso de item (e a interrupção) e a mochila em grade; os três rodam no CI do launcher.
 
 ## SkyStore (Fase 12, etapa 1: servidor)
 

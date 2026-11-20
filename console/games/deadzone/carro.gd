@@ -244,6 +244,12 @@ func _draw_arte() -> bool:
 	inc = wrapf(inc, -PI, PI)
 	var larg := 150.0
 	var alt := t.get_height() * larg / t.get_width()
+	# sombra do sol: mancha escura deslocada para o lado da sombra (o carro tem ~40 px de altura)
+	if A.sol_a > 0.02:
+		var luz: Texture2D = main.tex_luz
+		var c := A.sol_v * 26.0 + Vector2(0, 2)
+		draw_texture_rect(luz, Rect2(c - Vector2(95, 40), Vector2(190, 80)), false, Color(0, 0, 0, A.sol_a * 1.4))
+	draw_texture_rect(main.tex_luz, Rect2(-80, -26, 160, 52), false, Color(0, 0, 0, 0.55))   # contato com o chão
 	draw_set_transform(Vector2(0, 4), inc, Vector2(-1, 1) if esq else Vector2.ONE)
 	var mod := Color.WHITE
 	if saqueado and not funciona:

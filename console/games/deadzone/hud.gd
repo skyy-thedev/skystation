@@ -14,6 +14,12 @@ var fade := 0.0             # tela preta que some aos poucos (fim, capítulo, do
 var fade_texto := ""
 var so_fade := false
 var t := 0.0
+var voando: Array = []      # ícones de item pegos voando até a caixa de item: {item, de, dono, t}
+var moch_t := 0.0           # tempo desde que a mochila abriu (cartas entram uma a uma)
+var moch_sel := -1
+var moch_sel_t := 0.0
+var estado_antes := -1
+var _rng_radar := RandomNumberGenerator.new()
 
 const AMARELO := Color("ffd166")
 const VERMELHO := Color("e85d5d")
@@ -56,6 +62,18 @@ func _process(d: float) -> void:
 		hq_chave = k
 		hq_t = 0.0
 	hq_t += d
+	if main.estado != estado_antes:
+		if main.estado == main.MOCHILA:
+			moch_t = 0.0
+		estado_antes = main.estado
+	moch_t += d
+	if main.menu_sel != moch_sel:
+		moch_sel = main.menu_sel
+		moch_sel_t = 0.0
+	moch_sel_t += d
+	for v in voando:
+		v["t"] += d
+	voando = voando.filter(func(v): return v["t"] < 0.75)
 	if fade > 0.0 and not so_fade and main.estado in [main.FIM, main.CAPITULO]:
 		fade = maxf(0.0, fade - d * 0.6)
 
@@ -106,9 +124,12 @@ func _draw() -> void:
 	_vinheta(w, h)
 	for j in main.jogadores:
 		_jogador(j, w, h)
+	_radar(w, h)
 	_topo(w, h)
 	_seta(w, h)
 	_prompts()
+	_furtivo()
+	_voando()
 	var y := h * 0.26
 	for a in main.avisos:
 		var cor: Color = a["cor"]
@@ -128,7 +149,20 @@ func _draw() -> void:
 			_capitulo(w, h)
 
 
+var _tex_vinheta: Texture2D
+
+
 func _vinheta(w: float, h: float) -> void:
+	# cantos escuros, como lente de câmera: mais forte à noite. Prende o olho no centro da tela.
+	if _tex_vinheta == null:
+		var img := Image.create(128, 128, false, Image.FORMAT_RGBA8)
+		for y in 128:
+			for x in 128:
+				var d := Vector2((x - 63.5) / 63.5, (y - 63.5) / 63.5).length()
+				var a := clampf((d - 0.55) / 0.85, 0.0, 1.0)
+				img.set_pixel(x, y, Color(0, 0, 0, a * a))
+		_tex_vinheta = ImageTexture.create_from_image(img)
+	draw_texture_rect(_tex_vinheta, Rect2(0, 0, w, h), false, Color(1, 1, 1, 0.55 + 0.35 * main.noite()))
 	var perigo := 0.0
 	for j in main.jogadores:
 		perigo = maxf(perigo, maxf(1.0 - j.hp / j.hp_max * 2.5, j.t_dano * 2.0))
@@ -143,52 +177,304 @@ func _vinheta(w: float, h: float) -> void:
 		draw_rect(Rect2(w - e, 0, e, h), c)
 
 
+func _cartao(r: Rect2, cor := Color(0.07, 0.065, 0.06, 0.86)) -> void:
+	## painel de HUD com cara de quadrinho: sombra, fundo escuro, contorno preto grosso e filete claro
+	draw_rect(Rect2(r.position + Vector2(5, 6), r.size), Color(0, 0, 0, 0.45))
+	draw_rect(r, cor)
+	draw_rect(r, TINTA, false, 4.0)
+	draw_rect(r.grow(-5), Color(1, 1, 1, 0.08), false, 1.5)
+
+
+func _bangers(s: String, p: Vector2, tam: int, cor: Color, contorno := 6) -> void:
+	draw_string_outline(fonte_tit, p, s, HORIZONTAL_ALIGNMENT_LEFT, -1, tam, contorno, TINTA)
+	draw_string(fonte_tit, p, s, HORIZONTAL_ALIGNMENT_LEFT, -1, tam, cor)
+
+
+func _vida(p: Vector2, larg: float, alt: float, v: float, n := 10) -> void:
+	## vida em gomos, que mudam de cor (verde, amarelo, vermelho piscando)
+	var cor := Color("7fe07a") if v > 0.6 else (AMARELO if v > 0.3 else VERMELHO)
+	if v <= 0.3 and fmod(t, 0.6) < 0.3:
+		cor = cor.lightened(0.35)
+	var g := 3.0
+	var seg := (larg - g * (n - 1)) / n
+	draw_rect(Rect2(p - Vector2(3, 3), Vector2(larg + 6, alt + 6)), TINTA)
+	for i in n:
+		var r := Rect2(p + Vector2(i * (seg + g), 0), Vector2(seg, alt))
+		var f := clampf(v * n - i, 0.0, 1.0)
+		draw_rect(r, Color(1, 1, 1, 0.08))
+		if f > 0.0:
+			draw_rect(Rect2(r.position, Vector2(seg * f, alt)), cor)
+			draw_rect(Rect2(r.position, Vector2(seg * f, alt * 0.35)), Color(1, 1, 1, 0.25))
+
+
+func _fina(p: Vector2, larg: float, v: float, cor: Color, rotulo: String) -> void:
+	draw_rect(Rect2(p - Vector2(2, 2), Vector2(larg + 4, 10)), TINTA)
+	draw_rect(Rect2(p, Vector2(larg * clampf(v, 0.0, 1.0), 6)), cor)
+	draw_string(fonte, p + Vector2(larg + 10, 8), rotulo, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.75))
+
+
+func _cara_corvo(j: Node) -> String:
+	if j.vip:
+		if j.hp < j.hp_max * 0.35:
+			return "chorando"
+		return "medo" if j.t_dano > 0.0 or main.fase_alerta == "ALERTA" else "determinada"
+	if j.t_dano > 0.0:
+		return "dor"
+	if j.hp < j.hp_max * 0.35:
+		return "ferido"
+	if main.fase_alerta == "ALERTA":
+		return "grito"
+	if main.fase_alerta != "" or j.agachado:
+		return "preocupado"
+	return "neutro"
+
+
 func _jogador(j: Node, w: float, h: float) -> void:
-	var dir: bool = j.n == 2
-	var x := w - 290.0 if dir else 30.0
-	_txt("%s · nível %d" % [j.nome, j.nivel], Vector2(x, 28), 16, j.cor_roupa.lightened(0.45))
-	_barra(Vector2(x, 48), 240, j.hp / j.hp_max, VERMELHO, "Vida %d/%d" % [ceili(maxf(j.hp, 0.0)), int(j.hp_max)])
-	_barra(Vector2(x, 80), 180, j.estamina / 100.0, Color("4fd1ff"), "Fôlego")
-	_barra(Vector2(x, 112), 180, j.fome / 100.0, Color("f0a35e"), "Fome")
-	_barra(Vector2(x, 144), 180, float(j.xp) / j.xp_proximo(), AMARELO, "Experiência")
+	# cartão de status (canto de cima à esquerda; o do jogador 2 vem embaixo)
+	var r := Rect2(22, 20 + (j.n - 1) * 168, 420, 150)
+	_cartao(r)
+	var foto := A.tex("retratos/%s_%s.png" % ["iara" if j.vip else "corvo", _cara_corvo(j)], 300)
+	var fr := Rect2(r.position + Vector2(12, 12), Vector2(126, 126))
+	draw_rect(fr, Color("2a2622"))
+	if foto:
+		draw_texture_rect(foto, fr, false, Color(1, 0.55, 0.55) if j.t_dano > 0.0 else Color.WHITE)
+	draw_rect(fr, TINTA, false, 4.0)
+	var x := fr.end.x + 14
+	_bangers(j.nome.to_upper(), Vector2(x, r.position.y + 42), 30, CORES_FALA.get(j.nome, Color.WHITE))
+	draw_string(fonte, Vector2(x + 118, r.position.y + 40), "NÍVEL %d" % j.nivel, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, AMARELO)
+	_vida(Vector2(x, r.position.y + 56), 250, 18, j.hp / j.hp_max)
+	_fina(Vector2(x, r.position.y + 88), 150, j.estamina / 100.0, Color("4fd1ff"), "fôlego")
+	_fina(Vector2(x, r.position.y + 106), 150, j.fome / 100.0, Color("f0a35e"), "fome")
 	if j.rad > 0.5:
-		_barra(Vector2(x, 176), 180, j.rad / 100.0, Color("b8e04a"), "Radiação %d%s" % [int(j.rad), "  (tome iodo!)" if j.rad > 50 else ""])
+		_fina(Vector2(x, r.position.y + 124), 150, j.rad / 100.0, Color("b8e04a") if j.rad <= 50 else VERMELHO, "radiação%s" % (" · iodo!" if j.rad > 50 else ""))
+	else:
+		_fina(Vector2(x, r.position.y + 124), 150, float(j.xp) / j.xp_proximo(), AMARELO, "experiência")
+	if j.agachado:
+		_bangers("AGACHADO", Vector2(r.end.x - 108, r.position.y + 136), 18, Color("9db4ff"), 4)
+	# Iara (no solo ela anda sozinha): mini cartão
 	var vip = main.vip
 	if vip and j.n == 1:
-		_barra(Vector2(x, 208 if j.rad > 0.5 else 176), 180, vip.hp / vip.hp_max, Color("8fe0b0"), "Iara%s" % ("  (esperando)" if vip.esperar else ""))
-	# arma e munição (embaixo)
-	var bx := w - 300.0 if (not dir and main.jogadores.size() == 1) or dir else 30.0
-	if main.jogadores.size() > 1:
-		bx = 30.0 if not dir else w - 300.0
+		var ri := Rect2(22, r.end.y + 10, 300, 70)
+		_cartao(ri)
+		var cara := "deboche"
+		if vip.caido:
+			cara = "chorando"
+		elif vip.t_dano > 0.0:
+			cara = "medo"
+		var fi := A.tex("retratos/iara_%s.png" % cara, 300)
+		var q := Rect2(ri.position + Vector2(8, 8), Vector2(54, 54))
+		if fi:
+			draw_texture_rect(fi, q, false)
+		draw_rect(q, TINTA, false, 3.0)
+		_bangers("IARA", Vector2(q.end.x + 10, ri.position.y + 30), 22, CORES_FALA["Iara"], 4)
+		if vip.caido:
+			_bangers("CAÍDA %.0f s" % vip.t_caido, Vector2(q.end.x + 70, ri.position.y + 30), 20, VERMELHO, 4)
+		elif vip.esperar:
+			draw_string(fonte, Vector2(q.end.x + 70, ri.position.y + 28), "esperando", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, AMARELO)
+		_vida(Vector2(q.end.x + 10, ri.position.y + 40), 200, 12, vip.hp / vip.hp_max, 8)
+	_caixas(j, w, h)
+
+
+func _caixas(j: Node, w: float, h: float) -> void:
+	## caixa de ARMA e caixa de ITEM, como no Metal Gear (embaixo, à direita; jogador 2 à esquerda)
+	var dir: bool = j.n == 1
+	var ra := Rect2(w - 22 - 320, h - 22 - 128, 320, 128) if dir else Rect2(22 + 232, h - 22 - 128, 320, 128)
+	var ri := Rect2(ra.position.x - 232, ra.position.y + 20, 220, 108) if dir else Rect2(22, ra.position.y + 20, 220, 108)
+	# ARMA
+	_cartao(ra)
 	var info: Dictionary = D.ARMAS[j.arma]
-	var by := h - 100.0
-	_txt("Na mão  (←→ troca)", Vector2(bx, by), 13, Color(1, 1, 1, 0.5))
-	if info.has("municao"):
-		var rec := "  recarregando…" if j.t_recarga > 0.0 else ""
-		_txt("%s   %d / %d%s" % [info["nome"], int(j.pentes.get(j.arma, 0)), j.qtd(info["municao"]), rec], Vector2(bx, by + 30), 26)
+	var ic := Rect2(ra.position + Vector2(10, 14), Vector2(130, 100))
+	var pulo: float = maxf(0.0, j.golpe_anim) * 40.0
+	if j.arma != "punhos":
+		_icone(j.arma, ic.grow(-4).grow_individual(0, pulo, 0, -pulo))
 	else:
-		_txt(info["nome"], Vector2(bx, by + 30), 26)
+		_bangers("✊", ic.get_center() + Vector2(-20, 20), 54, Color(1, 1, 1, 0.8))
+	if j.t_recarga > 0.0:
+		var f: float = 1.0 - j.t_recarga / maxf(info.get("recarga", 1.0), 0.01)
+		draw_arc(ic.get_center(), 40, -PI / 2, -PI / 2 + TAU * f, 40, AMARELO, 6.0, true)
+		_bangers("RECARREGANDO", Vector2(ic.position.x, ic.end.y + 6), 16, AMARELO, 4)
+	draw_string(fonte, Vector2(ra.position.x + 150, ra.position.y + 26), "ARMA  ←→", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1, 1, 1, 0.5))
+	_bangers(info["nome"].to_upper(), Vector2(ra.position.x + 150, ra.position.y + 54), 26, Color.WHITE)
+	if info.has("municao"):
+		var pente := int(j.pentes.get(j.arma, 0))
+		var cor := Color.WHITE if pente > 0 else VERMELHO
+		_bangers("%d" % pente, Vector2(ra.position.x + 150, ra.position.y + 108), 52, cor, 8)
+		_bangers("/ %d" % j.qtd(info["municao"]), Vector2(ra.position.x + 150 + 26 * str(pente).length() + 14, ra.position.y + 106), 26, Color(1, 1, 1, 0.7))
+	else:
+		draw_string(fonte, Vector2(ra.position.x + 150, ra.position.y + 96), "corpo a corpo", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.6))
+	# ITEM: bandagem no ○, e o resto que importa embaixo (luz, molotov, galão)
+	_cartao(ri)
+	var item := "bandagem" if j.tem("bandagem") or not j.tem("kit_medico") else "kit_medico"
+	var qi := Rect2(ri.position + Vector2(10, 10), Vector2(70, 60))
+	_icone(item, qi, Color.WHITE if j.tem(item) else Color(1, 1, 1, 0.3))
+	_bangers("x%d" % j.qtd(item), Vector2(qi.end.x - 26, qi.end.y + 6), 22, Color.WHITE if j.tem(item) else VERMELHO, 4)
+	_botao("bola", Vector2(qi.end.x + 18, ri.position.y + 26))
+	draw_string(fonte, Vector2(qi.end.x + 32, ri.position.y + 31), "ITEM", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1, 1, 1, 0.5))
 	var luz := ""
 	if j.tocha_t > 0.0:
-		luz = "Tocha %ds" % ceili(j.tocha_t)
+		luz = "tocha %ds" % ceili(j.tocha_t)
+		_icone("tocha", Rect2(qi.end.x + 10, ri.position.y + 40, 26, 26))
 	else:
-		luz = "Lanterna %d%%%s" % [int(j.bateria), " (acesa)" if j.luz_on else ""]
-	var extra := []
-	extra.append(luz)
-	extra.append("Bandagens %d" % j.qtd("bandagem"))
-	if j.tem("galao"):
-		extra.append("Galão %.0f L" % j.gasolina)
-	if j.tem("molotov"):
-		extra.append("Molotov %d" % j.qtd("molotov"))
-	_txt("  ·  ".join(extra), Vector2(bx, by + 56), 14, Color(1, 1, 1, 0.75))
+		luz = "%d%%%s" % [int(j.bateria), " ●" if j.luz_on else ""]
+		_fina(Vector2(qi.end.x + 40, ri.position.y + 54), 60, j.bateria / 100.0, AMARELO if j.luz_on else Color(1, 1, 1, 0.4), "")
+	draw_string(fonte, Vector2(qi.end.x + 40, ri.position.y + 48), "luz " + luz, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.75))
+	var mx := ri.position.x + 12
+	for extra in [["molotov", j.qtd("molotov")], ["galao", int(j.gasolina)]]:
+		if extra[1] > 0:
+			_icone(extra[0], Rect2(mx, ri.end.y - 32, 26, 26))
+			draw_string(fonte, Vector2(mx + 28, ri.end.y - 12), str(extra[1]) + (" L" if extra[0] == "galao" else ""), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color.WHITE)
+			mx += 74
 	if j.carro and j.carro.motorista == j:
-		_txt("Gasolina %.0f L  ·  %d km/h" % [j.carro.combustivel, int(absf(j.carro.vel) * 0.25)], Vector2(bx, by - 26), 16, AMARELO)
+		var rc := Rect2(ra.position.x, ra.position.y - 50, 320, 40)
+		_cartao(rc)
+		_bangers("%d KM/H" % int(absf(j.carro.vel) * 0.25), rc.position + Vector2(14, 30), 24, AMARELO, 4)
+		_fina(Vector2(rc.position.x + 140, rc.position.y + 16), 100, j.carro.combustivel / 40.0, Color("ff9f43"), "%.0f L" % j.carro.combustivel)
+
+
+func _voando() -> void:
+	## item pego: o ícone pula da cabeça do personagem e voa (em arco) até a caixa de item
+	for v in voando:
+		var k: float = v["t"] / 0.75
+		var de: Vector2 = _tela(v["de"])
+		var ate := Vector2(size.x - 22 - 320 - 232 + 45, size.y - 22 - 108 + 40) if v["dono"] == 1 else Vector2(22 + 45, size.y - 22 - 108 + 40)
+		var e := k * k * (3.0 - 2.0 * k)
+		var p := de.lerp(ate, e) + Vector2(0, -sin(k * PI) * 160.0)
+		var esc := 1.0 + sin(minf(k * 3.0, 1.0) * PI) * 0.6
+		_icone(v["item"], Rect2(p - Vector2(28, 28) * esc, Vector2(56, 56) * esc), Color(1, 1, 1, 1.0 - maxf(0.0, k - 0.85) * 6.0))
+
+
+func _chave(it: Dictionary) -> String:
+	## receitas têm "arma": true (é uma marca); o que vale nelas é o "faz"
+	if it.has("faz"):
+		return it["faz"]
+	return it.get("arma", it.get("item", ""))
+
+
+func voar(item: String, de: Vector2, dono := 1) -> void:
+	if voando.size() < 8:
+		voando.append({"item": item, "de": de, "dono": dono, "t": 0.0})
+
+
+func _furtivo() -> void:
+	## mostra o abate silencioso quando dá
+	if main.estado != main.JOGANDO:
+		return
+	for j in main.jogadores:
+		var z = main.alvo_furtivo(j)
+		if z:
+			var p := _tela(z.global_position) + Vector2(-90, -150)
+			_cartao(Rect2(p, Vector2(200, 40)), Color(0.35, 0.05, 0.05, 0.9))
+			_botao("R1", p + Vector2(22, 20))
+			_bangers("ABATE SILENCIOSO", p + Vector2(42, 29), 20, Color.WHITE, 4)
+
+
+func _radar(w: float, _h: float) -> void:
+	## radar do Metal Gear: paredes, zumbis com o cone de visão, Iara, barulhos e o objetivo.
+	## Em ALERTA ele embaralha (estática) e só mostra a fase; em EVASÃO/CAUTELA, o tempo que falta.
+	var j: Node = main.jogadores[0]
+	var tam := 290.0
+	var r := Rect2(w - 22 - tam, 20, tam, tam)
+	var c := r.get_center()
+	var alcance := 1150.0
+	var k := (tam / 2.0 - 6.0) / alcance
+	var verde := Color("53ff9a")
+	draw_rect(Rect2(r.position + Vector2(5, 6), r.size), Color(0, 0, 0, 0.45))
+	draw_rect(r, Color(0.01, 0.09, 0.05, 0.86))
+	var dentro := r.grow(-6)
+	var centro_mundo: Vector2 = j.global_position
+	var ver := Rect2(centro_mundo - Vector2(alcance, alcance), Vector2(alcance, alcance) * 2.0)
+	var mapa := func(p: Vector2) -> Vector2: return c + (p - centro_mundo) * k
+	if main.fase_alerta == "ALERTA":
+		# estática
+		_rng_radar.seed = int(t * 20.0)
+		for i in 140:
+			var p := dentro.position + Vector2(_rng_radar.randf() * dentro.size.x, _rng_radar.randf() * dentro.size.y)
+			draw_rect(Rect2(p, Vector2(_rng_radar.randf_range(4, 22), 2)), Color(verde, _rng_radar.randf_range(0.1, 0.5)))
+		if fmod(t, 0.7) < 0.45:
+			_bangers("SEM SINAL", c + Vector2(-62, 12), 32, Color(verde, 0.9), 6)
+	else:
+		# grade
+		for i in range(1, 6):
+			var x := dentro.position.x + dentro.size.x * i / 6.0
+			var y := dentro.position.y + dentro.size.y * i / 6.0
+			draw_line(Vector2(x, dentro.position.y), Vector2(x, dentro.end.y), Color(verde, 0.08), 1.0)
+			draw_line(Vector2(dentro.position.x, y), Vector2(dentro.end.x, y), Color(verde, 0.08), 1.0)
+		# paredes
+		for cs in main.casters:
+			var b: Rect2 = cs[0]
+			if not ver.intersects(b):
+				continue
+			var q := Rect2(mapa.call(b.position), b.size * k).intersection(dentro)
+			if q.has_area():
+				draw_rect(q.grow(0.6), Color(verde, 0.55))
+		# barulhos: anéis que crescem
+		for o in main.ondas:
+			var oc: Vector2 = mapa.call(o["pos"])
+			if dentro.has_point(oc):
+				var rr: float = o["raio"] * k * (0.3 + o["t"] / 1.2 * 0.7)
+				draw_arc(oc, rr, 0, TAU, 32, Color(1, 1, 1, 0.5 * (1.0 - o["t"] / 1.2)), 2.0)
+		# zumbis e cones de visão
+		for z in main.zumbis:
+			if not is_instance_valid(z):
+				continue
+			var zp: Vector2 = mapa.call(z.global_position)
+			if not dentro.grow(-4).has_point(zp):
+				continue
+			var cor := Color("ff3b3b") if z.alvo != null else (Color("ffb347") if z.alerta else Color("ff6b6b"))
+			var raio: float = main.raio_visao(j) * (0.55 if j.agachado else 1.0) * k
+			var a0: float = z.frente.angle()
+			var pts := PackedVector2Array([zp])
+			for s2 in 7:
+				var a: float = a0 - z.CONE + z.CONE * 2.0 * s2 / 6.0
+				var pp: Vector2 = zp + Vector2.from_angle(a) * raio
+				pts.append(Vector2(clampf(pp.x, dentro.position.x, dentro.end.x), clampf(pp.y, dentro.position.y, dentro.end.y)))
+			draw_colored_polygon(pts, Color(cor, 0.16 if z.alvo == null else 0.3))
+			draw_circle(zp, 4.0, cor)
+		# Iara e as pessoas
+		if main.vip and is_instance_valid(main.vip):
+			var vp: Vector2 = mapa.call(main.vip.global_position)
+			if dentro.has_point(vp):
+				draw_circle(vp, 5.0, Color("7fd8ff"))
+		for o in main.mundo.get_children():
+			if o.get_script() == preload("res://npc.gd"):
+				var np: Vector2 = mapa.call(o.global_position)
+				if dentro.has_point(np):
+					draw_circle(np, 4.0, Color.WHITE)
+		# objetivo: quadrado amarelo piscando (ou setinha na borda)
+		var alvo = main.historia.alvo()
+		if alvo != null:
+			var ap: Vector2 = mapa.call(alvo)
+			var piscar := fmod(t, 0.8) < 0.55
+			if dentro.grow(-8).has_point(ap):
+				if piscar:
+					draw_rect(Rect2(ap - Vector2(6, 6), Vector2(12, 12)), AMARELO, false, 3.0)
+			else:
+				var d := (ap - c).normalized()
+				var borda := c + d * minf((dentro.size.x / 2 - 10) / maxf(absf(d.x), 0.01), (dentro.size.y / 2 - 10) / maxf(absf(d.y), 0.01))
+				var an := d.angle()
+				draw_colored_polygon(PackedVector2Array([borda + Vector2.from_angle(an) * 10, borda + Vector2.from_angle(an + 2.4) * 8,
+					borda + Vector2.from_angle(an - 2.4) * 8]), Color(AMARELO, 1.0 if piscar else 0.5))
+	# você: seta branca no meio
+	var m: Vector2 = j.mira
+	draw_colored_polygon(PackedVector2Array([c + m * 10, c + m.rotated(2.5) * 7, c + m.rotated(-2.5) * 7]), Color.WHITE)
+	draw_rect(r, TINTA, false, 4.0)
+	draw_rect(r.grow(-5), Color(verde, 0.35), false, 1.5)
+	# fase
+	if main.fase_alerta != "":
+		var rf := Rect2(r.position.x, r.end.y + 8, tam, 42)
+		var cor := Color("ff3b3b") if main.fase_alerta == "ALERTA" else AMARELO
+		_cartao(rf, Color(cor.darkened(0.75), 0.92))
+		var txt: String = main.fase_alerta
+		if main.fase_alerta != "ALERTA":
+			txt += "  %05.2f" % maxf(0.0, main.t_fase)
+		_bangers(txt, rf.position + Vector2(14, 32), 28, cor, 6)
 
 
 func _topo(w: float, _h: float) -> void:
 	var n: float = main.noite()
 	var rel := "Noite" if n > 0.5 else ("Entardecer" if main.tempo > 160.0 else "Dia")
 	var cx := w / 2.0
+	draw_rect(Rect2(cx - 330, 12, 660, 140 if main.historia.objetivo() != "" else 70), Color(0, 0, 0, 0.32))
 	_txt("Dia %d · %s" % [main.dia, rel], Vector2(0, 32), 20, AMARELO if n < 0.5 else AZUL, w, HORIZONTAL_ALIGNMENT_CENTER)
 	# relógio do dia: barra fina
 	draw_rect(Rect2(cx - 90, 42, 180, 4), Color(0, 0, 0, 0.5))
@@ -210,14 +496,14 @@ func _seta(w: float, h: float) -> void:
 		return
 	var tela := _tela(alvo)
 	var centro := Vector2(w, h) / 2.0
-	var dentro := Rect2(Vector2(60, 60), Vector2(w - 120, h - 120))
+	var dentro := Rect2(Vector2(470, 60), Vector2(w - 820, h - 230))
 	var dist: float = alvo.distance_to(main.jogadores[0].global_position)
 	if dentro.has_point(tela):
 		var y := tela.y - 80 + sin(t * 4.0) * 5.0
 		draw_colored_polygon(PackedVector2Array([Vector2(tela.x - 10, y), Vector2(tela.x + 10, y), Vector2(tela.x, y + 14)]), AMARELO)
 		return
 	# a seta anda pela borda, longe das barras do topo e da arma embaixo
-	var area := Rect2(Vector2(80, 190), Vector2(w - 160, h - 330))
+	var area := Rect2(Vector2(80, 300), Vector2(w - 160, h - 480))
 	centro = area.get_center()
 	var dir := (tela - centro).normalized()
 	var p := centro + dir * minf((area.size.x / 2) / maxf(absf(dir.x), 0.01), (area.size.y / 2) / maxf(absf(dir.y), 0.01))
@@ -245,9 +531,11 @@ func _prompts() -> void:
 
 
 func _icone(nome: String, r: Rect2, mod := Color.WHITE) -> void:
-	if not ICONE.has(nome):
-		return
-	var tx := A.tex("icones/%s.png" % ICONE[nome], 128)
+	var tx: Texture2D = null
+	if ICONE.has(nome):
+		tx = A.tex("icones/%s.png" % ICONE[nome], 128)
+	else:
+		tx = A.tex("pecas/%s.png" % nome, 160)       # fogueira, barricada… usam a arte da peça
 	if tx == null:
 		return
 	var e := minf(r.size.x / tx.get_width(), r.size.y / tx.get_height())
@@ -369,54 +657,94 @@ func _hq(f: Dictionary, w: float, h: float) -> void:
 
 
 func _mochila(w: float, h: float) -> void:
+	## mochila em cartas: o painel entra deslizando, as cartas aparecem uma a uma, a escolhida pula
 	var j: Node = main.jogadores[main.menu_dono - 1]
-	var r := Rect2(w * 0.18, h * 0.12, w * 0.64, h * 0.74)
-	_painel(r)
-	_txt("Mochila de " + j.nome, r.position + Vector2(28, 40), 22, j.cor_roupa.lightened(0.45))
-	var abas := ["Mochila", "Criar"]
+	var ent := clampf(moch_t / 0.28, 0.0, 1.0)
+	ent = 1.0 - pow(1.0 - ent, 3.0)
+	draw_rect(Rect2(0, 0, w, h), Color(0, 0, 0, 0.55 * ent))
+	var r := Rect2(w * 0.08 + (1.0 - ent) * w * 0.7, h * 0.09, w * 0.84, h * 0.82)
+	_cartao(r, Color(0.09, 0.085, 0.08, 0.96))
+	_bangers("MOCHILA DO %s" % j.nome.to_upper(), r.position + Vector2(30, 56), 42, AMARELO, 8)
+	var abas := ["ITENS", "CRIAR"]
 	for i in 2:
-		var x := r.position.x + r.size.x - 240 + i * 120
+		var ra := Rect2(r.end.x - 330 + i * 150, r.position.y + 20, 136, 46)
 		var sel: bool = i == main.mochila_aba
-		draw_rect(Rect2(x, r.position.y + 16, 110, 34), Color(1, 1, 1, 0.16 if sel else 0.04))
-		_txt(abas[i], Vector2(x, r.position.y + 40), 17, Color.WHITE if sel else Color(1, 1, 1, 0.5), 110, HORIZONTAL_ALIGNMENT_CENTER)
+		draw_rect(ra, AMARELO if sel else Color(1, 1, 1, 0.08))
+		draw_rect(ra, TINTA, false, 4.0)
+		_bangers(abas[i], ra.position + Vector2(30, 35), 28, TINTA if sel else Color(1, 1, 1, 0.55), 0 if sel else 4)
+	_botao("L1", Vector2(r.end.x - 352, r.position.y + 44))
+	_botao("R1", Vector2(r.end.x - 34, r.position.y + 44))
 	var lista: Array = main.itens_mochila(j) if main.mochila_aba == 0 else D.RECEITAS
-	var y0 := r.position.y + 90
-	var cabem := int((r.size.y - 150) / 32)
-	var ini := clampi(main.menu_sel - cabem + 1, 0, maxi(0, lista.size() - cabem))
+	var grade := Rect2(r.position + Vector2(30, 96), Vector2(r.size.x * 0.6, r.size.y - 150))
+	var cols: int = main.MOCHILA_COLS
+	var gap := 16.0
+	var lado := minf((grade.size.x - gap * (cols - 1)) / cols, 150.0)
+	var linhas_vis := maxi(1, int((grade.size.y + gap) / (lado + gap)))
+	var sel_lin := int(main.menu_sel / cols)
+	var ini_lin := clampi(sel_lin - linhas_vis + 1, 0, maxi(0, int(ceil(lista.size() / float(cols))) - linhas_vis))
 	if lista.is_empty():
-		_txt("Vazia. Revire armários, carros e caixas.", Vector2(r.position.x + 28, y0 + 20), 16, Color(1, 1, 1, 0.6))
-	for k in mini(cabem, lista.size() - ini):
-		var i := ini + k
+		_txt("Vazia. Revire armários, carros e caixas.", grade.position + Vector2(10, 40), 20, Color(1, 1, 1, 0.6))
+	for i in lista.size():
+		var lin := int(i / cols) - ini_lin
+		if lin < 0 or lin >= linhas_vis:
+			continue
 		var it: Dictionary = lista[i]
-		var y := y0 + k * 32
+		var chave: String = _chave(it)
+		var cel := Rect2(grade.position + Vector2((i % cols) * (lado + gap), lin * (lado + gap)), Vector2(lado, lado))
+		# entra pulando, uma depois da outra
+		var ki := clampf((moch_t - 0.12 - i * 0.025) / 0.18, 0.0, 1.0)
+		if ki <= 0.0:
+			continue
+		var esc := lerpf(0.5, 1.0, ki) + sin(ki * PI) * 0.12
 		var sel: bool = i == main.menu_sel
 		if sel:
-			draw_rect(Rect2(r.position.x + 18, y - 22, r.size.x * 0.55, 30), Color(1, 1, 1, 0.12))
-		var nome := ""
-		var cor := Color.WHITE
-		if main.mochila_aba == 0:
-			if it.has("arma"):
-				nome = D.nome(it["arma"]) + ("   (na mão)" if it["arma"] == j.arma else "")
-				cor = AMARELO
-			else:
-				nome = "%s  x%d" % [D.nome(it["item"]), it["q"]]
+			esc += 0.06 + sin(minf(moch_sel_t * 14.0, PI)) * 0.08
+		var cc := cel.get_center()
+		var cr := Rect2(cc - cel.size * esc / 2.0, cel.size * esc)
+		var pode := true
+		if main.mochila_aba == 1:
+			pode = main.pode_criar(j, it)
+		var fundo := Color(0.2, 0.18, 0.15) if not sel else Color("ffd166")
+		draw_rect(Rect2(cr.position + Vector2(4, 5), cr.size), Color(0, 0, 0, 0.5 * ki))
+		draw_rect(cr, Color(fundo, ki))
+		if not sel:
+			draw_rect(cr.grow(-6), Color(1, 1, 1, 0.05))
+		if chave == "punhos":
+			_bangers("✊", cr.get_center() + Vector2(-24, 26), 64, Color(1, 1, 1, ki * 0.85), 6)
 		else:
-			nome = D.nome(it["faz"])
-			cor = Color.WHITE if main.pode_criar(j, it) else Color(1, 1, 1, 0.4)
-		_icone(it.get("arma", it.get("item", it.get("faz", ""))), Rect2(r.position.x + 24, y - 25, 30, 30))
-		_txt(nome, Vector2(r.position.x + 62, y), 17, cor)
-	# detalhe do item escolhido
+			_icone(chave, cr.grow(-cr.size.x * 0.14), Color(1, 1, 1, ki * (1.0 if pode else 0.3)))
+		draw_rect(cr, TINTA, false, 4.0)
+		if it.has("q") and main.mochila_aba == 0:
+			_bangers("x%d" % it["q"], cr.end + Vector2(-44, -10), 26, Color.WHITE if not sel else TINTA, 5 if not sel else 0)
+		if main.mochila_aba == 0 and it.has("arma") and it["arma"] == j.arma:
+			draw_rect(Rect2(cr.position + Vector2(0, 8), Vector2(cr.size.x * 0.62, 24)), VERMELHO)
+			_bangers("NA MÃO", cr.position + Vector2(8, 28), 18, Color.WHITE, 3)
+	# barra de rolagem
+	var total_lin := int(ceil(lista.size() / float(cols)))
+	if total_lin > linhas_vis:
+		var bx := grade.end.x + 8
+		draw_rect(Rect2(bx, grade.position.y, 6, grade.size.y), Color(1, 1, 1, 0.1))
+		draw_rect(Rect2(bx, grade.position.y + grade.size.y * ini_lin / total_lin, 6, grade.size.y * linhas_vis / total_lin), AMARELO)
+	# detalhe
 	if not lista.is_empty():
 		var it: Dictionary = lista[clampi(main.menu_sel, 0, lista.size() - 1)]
-		var dx := r.position.x + r.size.x * 0.62
+		var chave: String = _chave(it)
+		var dx := grade.end.x + 40
+		var dw := r.end.x - 30 - dx
+		var flut := sin(t * 2.2) * 6.0
+		var big := Rect2(dx + dw / 2 - 120, grade.position.y + 10 + flut, 240, 180)
+		var bate := 1.0 + sin(minf(moch_sel_t * 10.0, PI)) * 0.1
+		_icone(chave, Rect2(big.get_center() - big.size * bate / 2, big.size * bate))
+		var nome := D.nome(chave)
+		_bangers(nome.to_upper(), Vector2(dx, big.end.y + 50 - flut), 36, Color.WHITE, 7)
 		var linhas: Array = []
 		if main.mochila_aba == 0:
 			if it.has("arma"):
 				var a: Dictionary = D.ARMAS[it["arma"]]
-				linhas = ["Dano %d · %s" % [a["dano"], "corpo a corpo" if a.get("corpo", false) else "%s" % D.nome(a["municao"])],
-					"Barulho: " + ("alto" if a["barulho"] > 500 else ("médio" if a["barulho"] > 100 else "baixo")), "✕ pôr na mão"]
+				linhas = ["Dano %d · %s" % [a["dano"], "corpo a corpo" if a.get("corpo", false) else D.nome(a["municao"])],
+					"Barulho: " + ("ALTO (eles ouvem de longe)" if a["barulho"] > 500 else ("médio" if a["barulho"] > 100 else "baixo"))]
 				if a.get("corta", false):
-					linhas.insert(1, "Corta lenha de árvores")
+					linhas.append("Corta lenha de árvores")
 			else:
 				var info: Dictionary = D.ITENS.get(it["item"], {})
 				if info.has("fome"):
@@ -425,35 +753,48 @@ func _mochila(w: float, h: float) -> void:
 					linhas.append("Vida +%d" % info["cura"])
 				if info.has("dica"):
 					linhas.append(info["dica"])
-				if info.get("tipo", "") in ["comida", "cura", "luz"]:
-					linhas.append("✕ usar")
-				elif info.get("tipo", "") == "material":
+				if info.get("tipo", "") == "material":
 					linhas.append("Material para criar itens")
-		else:
-			linhas.append("Precisa de:")
+		var y := big.end.y + 84
+		for l in linhas:
+			draw_multiline_string(fonte, Vector2(dx, y), l, HORIZONTAL_ALIGNMENT_LEFT, dw, 19, -1, Color(1, 1, 1, 0.85))
+			y += fonte.get_multiline_string_size(l, HORIZONTAL_ALIGNMENT_LEFT, dw, 19).y + 6
+		if main.mochila_aba == 1:
+			# receita: ícone de cada material com tenho/preciso
+			var x := dx
 			for k in it["usa"]:
-				linhas.append("  %s  %d/%d" % [D.nome(k), j.qtd(k), it["usa"][k]])
+				var tem: bool = j.qtd(k) >= it["usa"][k]
+				_icone(k, Rect2(x, y - 4, 56, 56))
+				_bangers("%d/%d" % [j.qtd(k), it["usa"][k]], Vector2(x + 4, y + 70), 22, VERDE if tem else VERMELHO, 4)
+				x += 82
 			if it.has("gasolina"):
-				linhas.append("  Gasolina  %.0f/%d L" % [j.gasolina, it["gasolina"]])
+				_icone("galao", Rect2(x, y - 4, 56, 56))
+				_bangers("%.0f/%d L" % [j.gasolina, it["gasolina"]], Vector2(x, y + 70), 22, VERDE if j.gasolina >= it["gasolina"] else VERMELHO, 4)
+			y += 100
 			if it.has("dica"):
-				linhas.append(it["dica"])
-			linhas.append("✕ criar" if main.pode_criar(j, it) else "Faltam materiais")
-		_icone(it.get("arma", it.get("item", it.get("faz", ""))), Rect2(dx, y0 - 22, 130, 96))
-		for i in linhas.size():
-			_txt(linhas[i], Vector2(dx, y0 + 96 + i * 26), 15, Color(1, 1, 1, 0.8), r.end.x - dx - 20)
-	_botao("L1", Vector2(r.position.x + 40, r.end.y - 24))
-	_botao("R1", Vector2(r.position.x + 70, r.end.y - 24))
-	_txt("trocar aba", Vector2(r.position.x + 86, r.end.y - 18), 14, Color(1, 1, 1, 0.6))
-	_botao("cruz", Vector2(r.position.x + 200, r.end.y - 24))
-	_txt("usar / criar", Vector2(r.position.x + 214, r.end.y - 18), 14, Color(1, 1, 1, 0.6))
-	_botao("triangulo", Vector2(r.position.x + 340, r.end.y - 24))
-	_txt("fechar", Vector2(r.position.x + 354, r.end.y - 18), 14, Color(1, 1, 1, 0.6))
+				draw_multiline_string(fonte, Vector2(dx, y), it["dica"], HORIZONTAL_ALIGNMENT_LEFT, dw, 17, -1, Color(1, 1, 1, 0.7))
+		var acao := ""
+		if main.mochila_aba == 1:
+			acao = "CRIAR" if main.pode_criar(j, it) else "FALTA MATERIAL"
+		elif it.has("arma"):
+			acao = "PÔR NA MÃO"
+		elif D.ITENS.get(it["item"], {}).get("tipo", "") in ["comida", "cura", "luz"]:
+			acao = "USAR"
+		if acao != "":
+			var rb := Rect2(dx, r.end.y - 96, dw, 52)
+			var ok := acao != "FALTA MATERIAL"
+			draw_rect(rb, Color("7ff0c4") if ok else Color(1, 1, 1, 0.08))
+			draw_rect(rb, TINTA, false, 4.0)
+			_botao("cruz", rb.position + Vector2(30, 26), TINTA if ok else Color(1, 1, 1, 0.6))
+			_bangers(acao, rb.position + Vector2(54, 38), 30, TINTA if ok else Color(1, 1, 1, 0.5), 0 if ok else 4)
+	_botao("triangulo", Vector2(r.position.x + 44, r.end.y - 30))
+	draw_string(fonte, Vector2(r.position.x + 62, r.end.y - 24), "fechar      ✛ escolher", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.6))
 
 
 func _controles(p: Vector2) -> void:
-	var lista := [["R2", "Atirar/usar arma"], ["R1", "Golpe"], ["L2", "Correr"], ["L1", "Molotov"],
+	var lista := [["R2", "Atirar/usar arma"], ["R1", "Golpe · abate por trás"], ["L2", "Correr"], ["R3", "Agachar"],
 		["cruz", "Usar (segure)"], ["quadrado", "Recarregar"], ["bola", "Bandagem"], ["triangulo", "Mochila e criar"],
-		["←→", "Trocar arma"], ["↑", "Lanterna"], ["↓", "Tocha"], ["Opt", "Pausa"]]
+		["←→", "Trocar arma"], ["↑", "Lanterna"], ["↓", "Tocha"], ["L1", "Molotov"]]
 	for i in lista.size():
 		var q := p + Vector2((i % 4) * 190, int(i / 4) * 28)
 		_botao(lista[i][0], q + Vector2(10, -6))
@@ -486,7 +827,7 @@ func _titulo(w: float, h: float) -> void:
 	_fundo("titulo", w, h)
 	draw_rect(Rect2(0, h * 0.33, w, h * 0.67), Color(0, 0, 0, 0.5))
 	_logo(Vector2(w / 2, h * 0.2), 132)
-	_txt("Versão 0.4 (demo) · Jogo oficial da SkyStation · Brasil, 2033", Vector2(0, h * 0.2 + 44), 18, Color(1, 1, 1, 0.8), w, HORIZONTAL_ALIGNMENT_CENTER)
+	_txt("Versão 0.6 (demo) · Jogo oficial da SkyStation · Brasil, 2033", Vector2(0, h * 0.2 + 44), 18, Color(1, 1, 1, 0.8), w, HORIZONTAL_ALIGNMENT_CENTER)
 	var ops: Array = main.opcoes_titulo()
 	for i in ops.size():
 		var y := h * 0.40 + i * 44

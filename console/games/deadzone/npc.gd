@@ -1,6 +1,8 @@
 extends CharacterBody2D
 ## Pessoa viva (Nina, Tião…). Não luta: fala. O que ela diz e as escolhas ficam em historia.gd.
 
+const A := preload("res://arte.gd")
+
 var main: Node2D
 var id := "nina"
 var nome := "Nina"
@@ -62,6 +64,9 @@ func _process(d: float) -> void:
 
 func _draw() -> void:
 	draw_circle(Vector2(2, 2), 13, Color(0, 0, 0, 0.35))
+	if A.boneco(self, "personagens/" + id, olhar, fase, false, 78.0):
+		_marcador()
+		return
 	var corpo := Vector2(0, -18 + sin(fase) * 0.8)
 	draw_line(Vector2(5, -2), Vector2(5, -12), Color("2b2d42"), 6, true)
 	draw_line(Vector2(-5, -2), Vector2(-5, -12), Color("2b2d42"), 6, true)
@@ -69,8 +74,12 @@ func _draw() -> void:
 	var cab := corpo + Vector2(0, -14) + olhar * 2
 	draw_circle(cab, 8, Color("c99a6e"))
 	draw_circle(cab - olhar * 2 + Vector2(0, -3), 7, cabelo)
+	_marcador()
+
+
+func _marcador() -> void:
 	# marcador: tem conversa
 	if not sumir and main.historia.tem_conversa(id):
-		var y := -66 + sin(fase * 2.0) * 3
+		var y := -94 + sin(fase * 2.0) * 3
 		draw_circle(Vector2(0, y), 9, Color(1, 0.82, 0.4, 0.95))
 		draw_string(ThemeDB.fallback_font, Vector2(-4, y + 5), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.1, 0.1, 0.1))

@@ -54,8 +54,24 @@ var escuro: CanvasModulate
 var hud: Control
 var historia: Node
 var sons: Node
+var musica: Node
 var tex_luz: Texture2D
 var tex_cone: Texture2D
+var mat_chao: ShaderMaterial        # chão e paredes sem padrão repetido (chao.gdshader)
+var sombras_sol: CanvasGroup        # sombras do sol (paredes, enfeites): um grupo só, para não escurecer em dobro
+var sombras_no: Node2D
+var casters: Array = []             # [Rect2 da base, altura] de cada parede para a sombra do sol
+var enfeites_sombra: Array = []     # nós com sprite que projetam sombra (árvores, Kombis…)
+var luzes_noite: Array = []         # [PointLight2D, energia, pisca] (postes, luz do bunker)
+var sol_k := -1.0
+## furtividade no estilo Metal Gear: "" (tudo calmo) → ALERTA (alguém te viu) → EVASÃO (perderam você de
+## vista, procuram) → CAUTELA (ainda desconfiados) → calmo. O radar mostra a fase e os cones de visão.
+var fase_alerta := ""
+var t_fase := 0.0
+var ondas: Array = []               # barulhos recentes, para o radar: {pos, raio, t}
+const EVASAO := 14.0
+const CAUTELA := 10.0
+const MOCHILA_COLS := 5
 
 
 func _ready() -> void:
@@ -63,6 +79,13 @@ func _ready() -> void:
 	_ler_recorde()
 	tex_luz = _textura_luz(false)
 	tex_cone = _textura_luz(true)
+	var ruido := FastNoiseLite.new()
+	ruido.seed = 2033
+	ruido.frequency = 0.012
+	ruido.fractal_octaves = 3
+	mat_chao = ShaderMaterial.new()
+	mat_chao.shader = preload("res://chao.gdshader")
+	mat_chao.set_shader_parameter("ruido", ImageTexture.create_from_image(ruido.get_seamless_image(256, 256)))
 	var ui := CanvasLayer.new()
 	ui.layer = 5
 	add_child(ui)
@@ -80,6 +103,10 @@ func _ready() -> void:
 	sons.set_script(preload("res://sons.gd"))
 	sons.main = self
 	add_child(sons)
+	musica = Node.new()
+	musica.set_script(preload("res://musica.gd"))
+	musica.main = self
+	add_child(musica)
 	_nova_partida()
 	estado = TITULO
 
@@ -88,7 +115,7 @@ func _ready() -> void:
 
 func _acoes() -> void:
 	# padrão PlayStation: L anda, R mira, R2 usa a arma, R1 golpe, L2 corre, L1 molotov, ✕ usar (segure),
-	# □ recarrega, ○ bandagem, △ mochila, setas ←→ trocam arma, ↑ lanterna, ↓ tocha, Options pausa
+	# □ recarrega, ○ bandagem, △ mochila, setas ←→ trocam arma, ↑ lanterna, ↓ tocha, R3 agacha, Options pausa
 	var mapa := {
 		"esquerda": {"k": [KEY_A, KEY_LEFT], "e": [[JOY_AXIS_LEFT_X, -1.0]]},
 		"direita": {"k": [KEY_D, KEY_RIGHT], "e": [[JOY_AXIS_LEFT_X, 1.0]]},
@@ -110,8 +137,11 @@ func _acoes() -> void:
 		"voltar": {"k": [KEY_BACKSPACE], "j": [JOY_BUTTON_B]},
 		"m_cima": {"k": [KEY_W, KEY_UP], "j": [JOY_BUTTON_DPAD_UP], "e": [[JOY_AXIS_LEFT_Y, -1.0]]},
 		"m_baixo": {"k": [KEY_S, KEY_DOWN], "j": [JOY_BUTTON_DPAD_DOWN], "e": [[JOY_AXIS_LEFT_Y, 1.0]]},
-		"m_esq": {"k": [KEY_A, KEY_LEFT], "j": [JOY_BUTTON_DPAD_LEFT, JOY_BUTTON_LEFT_SHOULDER]},
-		"m_dir": {"k": [KEY_D, KEY_RIGHT], "j": [JOY_BUTTON_DPAD_RIGHT, JOY_BUTTON_RIGHT_SHOULDER]},
+		"m_esq": {"k": [KEY_A, KEY_LEFT], "j": [JOY_BUTTON_DPAD_LEFT], "e": [[JOY_AXIS_LEFT_X, -1.0]]},
+		"m_dir": {"k": [KEY_D, KEY_RIGHT], "j": [JOY_BUTTON_DPAD_RIGHT], "e": [[JOY_AXIS_LEFT_X, 1.0]]},
+		"aba_esq": {"k": [KEY_Q], "j": [JOY_BUTTON_LEFT_SHOULDER]},
+		"aba_dir": {"k": [KEY_R], "j": [JOY_BUTTON_RIGHT_SHOULDER]},
+		"agachar": {"k": [KEY_C, KEY_CTRL], "j": [JOY_BUTTON_RIGHT_STICK]},
 	}
 	for n in [1, 2]:
 		for nome in mapa:
@@ -230,7 +260,22 @@ func _nova_partida(p_modo := "historia", p_semente := -1) -> void:
 	chao.z_index = -10
 	chao.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 	chao.draw.connect(_desenhar_chao)
+	chao.material = mat_chao
 	mundo.add_child(chao)
+	sombras_sol = CanvasGroup.new()
+	sombras_sol.z_index = -8
+	sombras_sol.fit_margin = 0.0
+	sombras_sol.clear_margin = 0.0
+	mundo.add_child(sombras_sol)
+	sombras_no = Node2D.new()
+	sombras_no.draw.connect(_desenhar_sombras)
+	sombras_sol.add_child(sombras_no)
+	casters.clear()
+	enfeites_sombra.clear()
+	fase_alerta = ""
+	ondas.clear()
+	luzes_noite.clear()
+	sol_k = -1.0
 	camada_sangue = Node2D.new()
 	camada_sangue.z_index = -9
 	camada_sangue.draw.connect(_desenhar_sangue)
@@ -263,6 +308,7 @@ func _nova_partida(p_modo := "historia", p_semente := -1) -> void:
 	for i in 16:
 		_nascer_zumbi()
 	_npc("tiao", locais["ponte"])
+	_preparar_luz()
 	_ciclo()
 
 
@@ -482,9 +528,62 @@ func raio_visao(j: Node) -> float:
 
 
 func barulho(origem: Vector2, raio: float) -> void:
+	if raio > 60.0:
+		ondas.append({"pos": origem, "raio": raio, "t": 0.0})
 	for z in zumbis:
 		if z.global_position.distance_to(origem) < raio:
 			z.ouvir(origem)
+
+
+func alarme(quem: Node2D, j: Node2D) -> void:
+	## um zumbi te viu: "!" e os vizinhos vêm junto
+	if fase_alerta != "ALERTA":
+		sons.tocar("exclama", null, -3.0)
+		tremer(3.0)
+	fase_alerta = "ALERTA"
+	t_fase = 0.0
+	for z in zumbis:
+		if z != quem and z.alvo == null and z.global_position.distance_to(quem.global_position) < 420.0:
+			z.suspeita = maxf(z.suspeita, 0.75)
+			z.destino = j.global_position
+			z.alerta = true
+			z.t_perdeu = maxf(z.t_perdeu, 4.0)
+
+
+func _fases(d: float) -> void:
+	var cacando := false
+	for z in zumbis:
+		if is_instance_valid(z) and z.alvo != null:
+			cacando = true
+			break
+	if cacando:
+		fase_alerta = "ALERTA"
+		t_fase = 0.0
+	elif fase_alerta == "ALERTA":
+		fase_alerta = "EVASÃO"
+		t_fase = EVASAO
+	elif fase_alerta != "":
+		t_fase -= d
+		if t_fase <= 0.0:
+			if fase_alerta == "EVASÃO":
+				fase_alerta = "CAUTELA"
+				t_fase = CAUTELA
+			else:
+				fase_alerta = ""
+	for o in ondas:
+		o["t"] += d
+	ondas = ondas.filter(func(o): return o["t"] < 1.2)
+
+
+func alvo_furtivo(j: Node2D) -> Node2D:
+	## zumbi que não te viu, colado e de costas (ou de lado) para você: dá para abater sem barulho
+	for z in zumbis:
+		if not is_instance_valid(z) or z.alvo == j or z.suspeita >= 0.95:
+			continue
+		var v: Vector2 = j.global_position - z.global_position
+		if v.length() < 52.0 and z.frente.dot(v.normalized()) < 0.15:
+			return z
+	return null
 
 
 func mira_assistida(de: Vector2, dir: Vector2, alcance: float) -> Vector2:
@@ -521,6 +620,15 @@ func sangue(p: Vector2, r: float) -> void:
 
 func tremer(q: float) -> void:
 	tremor = maxf(tremor, q)
+
+
+func onomato(texto: String, onde: Vector2, cor: Color, tam := 32) -> void:
+	var o := preload("res://onomato.gd").new()
+	o.texto = texto
+	o.cor = cor
+	o.tam = tam
+	o.position = onde
+	add_child(o)
 
 
 func aviso(texto: String, cor := Color.WHITE) -> void:
@@ -871,16 +979,23 @@ func _menu_mochila() -> void:
 	if Input.is_action_just_pressed(p + "mochila") or Input.is_action_just_pressed(p + "voltar") or Input.is_action_just_pressed(p + "pausa"):
 		estado = JOGANDO
 		return
-	if Input.is_action_just_pressed(p + "m_esq") or Input.is_action_just_pressed(p + "m_dir"):
+	if Input.is_action_just_pressed(p + "aba_esq") or Input.is_action_just_pressed(p + "aba_dir"):
 		mochila_aba = 1 - mochila_aba
 		menu_sel = 0
+		sons.tocar("ui", null, -8.0)
 		return
 	if lista.is_empty():
 		return
+	# grade de cartas: ←→ anda uma, ↑↓ anda uma linha
+	var c := MOCHILA_COLS
 	menu_sel = clampi(menu_sel, 0, lista.size() - 1)
 	if Input.is_action_just_pressed(p + "m_cima"):
-		menu_sel = wrapi(menu_sel - 1, 0, lista.size())
+		menu_sel = maxi(0, menu_sel - c)
 	elif Input.is_action_just_pressed(p + "m_baixo"):
+		menu_sel = mini(lista.size() - 1, menu_sel + c)
+	elif Input.is_action_just_pressed(p + "m_esq"):
+		menu_sel = wrapi(menu_sel - 1, 0, lista.size())
+	elif Input.is_action_just_pressed(p + "m_dir"):
 		menu_sel = wrapi(menu_sel + 1, 0, lista.size())
 	elif Input.is_action_just_pressed(p + "interagir"):
 		if mochila_aba == 0:
@@ -888,8 +1003,12 @@ func _menu_mochila() -> void:
 			if it.has("arma"):
 				j.arma = it["arma"]
 				aviso("%s: %s na mão" % [j.nome, D.nome(it["arma"])], Color(1, 1, 1, 0.8))
+				sons.tocar("recarga", null, -10.0)
 			else:
+				var info: Dictionary = D.ITENS.get(it["item"], {})
 				j.usar_item(it["item"])
+				if info.get("tipo", "") in ["comida", "cura", "luz"] and not j.uso.is_empty() or it["item"] == "tocha":
+					estado = JOGANDO                  # fecha para ver a animação de uso
 		else:
 			var rec: Dictionary = lista[menu_sel]
 			if not pode_criar(j, rec):
@@ -925,6 +1044,7 @@ func _jogar(d: float) -> void:
 			j.ganhar_xp(25)
 		aviso("Amanheceu. Dia %d: os zumbis estão mais fortes." % dia, Color("ffd166"))
 	historia.checar_saida()
+	_fases(d)
 	if antes < 175.0 and tempo >= 175.0 and not avisou_noite:
 		avisou_noite = true
 		aviso("Está escurecendo. Ache um lugar seguro, acenda a lanterna (↑).", Color("ff9f43"))
@@ -1008,14 +1128,86 @@ func noite() -> float:
 
 
 func _ciclo() -> void:
+	## cor do ambiente: manhã fria, meio-dia neutro, fim de tarde laranja, noite de lua (azul, dá para ver
+	## os vultos), madrugada. As luzes da cidade acendem com a noite.
 	var n := noite()
-	var dia_cor := Color(1.0, 0.97, 0.92)
-	var tarde := Color(0.95, 0.72, 0.55)
-	var noite_cor := Color(0.07, 0.08, 0.15)
-	var c := dia_cor.lerp(noite_cor, n)
-	if tempo > 160.0 and tempo < 200.0:
-		c = dia_cor.lerp(tarde, clampf((tempo - 160.0) / 20.0, 0.0, 1.0)).lerp(noite_cor, n)
+	var c := Color(1.0, 0.97, 0.92)
+	if tempo < 30.0:
+		c = Color(0.86, 0.84, 0.95).lerp(c, tempo / 30.0)                    # amanhecer
+	elif tempo > 140.0 and tempo < 200.0:
+		c = c.lerp(Color(1.0, 0.7, 0.5), clampf((tempo - 140.0) / 40.0, 0.0, 1.0))   # entardecer
+	c = c.lerp(Color(0.2, 0.23, 0.38), n)
 	escuro.color = c
+	# sol: some à noite e a sombra cresce no fim da tarde (luz vem de cima à direita, como na arte das peças)
+	var k := 0.5 + clampf((tempo - 100.0) / 90.0, 0.0, 1.0) * 0.9
+	Arte.sol_v = Vector2(-0.62, 0.34) * k
+	Arte.sol_a = (1.0 - n) * (0.42 if tempo < 150.0 else 0.42 + (tempo - 150.0) / 50.0 * 0.12)
+	if sombras_sol:
+		sombras_sol.self_modulate.a = Arte.sol_a
+		if absf(k - sol_k) > 0.04:
+			sol_k = k
+			sombras_no.queue_redraw()
+	var t := Time.get_ticks_msec() * 0.001
+	for l in luzes_noite:
+		var luz: PointLight2D = l[0]
+		var e: float = l[1] * (n if l[3] else 1.0)
+		if l[2]:                                  # lâmpada com mau contato
+			e *= 0.35 if fmod(t * 1.7 + l[1] * 13.0, 3.0) < 0.12 or sin(t * 23.0 + l[1]) > 0.93 else 1.0
+		luz.energy = e
+		luz.visible = e > 0.02
+
+
+func _preparar_luz() -> void:
+	## junta o que faz sombra do sol e acende as luzes fixas (postes que ainda funcionam, bunker)
+	var r := RandomNumberGenerator.new()
+	r.seed = semente + 4242
+	for c in mundo.get_children():
+		if c.get_script() == preload("res://parede.gd"):
+			casters.append([Rect2(c.position.x - c.tam.x / 2, c.position.y - c.tam.y, c.tam.x, c.tam.y), 58.0])
+			c.material = mat_chao
+		elif c.get_script() == preload("res://deco.gd"):
+			if c.nome in ["poste", "orelhao", "arbusto"]:
+				enfeites_sombra.append(c)
+			if c.nome == "poste" and r.randf() < 0.35:
+				var l := nova_luz(Color(1.0, 0.72, 0.4), 1.9, false)   # sem sombra: o poste fica colado nas paredes
+				l.position = Vector2(0, -4)
+				c.add_child(l)
+				luzes_noite.append([l, 0.95, r.randf() < 0.3, true])
+		elif c.get_script() == preload("res://objeto.gd") and c.tipo == "arvore":
+			enfeites_sombra.append(c)
+	if locais.has("bunker"):
+		# bunker: luz fria de lâmpada fluorescente, ligada o tempo todo
+		var b: Rect2 = predios[locais["bunker"]]["r"]
+		var y := b.position.y + 140.0
+		while y < b.end.y - 60.0:
+			var x := b.position.x + 160.0
+			while x < b.end.x - 80.0:
+				var l := nova_luz(Color(0.8, 0.95, 1.0), 3.0, true)
+				l.position = Vector2(x, y)
+				mundo.add_child(l)
+				luzes_noite.append([l, 1.25, r.randf() < 0.25, false])
+				x += 320.0
+			y += 300.0
+	sombras_no.queue_redraw()
+	chao.queue_redraw()
+
+
+func _desenhar_sombras() -> void:
+	## sombra do sol: cada parede é uma caixa; a sombra é o casco convexo da base + a base empurrada pelo sol.
+	## Tudo em preto opaco aqui; a transparência vem do CanvasGroup, então sombras que se cruzam não somam.
+	var n := sombras_no
+	for c in casters:
+		var b: Rect2 = c[0]
+		var d: Vector2 = Arte.sol_v * float(c[1])
+		var pts := PackedVector2Array([b.position, Vector2(b.end.x, b.position.y), b.end, Vector2(b.position.x, b.end.y)])
+		for i in 4:
+			pts.append(pts[i] + d)
+		var casco := Geometry2D.convex_hull(pts)
+		if casco.size() >= 3:
+			n.draw_colored_polygon(casco, Color.BLACK)
+	for e in enfeites_sombra:
+		if is_instance_valid(e) and e.has_method("desenhar_sombra"):
+			e.desenhar_sombra(n)
 
 
 func fim_de_jogo() -> void:
@@ -1077,9 +1269,12 @@ func _desenhar_chao() -> void:
 	# mato
 	_piso(Rect2(0, 0, lado, lado), Color("4a5a3a"), "chao_mato", 224, Color(0.82, 0.86, 0.78))
 	r2.seed = 7
-	for i in 1100:
+	for i in 700:
+		# manchas macias (terra, mato mais escuro): borda difusa em vez de bolinha de borda dura
 		var p := Vector2(r2.randf() * lado, r2.randf() * lado)
-		n.draw_circle(p, r2.randf_range(8, 30), Color(0.25, 0.32, 0.2, 0.25))
+		var tam := Vector2(r2.randf_range(60, 200), r2.randf_range(40, 140))
+		var cor := Color(0.2, 0.24, 0.12, 0.35) if r2.randf() < 0.6 else Color(0.45, 0.36, 0.2, 0.3)
+		n.draw_texture_rect(tex_luz, Rect2(p - tam / 2, tam), false, cor)
 	# calçadas, ruas e faixas
 	for i in range(0, MAPA, QUADRA):
 		var x := i * T
@@ -1096,11 +1291,14 @@ func _desenhar_chao() -> void:
 			n.draw_rect(Rect2(x - 3, yy, 6, 36), Color(0.9, 0.8, 0.3, 0.5))
 			n.draw_rect(Rect2(yy, x - 3, 36, 6), Color(0.9, 0.8, 0.3, 0.5))
 			yy += 90
-	# rachaduras e lixo
+	# manchas de óleo e de queimado nas ruas, poças de sujeira: quebram a repetição do asfalto
 	r2.seed = 11
-	for i in 500:
-		var p := Vector2(r2.randf() * lado, r2.randf() * lado)
-		n.draw_line(p, p + Vector2(r2.randf_range(-30, 30), r2.randf_range(-30, 30)), Color(0, 0, 0, 0.18), 2)
+	for i in 420:
+		var faixa := r2.randi_range(0, MAPA / QUADRA - 1) * QUADRA * T
+		var ao_longo := r2.randf() * lado
+		var p := Vector2(faixa + r2.randf_range(10, 4 * T - 10), ao_longo) if r2.randf() < 0.5 else Vector2(ao_longo, faixa + r2.randf_range(10, 4 * T - 10))
+		var tam := Vector2(r2.randf_range(30, 120), r2.randf_range(20, 70))
+		n.draw_texture_rect(tex_luz, Rect2(p - tam / 2, tam), false, Color(0.02, 0.02, 0.03, r2.randf_range(0.25, 0.55)))
 	# zonas de radiação: chão manchado e plantas mortas
 	for z in radiacao:
 		var c: Vector2 = z["pos"]
@@ -1121,20 +1319,28 @@ func _desenhar_chao() -> void:
 				_piso(r, p["piso"], "chao_terra", 192)
 			_:
 				_piso(r, p["piso"], "chao_concreto", 192, p["piso"].lightened(0.45))
-		if p["tipo"] == "casa":
-			var yy: float = r.position.y
-			while yy < r.end.y:
-				n.draw_line(Vector2(r.position.x, yy), Vector2(r.end.x, yy), Color(0, 0, 0, 0.12), 2)
-				yy += 22
-		elif p["tipo"] != "patio":
-			var xx: float = r.position.x
-			while xx < r.end.x:
-				n.draw_line(Vector2(xx, r.position.y), Vector2(xx, r.end.y), Color(0, 0, 0, 0.08), 1)
-				xx += 48
+		# canto mais escuro dentro das construções (sem sol direto)
+		if p["tipo"] != "patio":
+			n.draw_rect(r, Color(0.05, 0.04, 0.08, 0.16))
 		if p.has("nome"):
 			n.draw_string(ThemeDB.fallback_font, r.position + Vector2(20, r.size.y - 20), p["nome"].to_upper(),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color(1, 1, 1, 0.12))
 
+
+	# "oclusão de ambiente": o chão escurece colado no pé de cada parede, como na vida real
+	for c in casters:
+		var b: Rect2 = c[0]
+		_ao(b.position, Vector2(b.end.x, b.position.y), Vector2(0, -1))
+		_ao(Vector2(b.position.x, b.end.y), b.end, Vector2(0, 1))
+		_ao(b.position, Vector2(b.position.x, b.end.y), Vector2(-1, 0))
+		_ao(Vector2(b.end.x, b.position.y), b.end, Vector2(1, 0))
+
+
+func _ao(a: Vector2, b: Vector2, fora: Vector2) -> void:
+	var d := fora * 24.0
+	var forte := Color(0, 0, 0, 0.42)
+	var nada := Color(0, 0, 0, 0)
+	chao.draw_polygon(PackedVector2Array([a, b, b + d, a + d]), PackedColorArray([forte, forte, nada, nada]))
 
 func _desenhar_sangue() -> void:
 	var n := camada_sangue

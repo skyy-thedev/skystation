@@ -1,6 +1,6 @@
 extends Node
 ## Todos os sons do jogo, sintetizados na hora (sem arquivos de áudio): ruído, senos, envelopes e filtros
-## simples. Gerados uma vez no começo e guardados como AudioStreamWAV. Sem música por enquanto.
+## simples. Gerados uma vez no começo e guardados como AudioStreamWAV. A música fica em musica.gd.
 
 const TAXA := 22050
 
@@ -11,6 +11,21 @@ var loops := {}             # nome -> AudioStreamPlayer (sons contínuos não po
 var t_geiger := 0.0
 var t_coracao := 0.0
 var t_passos := {}
+## som no mundo que também "aparece escrito", como no gibi: nome do som -> [texto, cor, tamanho, tremor da tela]
+const ONOMATO := {
+	"tiro_pistola": [["BLAM!", "BANG!"], Color("ffd166"), 30, 2.0],
+	"tiro_espingarda": [["BUUM!", "KA-BLAM!"], Color("ff9f43"), 40, 6.0],
+	"tiro_rifle": [["KRAK!", "PÁ!"], Color("ffe66d"), 34, 3.5],
+	"acerto": [["POW!", "TUM!", "PAF!"], Color("f7f3e3"), 28, 1.5],
+	"machado": [["TCHAC!"], Color("f7f3e3"), 28, 0.0],
+	"martelo": [["TOC!", "TOC TOC!"], Color("f2d27a"), 24, 0.0],
+	"vidro": [["CRASH!"], Color("9ad1ff"), 30, 0.0],
+	"molotov": [["FWUUSH!"], Color("ff7b3a"), 38, 3.0],
+	"mordida": [["NHAC!"], Color("ff5c5c"), 30, 0.0],
+	"buzina": [["BI-BIII!"], Color("ffd166"), 30, 0.0],
+	"grito": [["AAARGH!"], Color("b6ff6b"), 26, 0.0],
+}
+var t_onomato := {}
 
 
 func _ready() -> void:
@@ -46,6 +61,7 @@ func tocar(nome: String, onde: Variant = null, vol := 0.0, tom := 1.0) -> void:
 	var pos: Vector2 = onde
 	if pos.distance_to(cam_pos) > 1600.0:
 		return
+	_onomato(nome, pos)
 	var p2 := AudioStreamPlayer2D.new()
 	p2.stream = s
 	p2.volume_db = vol
@@ -56,6 +72,20 @@ func tocar(nome: String, onde: Variant = null, vol := 0.0, tom := 1.0) -> void:
 	main.add_child(p2)
 	p2.play()
 	p2.finished.connect(p2.queue_free)
+
+
+func _onomato(nome: String, pos: Vector2) -> void:
+	if not ONOMATO.has(nome) or not main.has_method("onomato"):
+		return
+	var agora := Time.get_ticks_msec()
+	if agora - int(t_onomato.get(nome, -1000)) < 140:      # rajada: um só texto
+		return
+	t_onomato[nome] = agora
+	var o: Array = ONOMATO[nome]
+	var textos: Array = o[0]
+	main.onomato(textos[rng.randi_range(0, textos.size() - 1)], pos + Vector2(rng.randf_range(-18, 18), -58), o[1], o[2])
+	if o[3] > 0.0 and pos.distance_to(main.cam.global_position) < 700.0:
+		main.tremer(o[3])
 
 
 func passo(quem: Node2D, correndo: bool) -> void:
@@ -204,6 +234,19 @@ func _ressoar(x: float, f: float, r: float, m: Array) -> float:
 
 
 func _gerar() -> void:
+	# "!" de quando te acham: dois toques agudos secos com cauda (a assinatura de todo jogo de furtividade)
+	var ex := _buf(0.9)
+	for i in ex.size():
+		var t := float(i) / TAXA
+		var v := 0.0
+		for k in 2:
+			var t0 := k * 0.075
+			if t >= t0:
+				var tt := t - t0
+				var env := exp(-tt * (9.0 if k == 1 else 22.0))
+				v += (sin(TAU * 1318.5 * tt) + 0.6 * sin(TAU * 1975.5 * tt) + 0.3 * signf(sin(TAU * 659.25 * tt))) * env
+		ex[i] = v
+	_add("exclama", _wav(ex))
 	# tiros: estalo de ruído + "soco" grave
 	_add("tiro_pistola", _wav(_misturar(_ruido_filtrado(0.35, 6000.0, 22.0, 0.9), _seno(0.25, 140.0, 50.0, 14.0, 0.8))))
 	_add("tiro_espingarda", _wav(_misturar(_ruido_filtrado(0.6, 3500.0, 9.0, 1.0), _seno(0.4, 90.0, 35.0, 8.0, 1.0))))

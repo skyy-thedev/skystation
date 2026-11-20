@@ -3,6 +3,7 @@ extends CharacterBody2D
 ## "p1_…" / "p2_…" que o main.gd cria. Mochila, armas, lanterna/tocha, gasolina, carro e "caído" no coop.
 
 const D := preload("res://dados.gd")
+const A := preload("res://arte.gd")
 const VEL := 185.0
 const VEL_CORRENDO := 295.0
 
@@ -43,6 +44,10 @@ var carro: Node = null
 var caido := false
 var t_caido := 0.0
 var interacao := {}                     # {obj, t, total}
+var agachado := false                   # R3: devagar, sem barulho de passo, visto de mais perto
+var uso := {}                           # item sendo usado: {item, t, total} (comer, enfaixar, trocar pilha)
+var t_abate := 0.0                      # animação do abate silencioso
+const TEMPO_USO := {"bandagem": 1.3, "kit_medico": 2.2, "iodo": 0.8, "pilhas": 0.9, "agua": 0.8}
 var perto: Object = null                # o que dá para usar agora (para o HUD)
 
 var lanterna: PointLight2D
@@ -120,6 +125,8 @@ func receber(item: String, q: int, avisar := true) -> void:
 		main.historia.evento("arma", {"arma": a})
 		return
 	mochila[item] = qtd(item) + q
+	if avisar and main.hud.has_method("voar"):
+		main.hud.voar(item, global_position + Vector2(0, -60), n)
 	if avisar:
 		main.aviso("%s: +%d %s" % [nome, q, D.nome(item)], Color("7ff0c4"))
 		main.sons.tocar("pegar", null, -8.0)
@@ -147,7 +154,32 @@ func trocar_arma(dir: int) -> void:
 
 
 func usar_item(item: String) -> void:
+	## comer, enfaixar e trocar pilha levam um tempinho (dá para ser interrompido); a tocha acende na hora
 	var info: Dictionary = D.ITENS.get(item, {})
+	if not uso.is_empty() or not tem(item):
+		return
+	match info.get("tipo", ""):
+		"cura":
+			if info.has("rad") and rad <= 0.0:
+				main.aviso("Sem radiação no corpo", Color(1, 1, 1, 0.7))
+				return
+			if not info.has("rad") and hp >= hp_max:
+				main.aviso("Vida já está cheia", Color(1, 1, 1, 0.7))
+				return
+		"comida", "luz":
+			pass
+		_:
+			return
+	if item == "tocha":
+		_efeito(item)
+		return
+	uso = {"item": item, "t": 0.0, "total": TEMPO_USO.get(item, 1.0)}
+	main.sons.tocar("pegar", null, -10.0, 0.8)
+
+
+func _efeito(item: String) -> void:
+	var info: Dictionary = D.ITENS.get(item, {})
+	var cabeca := global_position + Vector2(0, -96)
 	match info.get("tipo", ""):
 		"comida":
 			gastar(item, 1)
@@ -156,8 +188,10 @@ func usar_item(item: String) -> void:
 			if info.has("enjoo"):
 				hp = maxf(1.0, hp - info["enjoo"])
 				main.aviso("%s comeu carne crua e passou mal." % nome, Color("ff8a8a"))
+				main.onomato("ECA!", cabeca, Color("b6ff6b"), 30)
 			else:
 				main.aviso("%s comeu: %s" % [nome, info["nome"]], Color("7ff0c4"))
+				main.onomato("GLUP!" if item == "agua" else "NHAM!", cabeca, Color("ffd166"), 30)
 		"cura":
 			if info.has("rad"):
 				if rad <= 0.0:
@@ -165,12 +199,14 @@ func usar_item(item: String) -> void:
 					return
 				gastar(item, 1)
 				rad = maxf(0.0, rad - info["rad"])
+				main.onomato("-%d RAD" % int(info["rad"]), cabeca, Color("b8e04a"), 26)
 				main.aviso("%s tomou iodo: radiação %d" % [nome, int(rad)], Color("7ff0c4"))
 				return
 			if hp >= hp_max:
 				main.aviso("Vida já está cheia", Color(1, 1, 1, 0.7))
 				return
 			gastar(item, 1)
+			main.onomato("+%d" % int(minf(info["cura"], hp_max - hp)), cabeca, Color("7ff0c4"), 34)
 			hp = minf(hp_max, hp + info["cura"])
 			main.aviso("%s: +%d de vida" % [nome, info["cura"]], Color("7ff0c4"))
 		"luz":
@@ -178,6 +214,7 @@ func usar_item(item: String) -> void:
 				gastar(item, 1)
 				bateria = 100.0
 				main.aviso("Lanterna com pilhas novas", Color("ffd166"))
+				main.onomato("CLIC!", cabeca, Color("ffd166"), 26)
 			elif item == "tocha":
 				gastar(item, 1)
 				tocha_t = 150.0
@@ -227,6 +264,9 @@ func receber_dano(q: float, piscar := true) -> void:
 	if caido or carro:
 		return
 	hp -= q
+	if piscar and not uso.is_empty():
+		main.aviso("%s: interrompido!" % nome, Color("ff8a8a"))
+		uso = {}
 	if piscar:
 		t_dano = 0.25
 		main.tremer(4.0)
@@ -316,14 +356,27 @@ func _physics_process(d: float) -> void:
 
 	var c := controle()
 	var mover: Vector2 = c["mover"]
-	var correndo := Input.is_action_pressed(p("correr")) and mover.length() > 0.2 and estamina > 1.0
+	var correndo := Input.is_action_pressed(p("correr")) and mover.length() > 0.2 and estamina > 1.0 and uso.is_empty()
+	if Input.is_action_just_pressed(p("agachar")):
+		agachado = not agachado
+	if correndo:
+		agachado = false
 	estamina = clampf(estamina + (-26.0 if correndo else 15.0) * d, 0.0, 100.0)
-	velocity = mover * (VEL_CORRENDO if correndo else VEL)
+	var vel_max := VEL_CORRENDO if correndo else VEL
+	if agachado:
+		vel_max *= 0.5
+	if not uso.is_empty():
+		vel_max *= 0.4
+	if t_abate > 0.0:
+		t_abate -= d
+		vel_max = 0.0
+	velocity = mover * vel_max
 	move_and_slide()
 	main.coleira(self)
 	if mover.length() > 0.2:
-		passo += d * (14.0 if correndo else 9.0)
-		main.sons.passo(self, correndo)
+		passo += d * (14.0 if correndo else (6.0 if agachado else 9.0))
+		if not agachado:
+			main.sons.passo(self, correndo)
 		if correndo:
 			main.barulho(global_position, 240.0)
 
@@ -342,10 +395,20 @@ func _physics_process(d: float) -> void:
 		if t_recarga <= 0.0:
 			_terminar_recarga()
 
-	if Input.is_action_pressed(p("atirar")) and t_ataque <= 0.0:
+	if not uso.is_empty():
+		uso["t"] += d
+		if uso["t"] >= uso["total"]:
+			var it: String = uso["item"]
+			uso = {}
+			_efeito(it)
+	elif Input.is_action_pressed(p("atirar")) and t_ataque <= 0.0:
 		atacar(arma)
-	if Input.is_action_just_pressed(p("golpe")) and t_ataque <= 0.0:
-		atacar(melhor_corpo())
+	if uso.is_empty() and Input.is_action_just_pressed(p("golpe")) and t_ataque <= 0.0:
+		var z: Node2D = main.alvo_furtivo(self)
+		if z:
+			_abater(z)
+		else:
+			atacar(melhor_corpo())
 	if Input.is_action_just_pressed(p("recarregar")):
 		recarregar()
 	if Input.is_action_just_pressed(p("curar")):
@@ -471,6 +534,19 @@ func atacar(a: String) -> void:
 	main.tremer(4.0 if a == "pistola" else 8.0)
 
 
+func _abater(z: Node2D) -> void:
+	## abate silencioso por trás: sem barulho e sem chance de errar
+	t_ataque = 0.7
+	t_abate = 0.35
+	golpe_anim = 0.18
+	mira = (z.global_position - global_position).normalized()
+	main.onomato("CRACK!", z.global_position + Vector2(0, -70), Color("f7f3e3"), 34)
+	main.sons.tocar("golpe", z.global_position, -14.0, 0.7)
+	main.tremer(2.0)
+	z.levar_dano(9999.0, mira * 60.0)
+	ganhar_xp(6)
+
+
 func recarregar() -> void:
 	var info: Dictionary = D.ARMAS[arma]
 	if not info.has("pente") or t_recarga > 0.0:
@@ -515,6 +591,11 @@ func _draw() -> void:
 		draw_circle(Vector2(20, -4), 8, Color("e0b48a"))
 		draw_string(ThemeDB.fallback_font, Vector2(-40, -24), "%s caído: %.0f s" % [nome, t_caido], HORIZONTAL_ALIGNMENT_CENTER, 80, 12, Color("ff8a8a"))
 		return
+	var mod := Color(1.6, 0.5, 0.5) if t_dano > 0.0 else Color.WHITE
+	var alt := (64.0 if vip else 80.0) * (0.8 if agachado else 1.0)
+	if A.boneco(self, "personagens/" + ("iara" if vip else "corvo"), mira, passo, andando, alt, mod):
+		_draw_extras(mira.orthogonal(), Vector2(0, -30), true)
+		return
 	var corpo := Vector2(0, -18)
 	draw_line(lado * 5 + Vector2(0, -2), lado * 5 + mira * bal + Vector2(0, -12), Color("2b2d42"), 6, true)
 	draw_line(-lado * 5 + Vector2(0, -2), -lado * 5 - mira * bal + Vector2(0, -12), Color("2b2d42"), 6, true)
@@ -545,12 +626,45 @@ func _draw() -> void:
 	var cab := corpo + Vector2(0, -14) + mira * 2
 	draw_circle(cab, 8, Color("e0b48a"))
 	draw_circle(cab - mira * 2 + Vector2(0, -3), 7, cor_cabelo)
+	_draw_extras(lado, corpo, false)
+
+
+func _draw_extras(lado: Vector2, corpo: Vector2, arte: bool) -> void:
+	## o que vale para os dois jeitos de desenhar: tiros, tocha, barra de ação, P1/P2
+	var topo := (-94.0 if arte else -64.0) * (0.8 if agachado else 1.0)
+	if not uso.is_empty():
+		_draw_uso(topo - 34.0)
+	if tocha_t > 0.0 and arte:
+		var t := corpo - lado * 12 + mira * 6
+		draw_circle(t + Vector2(0, -14), 5 + sin(Time.get_ticks_msec() * 0.02) * 1.5, Color(1, 0.6, 0.15, 0.95))
 	for t in tiros:
 		draw_line(to_local(t["de"]) + Vector2(0, -18) + mira * 20, to_local(t["ate"]) + Vector2(0, -12), Color(1, 0.9, 0.5, 0.9), 2, true)
 		draw_circle(to_local(t["de"]) + Vector2(0, -18) + mira * 22, 6, Color(1, 0.85, 0.4, 0.8))
 	if not interacao.is_empty():
 		var f: float = interacao["t"] / interacao["total"]
-		draw_rect(Rect2(-24, -64, 48, 6), Color(0, 0, 0, 0.6))
-		draw_rect(Rect2(-24, -64, 48 * f, 6), Color("ffd166"))
+		draw_rect(Rect2(-24, topo, 48, 6), Color(0, 0, 0, 0.6))
+		draw_rect(Rect2(-24, topo, 48 * f, 6), Color("ffd166"))
 	if main.jogadores.size() > 1:
-		draw_string(ThemeDB.fallback_font, Vector2(-20, -70), "P%d" % n, HORIZONTAL_ALIGNMENT_CENTER, 40, 12, cor_roupa.lightened(0.4))
+		draw_string(ThemeDB.fallback_font, Vector2(-20, topo - 6), "P%d" % n, HORIZONTAL_ALIGNMENT_CENTER, 40, 12, cor_roupa.lightened(0.4))
+
+
+func _draw_uso(y: float) -> void:
+	## o item usado aparece em cima da cabeça com um anel enchendo; cada tipo mexe de um jeito
+	var f: float = uso["t"] / uso["total"]
+	var c := Vector2(0, y)
+	draw_circle(c, 27, Color(0, 0, 0, 0.55))
+	draw_arc(c, 25, -PI / 2, -PI / 2 + TAU * f, 40, Color("7ff0c4"), 5.0, true)
+	var t := A.tex("icones/%s.png" % main.hud.ICONE.get(uso["item"], ""), 64)
+	if t:
+		var it: String = uso["item"]
+		var rot := 0.0
+		var esc := 1.0
+		if it in ["bandagem", "kit_medico"]:
+			rot = sin(uso["t"] * 14.0) * 0.35                  # enrolando
+		elif it == "pilhas":
+			c.y += absf(sin(uso["t"] * 10.0)) * -6.0
+		else:
+			esc = 1.0 + absf(sin(uso["t"] * 9.0)) * 0.18       # mordidas
+		draw_set_transform(c, rot, Vector2(esc, esc))
+		draw_texture_rect(t, Rect2(-17, -17, 34, 34), false)
+		draw_set_transform(Vector2.ZERO)
