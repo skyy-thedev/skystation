@@ -16,7 +16,10 @@ let cliente: S3Client | undefined;
 function s3() {
   const { S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY } = process.env;
   if (!S3_ENDPOINT || !S3_BUCKET || !S3_ACCESS_KEY_ID || !S3_SECRET_ACCESS_KEY) {
-    throw new Erro(503, "sem_armazenamento", "Os saves na nuvem ainda não foram configurados no servidor.");
+    const faltam = ["S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"].filter((k) => !process.env[k]);
+    throw new Erro(503, "sem_armazenamento",
+      `O armazenamento de arquivos (Cloudflare R2) não está configurado na Vercel — faltam: ${faltam.join(", ")}. ` +
+      "Os saves na nuvem e a SkyStore dependem dele.");
   }
   cliente ??= new S3Client({
     endpoint: S3_ENDPOINT,
