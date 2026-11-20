@@ -1,9 +1,0 @@
-{
-  "title": "Zona Morta",
-  "type": "autoral",
-  "exec": "godot --path . --rendering-driver opengl3",
-  "cover": "cover.png",
-  "color": "#d9534f",
-  "order": 5,
-  "description": "RPG de sobrevivência zumbi em 2.5D (versão 0.3). Brasil, 2033: o mercenário Corvo escolta a Iara, imune aos zumbis, do Bunker de Sumaré ao Rio. Escolhas, coop, sons, radiação e save na cama."
-}

@@ -154,10 +154,16 @@ PS1, SNES, N64, NES, Mega Drive e Game Boy: o netplay do RetroArch com convite p
 - `sky-netplay hospedar|entrar|sala` faz o trabalho; o `sky-emu` deixa todo jogo de RetroArch pronto para virar sala.
 - PS1 e N64 podem perder a sincronia em alguns jogos (limitação dos núcleos); SNES, NES e Mega Drive são os mais estáveis.
 
-## Zona Morta — primeiro jogo oficial (versão 0.3)
+## DEADZONE — primeiro jogo oficial (versão 0.4 demo; antes "Zona Morta")
 
-RPG de sobrevivência zumbi em **2.5D** (Godot, `console/games/zona-morta`), sem arquivos de arte nem de som:
-tudo é desenhado e sintetizado pelo código. A bíblia da história e o roteiro dos capítulos estão no projeto
+RPG de sobrevivência zumbi em **2.5D** (Godot, `console/games/deadzone`) com cara de **história em quadrinhos**.
+A arte (retratos, peças do mapa, ícones, chão, telas e páginas de HQ) foi gerada por IA a partir da direção de
+arte do projeto e recortada por `tools/deadzone_fatiar.py` (fundo magenta → transparência, xadrez falso dos
+carros, texturas emendáveis) para `console/games/deadzone/arte/`. O jogo lê os arquivos direto (`arte.gd`,
+pasta com `.gdignore`); se uma imagem faltar, volta ao desenho antigo. Cutscenes são quadros de HQ em tela cheia
+com zoom lento, legenda e balão (`historia.gd` marca a fala com página e quadro); diálogos mostram o retrato com
+a expressão de cada fala. Os personagens em jogo e os zumbis ainda são desenhados pelo código. Os sons são
+sintetizados. Fontes: Bangers e Comic Neue (OFL). A bíblia da história e o roteiro dos capítulos estão no projeto
 (`claude/zona-morta.md`).
 - **História:** 2032, um acidente no reator experimental de Angra dos Reis transforma quem respirou a nuvem em
   zumbi. Um ano depois, o mercenário **Corvo** é contratado para levar a "carga" — a **Iara** — do Bunker de Sumaré
@@ -175,7 +181,10 @@ tudo é desenhado e sintetizado pelo código. A bíblia da história e o roteiro
 - **Radiação:** zonas quentes com tambores vazando e zumbis irradiados (brilham verde, aguentam mais); o geiger
   acelera perto; acima de 50 a radiação tira vida; **pílulas de iodo** baixam.
 - O resto da 0.2 continua: luz e sombra (lanterna, tocha, fogueira), escassez, crafting, barricadas, carros, coop.
-- **Testes:** `console/tests/zona-morta/roteiro.gd` joga o capítulo inteiro (31 checagens, inclusive salvar e
+- **0.4:** diálogos reescritos com as vozes novas (Corvo seco, Iara debochada que apelida os zumbis, Rocha
+  culpado, Helena "meu bem", Nina na gíria, Tião radialista do "freguês"); Kombis, postes, orelhões, mato seco e um
+  caminhão tombado espalhados pela cidade (sorteio próprio, os saves antigos continuam com o mesmo mapa).
+- **Testes:** `console/tests/deadzone/roteiro.gd` joga o capítulo inteiro (31 checagens, inclusive salvar e
   carregar) e `controles.gd` aperta os botões; os dois rodam no CI do launcher.
 
 ## SkyStore (Fase 12, etapa 1: servidor)

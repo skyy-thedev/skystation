@@ -18,6 +18,8 @@ if [ -f /opt/skystation/VERSION ]; then
 fi
 install -d /opt/skystation
 cp -r "$SRC/console/." /opt/skystation/
+# jogos renomeados: some a pasta antiga (o cp acima não apaga nada)
+rm -rf /opt/skystation/games/zona-morta     # virou "deadzone" em 20/nov/2026
 
 # Arquivos vindos do Windows podem ter fim de linha CRLF; normaliza os de texto.
 find /opt/skystation -type f \( -name '*.sh' -o -name '*.py' -o -name '*.gd' \
@@ -38,7 +40,7 @@ if [ -d /opt/skystation/launcher ]; then
     fi
 fi
 
-# Jogos feitos no Godot (ex.: Zona Morta) também gravam o cache .godot/ na própria pasta.
+# Jogos feitos no Godot (ex.: DEADZONE) também gravam o cache .godot/ na própria pasta.
 for proj in /opt/skystation/games/*/project.godot; do
     [ -f "$proj" ] || continue
     d="$(dirname "$proj")"
