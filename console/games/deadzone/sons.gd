@@ -26,11 +26,20 @@ const ONOMATO := {
 	"grito": [["AAARGH!"], Color("b6ff6b"), 26, 0.0],
 }
 var t_onomato := {}
+## alto-falante do controle (DualShock 4/DualSense no cabo USB): os zumbis colados em você gemem na sua mão.
+## Quem toca é o console/bin/sky-controle-som, aberto uma vez e alimentado por um cano (stdin).
+const SONS_CONTROLE := ["gemido", "brutamontes", "rosnado", "grito", "mordida"]
+const PROG_CONTROLE := "/opt/skystation/bin/sky-controle-som"
+const PERTO_CONTROLE := 330.0
+var controle_cano: FileAccess = null
+var controle_n := 0                   # quantos controles têm saída de som
+var controle_wavs := {}               # nome -> [arquivos .wav em user://]
 
 
 func _ready() -> void:
 	rng.seed = 2032
 	_gerar()
+	_iniciar_controle()
 	for nome in ["vento", "estatica"]:
 		var p := AudioStreamPlayer.new()
 		p.stream = bancos[nome][0]
@@ -56,6 +65,8 @@ func tocar(nome: String, onde: Variant = null, vol := 0.0, tom := 1.0) -> void:
 		p.play()
 		p.finished.connect(p.queue_free)
 		return
+	if controle_cano and nome in SONS_CONTROLE and _no_controle(nome, onde, vol):
+		return
 	# som no mundo: só toca se estiver perto da câmera (economiza o processador do console)
 	var cam_pos: Vector2 = main.cam.global_position
 	var pos: Vector2 = onde
@@ -72,6 +83,64 @@ func tocar(nome: String, onde: Variant = null, vol := 0.0, tom := 1.0) -> void:
 	main.add_child(p2)
 	p2.play()
 	p2.finished.connect(p2.queue_free)
+
+
+func _iniciar_controle() -> void:
+	var prog := OS.get_environment("DEADZONE_CONTROLE_SOM")
+	if prog == "":
+		prog = PROG_CONTROLE
+	if DisplayServer.get_name() == "headless" or not FileAccess.file_exists(prog):
+		return
+	var saida := []
+	if OS.execute(prog, ["lista"], saida) != 0 or saida.is_empty():
+		return
+	for l in String(saida[0]).split("\n"):
+		if l.length() > 0 and l[0].is_valid_int():
+			controle_n += 1
+	if controle_n == 0:
+		return
+	# os sons sintetizados viram .wav uma vez, para o programa de fora tocar
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://controle"))
+	for nome in SONS_CONTROLE:
+		controle_wavs[nome] = []
+		for i in bancos.get(nome, []).size():
+			var arq := ProjectSettings.globalize_path("user://controle/%s_%d.wav" % [nome, i])
+			bancos[nome][i].save_to_wav(arq)
+			controle_wavs[nome].append(arq)
+	var r := OS.execute_with_pipe(prog, ["servidor"])
+	if r.is_empty():
+		controle_n = 0
+		return
+	controle_cano = r["stdio"]
+	main.aviso("Som dos zumbis no alto-falante do controle", Color("9db4ff"))
+
+
+func _no_controle(nome: String, onde: Variant, vol: float) -> bool:
+	## o zumbi está colado em algum jogador? então geme no controle dele (e não na TV)
+	if onde == null or not controle_wavs.has(nome) or controle_wavs[nome].is_empty():
+		return false
+	var melhor: Node = null
+	var dist := PERTO_CONTROLE
+	for j in main.jogadores:
+		var dd: float = j.global_position.distance_to(onde)
+		if dd < dist:
+			dist = dd
+			melhor = j
+	if melhor == null or melhor.n > controle_n:
+		return false
+	var lista: Array = controle_wavs[nome]
+	var arq: String = lista[rng.randi_range(0, lista.size() - 1)]
+	var v := clampf(db_to_linear(vol + 6.0) * (1.0 - dist / PERTO_CONTROLE * 0.6), 0.05, 1.0)
+	controle_cano.store_line("tocar %s %.2f %d" % [arq, v, melhor.n])
+	controle_cano.flush()
+	_onomato(nome, onde)
+	return true
+
+
+func _exit_tree() -> void:
+	if controle_cano:
+		controle_cano.store_line("sair")
+		controle_cano.flush()
 
 
 func _onomato(nome: String, pos: Vector2) -> void:
@@ -119,6 +188,7 @@ func _process(d: float) -> void:
 	var pior := 1.0
 	for j in main.jogadores:
 		pior = minf(pior, j.hp / j.hp_max)
+		pior = minf(pior, 1.0 - j.tensao / 100.0 * 0.85)     # nervoso: o coração dispara também
 	if pior < 0.3:
 		t_coracao -= d
 		if t_coracao <= 0.0:

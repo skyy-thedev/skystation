@@ -21,6 +21,7 @@ var concluido := false
 var secundario := ""
 var no_radio := false             # chiado do rádio tocando durante a conversa
 var revelado := false             # já sabem que a Iara é imune
+var etapas: Array = ETAPAS        # a lista de objetivos (o coop troca pela dele)
 
 const ETAPAS := [
 	{"obj": "Fale com o Comandante Rocha", "alvo": "rocha"},
@@ -39,15 +40,17 @@ func coop() -> bool:
 
 
 func objetivo() -> String:
-	if modo != "historia" or concluido:
+	if modo == "sobrevivencia" or concluido:
 		return ""
-	return ETAPAS[etapa]["obj"]
+	return etapas[etapa]["obj"]
 
 
 func alvo() -> Variant:
-	if modo != "historia" or concluido:
+	if modo == "sobrevivencia" or concluido:
 		return null
-	var a: String = ETAPAS[etapa]["alvo"]
+	var a: String = etapas[etapa]["alvo"]
+	if a == "":
+		return null
 	if a == "carro_bom":
 		var c = main.locais.get("carro_bom")
 		if escolhas.get("nina") == "ajudou" and c and is_instance_valid(c):
@@ -183,6 +186,20 @@ func comando(c: String) -> void:
 
 # ---------------------------------------------------------------- eventos do jogo
 
+func tiao_pode_chamar() -> bool:
+	return modo == "historia" and not concluido and etapa >= 4
+
+
+func capitulo() -> Dictionary:
+	## o que a tela de fim de capítulo mostra
+	if vendeu():
+		return {"titulo": "CAPÍTULO 1 CONCLUÍDO", "sub": "A Carga · Sumaré", "cor": "vermelho",
+			"fim": ["Sozinho na Anhanguera. O pagamento do Tião pesa no banco do carona, vazio.", "Este caminho termina aqui. Ou não?"]}
+	return {"titulo": "CAPÍTULO 1 CONCLUÍDO", "sub": "A Carga · Sumaré", "cor": "azul",
+		"fim": ["A cancela sobe. À frente, a Anhanguera e, depois dela, São Paulo — por baixo da terra.",
+			"Capítulo 2 — São Paulo: o metrô. Em breve."]}
+
+
 func evento(nome: String, dados: Dictionary) -> void:
 	if modo != "historia" or concluido:
 		return
@@ -234,11 +251,11 @@ func evento(nome: String, dados: Dictionary) -> void:
 
 
 func _proxima() -> void:
-	etapa = mini(etapa + 1, ETAPAS.size() - 1)
-	main.aviso("Novo objetivo: " + ETAPAS[etapa]["obj"], Color("9db4ff"))
+	etapa = mini(etapa + 1, etapas.size() - 1)
+	main.aviso("Novo objetivo: " + etapas[etapa]["obj"], Color("9db4ff"))
 	for j in main.jogadores:
 		j.ganhar_xp(20)
-	if etapa == 4 and not falou.has("nina_criada"):
+	if modo == "historia" and etapa == 4 and not falou.has("nina_criada"):
 		falou["nina_criada"] = true
 		main.criar_npc("nina")
 

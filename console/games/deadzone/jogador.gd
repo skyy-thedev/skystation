@@ -1,6 +1,7 @@
 extends CharacterBody2D
-## Um sobrevivente (Davi = jogador 1, Lia = jogador 2 no coop). Cada um lê o próprio controle pelas ações
-## "p1_…" / "p2_…" que o main.gd cria. Mochila, armas, lanterna/tocha, gasolina, carro e "caído" no coop.
+## Um sobrevivente jogável (Corvo, Rocha, Iara ou Nina: dados.PERSONAGENS). Cada um lê o próprio controle
+## pelas ações "p1_…" / "p2_…" que o main.gd cria. Mochila, armas, lanterna/tocha, gasolina, carro, "caído" no
+## coop, o ruído que ele faz (os zumbis ouvem), a tensão (mira treme) e o cigarro de quem fuma.
 
 const D := preload("res://dados.gd")
 const A := preload("res://arte.gd")
@@ -10,7 +11,19 @@ const VEL_CORRENDO := 295.0
 var main: Node2D
 var n := 1
 var nome := "Corvo"
-var vip := false                        # jogador 2 no coop é a Iara: mordida não transforma, radiação não pega
+var vip := false                        # a Iara: mordida não transforma, radiação não pega
+var personagem := "corvo"               # arte, retrato e jeito (dados.PERSONAGENS)
+var fuma := true
+var vel_mult := 1.0
+var ruido_mult := 1.0
+var ruido := 0.0                        # raio (px) do barulho que ele faz agora: os zumbis dentro dele ouvem
+var t_ouvir := 0.0
+var tensao := 0.0                       # 0–100: zumbi perto, caçado, ferido, escuro, tiro. Alta = mira treme
+var nicotina := 70.0                    # fumante sem cigarro fica mais tenso (abstinência)
+var fumando := 0.0                      # segundos de cigarro aceso
+var t_trago := 0.0                      # a cada 30 s fumando: -1 de vida
+var fumaca: Array = []                  # fumacinha subindo {p, t}
+const CIGARRO := 90.0
 var rad := 0.0                          # radiação acumulada (0–100)
 var cor_roupa := Color("3a6ea5")
 var cor_cabelo := Color("3b2a1a")
@@ -47,7 +60,7 @@ var interacao := {}                     # {obj, t, total}
 var agachado := false                   # R3: devagar, sem barulho de passo, visto de mais perto
 var uso := {}                           # item sendo usado: {item, t, total} (comer, enfaixar, trocar pilha)
 var t_abate := 0.0                      # animação do abate silencioso
-const TEMPO_USO := {"bandagem": 1.3, "kit_medico": 2.2, "iodo": 0.8, "pilhas": 0.9, "agua": 0.8}
+const TEMPO_USO := {"bandagem": 1.3, "kit_medico": 2.2, "iodo": 0.8, "pilhas": 0.9, "agua": 0.8, "cigarro": 1.6}
 var perto: Object = null                # o que dá para usar agora (para o HUD)
 
 var lanterna: PointLight2D
@@ -168,6 +181,9 @@ func usar_item(item: String) -> void:
 				return
 		"comida", "luz":
 			pass
+		"fumo":
+			if not fumar():
+				return
 		_:
 			return
 	if item == "tocha":
@@ -181,6 +197,13 @@ func _efeito(item: String) -> void:
 	var info: Dictionary = D.ITENS.get(item, {})
 	var cabeca := global_position + Vector2(0, -96)
 	match info.get("tipo", ""):
+		"fumo":
+			gastar(item, 1)
+			fumando = CIGARRO
+			t_trago = 0.0
+			nicotina = 100.0
+			main.onomato("FFFFF…", cabeca, Color(0.85, 0.85, 0.85), 26)
+			main.aviso("%s acendeu um cigarro: mais calmo, mira firme (faz mal à saúde)" % nome, Color(0.85, 0.85, 0.85))
 		"comida":
 			gastar(item, 1)
 			fome = minf(100.0, fome + info.get("fome", 0))
@@ -264,6 +287,8 @@ func receber_dano(q: float, piscar := true) -> void:
 	if caido or carro:
 		return
 	hp -= q
+	if piscar:
+		tensao = minf(100.0, tensao + q * 0.9)
 	if piscar and not uso.is_empty():
 		main.aviso("%s: interrompido!" % nome, Color("ff8a8a"))
 		uso = {}
@@ -362,7 +387,7 @@ func _physics_process(d: float) -> void:
 	if correndo:
 		agachado = false
 	estamina = clampf(estamina + (-26.0 if correndo else 15.0) * d, 0.0, 100.0)
-	var vel_max := VEL_CORRENDO if correndo else VEL
+	var vel_max := (VEL_CORRENDO if correndo else VEL) * vel_mult
 	if agachado:
 		vel_max *= 0.5
 	if not uso.is_empty():
@@ -371,6 +396,8 @@ func _physics_process(d: float) -> void:
 		t_abate -= d
 		vel_max = 0.0
 	velocity = mover * vel_max
+	_ruido(d, mover.length() > 0.2, correndo)
+	_tensao(d)
 	move_and_slide()
 	main.coleira(self)
 	if mover.length() > 0.2:
@@ -516,7 +543,9 @@ func atacar(a: String) -> void:
 		return
 	pentes[a] = int(pentes[a]) - 1
 	t_ataque = info["cad"]
-	var base: Vector2 = main.mira_assistida(global_position, mira, info["alcance"])
+	var base: Vector2 = mira if tensao > 70.0 else main.mira_assistida(global_position, mira, info["alcance"])
+	base = base.rotated(randf_range(-1.0, 1.0) * tremor_mira())     # nervoso, a mão treme
+	tensao = minf(100.0, tensao + 2.5)
 	for k in info["chumbos"]:
 		var dir := base.rotated(randf_range(-info["abertura"], info["abertura"]))
 		var ate: Vector2 = global_position + dir * info["alcance"]
@@ -545,6 +574,83 @@ func _abater(z: Node2D) -> void:
 	main.tremer(2.0)
 	z.levar_dano(9999.0, mira * 60.0)
 	ganhar_xp(6)
+
+
+func tremor_mira() -> float:
+	## ângulo máximo (rad) que o tiro foge da mira: nada calmo, ~16° em pânico; o cigarro firma a mão
+	var t := clampf((tensao - 25.0) / 75.0, 0.0, 1.0)
+	return t * t * 0.28 * (0.45 if fumando > 0.0 else 1.0)
+
+
+func _ruido(d: float, andando: bool, correndo: bool) -> void:
+	## parado ou agachado quase não faz barulho; andando, um pouco; correndo, muito (Metal Gear)
+	var alvo := 0.0
+	if andando:
+		alvo = 380.0 if correndo else (45.0 if agachado else 150.0)
+	alvo *= ruido_mult
+	ruido = move_toward(ruido, alvo, 900.0 * d)
+	t_ouvir -= d
+	if t_ouvir <= 0.0:
+		t_ouvir = 0.4
+		if ruido > 20.0:
+			main.ouvir_ruido(self)
+
+
+func _tensao(d: float) -> void:
+	var sobe := 0.0
+	var perto := 0
+	var cacado := false
+	for z in main.zumbis:
+		if not is_instance_valid(z):
+			continue
+		var dist: float = z.global_position.distance_to(global_position)
+		if dist < 260.0:
+			perto += 1
+		if z.alvo == self:
+			cacado = true
+	sobe += minf(perto, 4) * 3.0
+	if cacado:
+		sobe += 9.0
+	elif main.fase_alerta != "":
+		sobe += 2.0
+	if hp < hp_max * 0.35:
+		sobe += 2.0
+	if main.noite() > 0.5 and not luz_on and tocha_t <= 0.0:
+		sobe += 1.0
+	var desce := 0.0
+	if perto == 0 and not cacado:
+		desce = 4.0 if main.fase_alerta == "" else 1.5
+	if fumando > 0.0:
+		desce += 10.0
+	tensao = clampf(tensao + (sobe - desce) * d, 0.0, 100.0)
+	# fumante: sem nicotina a tensão não desce de um piso
+	if fuma:
+		nicotina = maxf(0.0, nicotina - d * 100.0 / 420.0)        # acaba em ~7 min
+		var piso := maxf(0.0, (35.0 - nicotina) * 1.1)
+		tensao = maxf(tensao, piso)
+	if fumando > 0.0:
+		fumando -= d
+		t_trago += d
+		if t_trago >= 30.0:
+			t_trago -= 30.0
+			hp = maxf(1.0, hp - 1.0)
+			main.onomato("-1", global_position + Vector2(0, -100), Color("ff8a8a"), 24)
+		if randf() < d * 5.0:
+			fumaca.append({"p": Vector2(randf_range(-2, 2), -62), "t": 0.0})
+	for f in fumaca:
+		f["t"] += d
+		f["p"] += Vector2(randf_range(-6, 10), -22) * d
+	fumaca = fumaca.filter(func(f): return f["t"] < 1.6)
+
+
+func fumar() -> bool:
+	if not fuma:
+		main.aviso("%s não fuma." % nome, Color(1, 1, 1, 0.7))
+		return false
+	if fumando > 0.0:
+		main.aviso("Já está fumando.", Color(1, 1, 1, 0.7))
+		return false
+	return true
 
 
 func recarregar() -> void:
@@ -581,7 +687,15 @@ func arremessar() -> void:
 
 # ---------------------------------------------------------------- desenho (a origem é o pé)
 
+func _draw_ruido() -> void:
+	## anel no chão: até onde os zumbis ouvem você agora
+	if ruido > 25.0:
+		var pulso := 0.85 + sin(passo * 2.0) * 0.15
+		draw_arc(Vector2.ZERO, ruido * pulso, 0, TAU, 48, Color(1, 1, 1, 0.13), 2.0, true)
+
+
 func _draw() -> void:
+	_draw_ruido()
 	var lado := mira.orthogonal()
 	var andando := velocity.length() > 10.0
 	var bal := sin(passo) * 3.0 if andando else 0.0
@@ -592,8 +706,8 @@ func _draw() -> void:
 		draw_string(ThemeDB.fallback_font, Vector2(-40, -24), "%s caído: %.0f s" % [nome, t_caido], HORIZONTAL_ALIGNMENT_CENTER, 80, 12, Color("ff8a8a"))
 		return
 	var mod := Color(1.6, 0.5, 0.5) if t_dano > 0.0 else Color.WHITE
-	var alt := (64.0 if vip else 80.0) * (0.8 if agachado else 1.0)
-	if A.boneco(self, "personagens/" + ("iara" if vip else "corvo"), mira, passo, andando, alt, mod):
+	var alt: float = {"iara": 64.0, "nina": 72.0, "rocha": 82.0}.get(personagem, 80.0) * (0.8 if agachado else 1.0)
+	if A.boneco(self, "personagens/" + personagem, mira, passo, andando, alt, mod):
 		_draw_extras(mira.orthogonal(), Vector2(0, -30), true)
 		return
 	var corpo := Vector2(0, -18)
@@ -631,6 +745,19 @@ func _draw() -> void:
 
 func _draw_extras(lado: Vector2, corpo: Vector2, arte: bool) -> void:
 	## o que vale para os dois jeitos de desenhar: tiros, tocha, barra de ação, P1/P2
+	if fumando > 0.0:
+		var boca := Vector2(mira.x * 7.0, -60.0 * (0.8 if agachado else 1.0))
+		draw_circle(boca, 2.6 + sin(Time.get_ticks_msec() * 0.006) * 0.8, Color(1.0, 0.45, 0.1))
+		for f in fumaca:
+			var a: float = 1.0 - f["t"] / 1.6
+			draw_circle(f["p"], 3.0 + f["t"] * 6.0, Color(0.85, 0.85, 0.85, 0.35 * a))
+	# cone da mira: abre com a tensão (só arma de fogo)
+	if D.ARMAS[arma].has("municao") and carro == null:
+		var ab := maxf(tremor_mira(), 0.02)
+		var alc := 150.0
+		var cor := Color(1, 1, 1, 0.10) if tensao < 60.0 else Color(1, 0.3, 0.2, 0.16)
+		draw_colored_polygon(PackedVector2Array([Vector2(0, -30), Vector2(0, -30) + mira.rotated(-ab) * alc,
+			Vector2(0, -30) + mira.rotated(ab) * alc]), cor)
 	var topo := (-94.0 if arte else -64.0) * (0.8 if agachado else 1.0)
 	if not uso.is_empty():
 		_draw_uso(topo - 34.0)

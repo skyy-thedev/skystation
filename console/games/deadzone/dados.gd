@@ -22,6 +22,19 @@ const ITENS := {
 	"balas_9mm": {"nome": "Balas 9mm", "tipo": "municao"},
 	"cartuchos": {"nome": "Cartuchos 12", "tipo": "municao"},
 	"balas_rifle": {"nome": "Balas de rifle", "tipo": "municao"},
+	"cigarro": {"nome": "Cigarro", "tipo": "fumo", "dica": "Acalma: tensão cai e a mira firma. Faz mal: -1 de vida a cada 30 s fumando, e a brasa acesa aparece no escuro"},
+}
+
+## quem pode ser jogado: vida, velocidade, se fuma, o que carrega no começo
+const PERSONAGENS := {
+	"corvo": {"nome": "Corvo", "hp": 100.0, "vel": 1.0, "fuma": true, "ruido": 1.0,
+		"armas": ["punhos", "pistola"], "arma": "punhos", "pentes": {"pistola": 3}, "mochila": {"bandagem": 1, "cigarro": 4}},
+	"rocha": {"nome": "Rocha", "hp": 130.0, "vel": 0.9, "fuma": true, "ruido": 1.2,
+		"armas": ["punhos", "taco", "espingarda"], "arma": "taco", "pentes": {"espingarda": 2}, "mochila": {"bandagem": 1, "cigarro": 3}},
+	"iara": {"nome": "Iara", "hp": 80.0, "vel": 1.05, "fuma": false, "ruido": 0.7, "imune": true,
+		"armas": ["punhos", "faca"], "arma": "faca", "pentes": {}, "mochila": {"bandagem": 1}},
+	"nina": {"nome": "Nina", "hp": 90.0, "vel": 1.1, "fuma": false, "ruido": 0.85,
+		"armas": ["punhos", "faca", "taco"], "arma": "taco", "pentes": {}, "mochila": {"bandagem": 1, "molotov": 1, "pano": 1}},
 }
 
 ## corpo = arma branca. barulho = raio (px) em que os zumbis ouvem.
@@ -49,13 +62,13 @@ const RECEITAS := [
 
 ## loot: [chance, item, mín, máx]. "arma:x" dá a arma. Munição é escassa de propósito.
 const LOOT := {
-	"armario": [[0.40, "pano", 1, 2], [0.22, "enlatado", 1, 1], [0.15, "salgadinho", 1, 2], [0.14, "bandagem", 1, 1],
+	"armario": [[0.16, "cigarro", 1, 3], [0.40, "pano", 1, 2], [0.22, "enlatado", 1, 1], [0.15, "salgadinho", 1, 2], [0.14, "bandagem", 1, 1],
 		[0.18, "garrafa", 1, 1], [0.10, "pilhas", 1, 1], [0.12, "agua", 1, 1], [0.06, "iodo", 1, 1], [0.05, "balas_9mm", 1, 3],
 		[0.04, "arma:taco", 1, 1], [0.04, "arma:faca", 1, 1]],
 	"geladeira": [[0.45, "carne_crua", 1, 2], [0.35, "enlatado", 1, 2], [0.25, "agua", 1, 2], [0.15, "salgadinho", 1, 1]],
-	"prateleira": [[0.45, "enlatado", 1, 2], [0.35, "salgadinho", 1, 2], [0.25, "agua", 1, 1], [0.15, "garrafa", 1, 2],
+	"prateleira": [[0.14, "cigarro", 1, 4], [0.45, "enlatado", 1, 2], [0.35, "salgadinho", 1, 2], [0.25, "agua", 1, 1], [0.15, "garrafa", 1, 2],
 		[0.12, "pilhas", 1, 1], [0.10, "pano", 1, 1]],
-	"porta_malas": [[0.45, "sucata", 1, 2], [0.18, "galao", 1, 1], [0.15, "pano", 1, 1], [0.08, "balas_9mm", 1, 2],
+	"porta_malas": [[0.18, "cigarro", 1, 2], [0.45, "sucata", 1, 2], [0.18, "galao", 1, 1], [0.15, "pano", 1, 1], [0.08, "balas_9mm", 1, 2],
 		[0.06, "arma:machado", 1, 1], [0.10, "enlatado", 1, 1], [0.08, "agua", 1, 1]],
 	"viatura": [[0.45, "balas_9mm", 2, 5], [0.28, "cartuchos", 1, 3], [0.12, "arma:espingarda", 1, 1],
 		[0.15, "bandagem", 1, 1], [0.12, "pilhas", 1, 1]],
