@@ -14,7 +14,8 @@ static func tex(rel: String, lado_max := 0) -> Texture2D:
 		return _cache[k]
 	var t: Texture2D = null
 	var img := Image.new()
-	if img.load(ProjectSettings.globalize_path("res://arte/" + rel)) == OK:
+	var caminho := ProjectSettings.globalize_path("res://arte/" + rel)
+	if FileAccess.file_exists(caminho) and img.load(caminho) == OK:
 		if lado_max > 0 and maxi(img.get_width(), img.get_height()) > lado_max:
 			var e := float(lado_max) / maxi(img.get_width(), img.get_height())
 			img.resize(maxi(1, int(img.get_width() * e)), maxi(1, int(img.get_height() * e)), Image.INTERPOLATE_LANCZOS)
@@ -46,4 +47,46 @@ static func peca(ci: CanvasItem, nome: String, largura: float, base := 0.0, mod 
 	if espelho:
 		r = Rect2(largura / 2, base - h, -largura, h)
 	ci.draw_texture_rect(t, r, false, mod)
+	return true
+
+
+static func boneco(ci: CanvasItem, nome: String, frente: Vector2, fase: float, andando: bool, altura: float,
+		mod := Color.WHITE, quatro_lados := true) -> bool:
+	## personagem desenhado (rodada 3 da arte). nome = "personagens/corvo" ou "zumbis/corredor".
+	## quatro_lados: arquivos _baixo/_cima/_esq/_dir; senão _frente/_lado (o lado esquerdo é o direito espelhado).
+	## A animação de andar é feita aqui: pulinho, balanço e um leve achatamento a cada passo.
+	## Sem o arquivo, devolve false e o boneco antigo é desenhado.
+	var dir := ""
+	var espelho := false
+	if quatro_lados:
+		if absf(frente.x) > absf(frente.y):
+			dir = "dir" if frente.x > 0.0 else "esq"
+		else:
+			dir = "baixo" if frente.y >= 0.0 else "cima"
+	else:
+		if absf(frente.x) > absf(frente.y) * 0.8:
+			dir = "lado"
+			espelho = frente.x < 0.0
+		else:
+			dir = "frente"
+	var lado_max := int(altura * 2.2)
+	var t := tex("%s_%s.png" % [nome, dir], lado_max)
+	if t == null and dir == "esq":
+		t = tex("%s_dir.png" % nome, lado_max)
+		espelho = true
+	if t == null and dir == "cima":
+		t = tex("%s_baixo.png" % nome, lado_max)
+	if t == null:
+		return false
+	var pulo := absf(sin(fase)) * 3.5 if andando else 0.0
+	var resp := sin(fase * 0.35) * 0.012 if not andando else 0.0      # parado: respira
+	var giro := sin(fase) * 0.07 if andando else 0.0
+	var h := altura
+	var w := t.get_width() * h / t.get_height()
+	var esc := Vector2(1.0 + pulo * 0.008, 1.0 - pulo * 0.01 + resp)
+	if espelho:
+		esc.x = -esc.x
+	ci.draw_set_transform(Vector2(0, -pulo), giro, esc)
+	ci.draw_texture_rect(t, Rect2(-w / 2, -h, w, h), false, mod)
+	ci.draw_set_transform(Vector2.ZERO)
 	return true

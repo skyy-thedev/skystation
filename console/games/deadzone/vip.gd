@@ -3,6 +3,8 @@ extends CharacterBody2D
 ## No coop quem joga com ela é o jogador 2 (aí ela é um jogador.gd com vip = true e este nó nem existe).
 ## Mordida não transforma a Iara — esse é o segredo dela. Mas mordida dói: se a vida acabar, ela cai.
 
+const A := preload("res://arte.gd")
+
 var main: Node2D
 var nome := "Iara"
 var hp := 80.0
@@ -156,6 +158,10 @@ func _draw() -> void:
 		draw_circle(Vector2(18, -4), 7, Color("b98a62"))
 		draw_string(ThemeDB.fallback_font, Vector2(-40, -24), "Iara caída: %.0f s" % t_caido, HORIZONTAL_ALIGNMENT_CENTER, 80, 12, Color("ff8a8a"))
 		return
+	var mod := Color(1.6, 0.5, 0.5) if t_dano > 0.0 else Color.WHITE
+	if A.boneco(self, "personagens/iara", mira, passo, velocity.length() > 10.0, 50.0, mod):
+		_draw_rotulos()
+		return
 	var lado := mira.orthogonal()
 	var bal := sin(passo) * 3.0 if velocity.length() > 10.0 else 0.0
 	var corpo := Vector2(0, -16)
@@ -167,6 +173,10 @@ func _draw() -> void:
 	# capuz verde e trança
 	draw_arc(cab, 8, PI * 0.9, PI * 2.1, 12, cor_roupa.darkened(0.2), 4)
 	draw_line(cab - mira * 5, cab - mira * 5 + Vector2(0, 12), Color("1b1410"), 3)
+	_draw_rotulos()
+
+
+func _draw_rotulos() -> void:
 	if esperar:
 		draw_string(ThemeDB.fallback_font, Vector2(-30, -50), "esperando", HORIZONTAL_ALIGNMENT_CENTER, 60, 11, Color(1, 1, 1, 0.7))
 	if hp < hp_max:

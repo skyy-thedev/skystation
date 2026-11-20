@@ -154,7 +154,7 @@ PS1, SNES, N64, NES, Mega Drive e Game Boy: o netplay do RetroArch com convite p
 - `sky-netplay hospedar|entrar|sala` faz o trabalho; o `sky-emu` deixa todo jogo de RetroArch pronto para virar sala.
 - PS1 e N64 podem perder a sincronia em alguns jogos (limitação dos núcleos); SNES, NES e Mega Drive são os mais estáveis.
 
-## DEADZONE — primeiro jogo oficial (versão 0.4 demo; antes "Zona Morta")
+## DEADZONE — primeiro jogo oficial (versão 0.5 demo; antes "Zona Morta")
 
 RPG de sobrevivência zumbi em **2.5D** (Godot, `console/games/deadzone`) com cara de **história em quadrinhos**.
 A arte (retratos, peças do mapa, ícones, chão, telas e páginas de HQ) foi gerada por IA a partir da direção de
@@ -184,6 +184,14 @@ sintetizados. Fontes: Bangers e Comic Neue (OFL). A bíblia da história e o rot
 - **0.4:** diálogos reescritos com as vozes novas (Corvo seco, Iara debochada que apelida os zumbis, Rocha
   culpado, Helena "meu bem", Nina na gíria, Tião radialista do "freguês"); Kombis, postes, orelhões, mato seco e um
   caminhão tombado espalhados pela cidade (sorteio próprio, os saves antigos continuam com o mesmo mapa).
+- **0.5:** **trilha** em três camadas (`musica.gd`): o tema "Estrada Morta" (Am, 70 bpm) no título, nos
+  quadrinhos e no fim do capítulo; um zumbido de tensão explorando; e um pulso de cordas que cresce com o número
+  de zumbis atrás de você. Sem gravação, é sintetizada (violão por Karplus-Strong) numa thread na primeira vez e
+  guardada em `user://`; com `arte/musica/tema.ogg` (ou `tensao`/`perigo`, `.ogg` ou `.wav`) toca o arquivo.
+  **Onomatopeias** de gibi no mundo (BLAM!, BUUM!, POW!, NHAC!, SPLAT!…) junto do som, com tremor de tela nos
+  tiros fortes. **Personagens e zumbis prontos para a arte:** `arte.gd/boneco()` desenha
+  `arte/personagens/<nome>_<baixo|cima|esq|dir>.png` e `arte/zumbis/<tipo>_<frente|lado>.png` com pulinho,
+  balanço e respiração; enquanto os arquivos não existem, fica o boneco antigo.
 - **Testes:** `console/tests/deadzone/roteiro.gd` joga o capítulo inteiro (31 checagens, inclusive salvar e
   carregar) e `controles.gd` aperta os botões; os dois rodam no CI do launcher.
 

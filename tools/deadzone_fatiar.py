@@ -61,10 +61,27 @@ def limitar(im, lado):
     return im
 
 
+def sem_roxo(im):
+    """Fios finos ficam roxos (mistura com o magenta): vira cinza. Só para peças sem roxo de verdade."""
+    a = np.asarray(im).astype(np.int16).copy()
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    m = (np.minimum(r, b) - g) > 10
+    cinza = (r + g + b) // 3 * 0.85
+    for c in range(3):
+        a[..., c] = np.where(m, cinza, a[..., c])
+    return Image.fromarray(a.astype(np.uint8), "RGBA")
+
+
+ROXO_FALSO = ("arte/pecas/poste.png",)
+
+
 def peca(im, caixa, rel, lado=320, inset=6):
     l, t, r, b = caixa
     c = im.crop((l + inset, t + inset, r - inset, b - inset))
-    salvar(limitar(aparar(chave_magenta(c)), lado), rel)
+    c = limitar(aparar(chave_magenta(c)), lado)
+    if rel in ROXO_FALSO:
+        c = sem_roxo(c)
+    salvar(c, rel)
 
 
 # ---------- retratos ----------

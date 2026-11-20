@@ -54,6 +54,7 @@ var escuro: CanvasModulate
 var hud: Control
 var historia: Node
 var sons: Node
+var musica: Node
 var tex_luz: Texture2D
 var tex_cone: Texture2D
 
@@ -80,6 +81,10 @@ func _ready() -> void:
 	sons.set_script(preload("res://sons.gd"))
 	sons.main = self
 	add_child(sons)
+	musica = Node.new()
+	musica.set_script(preload("res://musica.gd"))
+	musica.main = self
+	add_child(musica)
 	_nova_partida()
 	estado = TITULO
 
@@ -521,6 +526,15 @@ func sangue(p: Vector2, r: float) -> void:
 
 func tremer(q: float) -> void:
 	tremor = maxf(tremor, q)
+
+
+func onomato(texto: String, onde: Vector2, cor: Color, tam := 32) -> void:
+	var o := preload("res://onomato.gd").new()
+	o.texto = texto
+	o.cor = cor
+	o.tam = tam
+	o.position = onde
+	add_child(o)
 
 
 func aviso(texto: String, cor := Color.WHITE) -> void:

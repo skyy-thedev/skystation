@@ -486,7 +486,7 @@ func _titulo(w: float, h: float) -> void:
 	_fundo("titulo", w, h)
 	draw_rect(Rect2(0, h * 0.33, w, h * 0.67), Color(0, 0, 0, 0.5))
 	_logo(Vector2(w / 2, h * 0.2), 132)
-	_txt("Versão 0.4 (demo) · Jogo oficial da SkyStation · Brasil, 2033", Vector2(0, h * 0.2 + 44), 18, Color(1, 1, 1, 0.8), w, HORIZONTAL_ALIGNMENT_CENTER)
+	_txt("Versão 0.5 (demo) · Jogo oficial da SkyStation · Brasil, 2033", Vector2(0, h * 0.2 + 44), 18, Color(1, 1, 1, 0.8), w, HORIZONTAL_ALIGNMENT_CENTER)
 	var ops: Array = main.opcoes_titulo()
 	for i in ops.size():
 		var y := h * 0.40 + i * 44

@@ -183,6 +183,9 @@ func _process(_d: float) -> bool:
 			_ok(m.estado == m.CAPITULO and m.historia.concluido, "capítulo concluído")
 		560:
 			_shot("12-fim-capitulo")
+			_ok(m.musica.pronta() and m.musica.tocadores["tema"].stream.get_length() > 60.0, "trilha sintetizada (tema, tensão, perigo)")
+			_ok(m.musica.tocadores["tema"].playing, "tema tocando no fim do capítulo")
+			_ok(m.musica.perseguidores() >= 0, "contagem de perseguidores para a camada de perigo")
 			print("zumbis=", m.zumbis.size(), " objetos=", m.objetos.size(), " carros=", m.carros.size(), " predios=", m.predios.size())
 			print("RESULTADO: %s" % ("tudo certo" if falhas == 0 else "%d falha(s)" % falhas))
 			DirAccess.remove_absolute(ProjectSettings.globalize_path("user://save.json"))

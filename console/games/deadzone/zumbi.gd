@@ -3,6 +3,8 @@ extends CharacterBody2D
 ## Tipos: andarilho (comum), corredor (rápido, aparece do dia 2), brutamontes (aguenta muito, do dia 3)
 ## e policial (perto da delegacia; às vezes deixa balas). Lanterna acesa à noite: eles te veem de longe.
 
+const A := preload("res://arte.gd")
+
 var main: Node2D
 var tipo := "andarilho"
 var hp := 40.0
@@ -70,6 +72,7 @@ func levar_dano(q: float, forca: Vector2) -> void:
 	t_perdeu = 8.0
 	main.sangue(global_position, 6.0 + q * 0.15)
 	if hp <= 0.0:
+		main.onomato(["SPLAT!", "SPLASH!", "CHOF!"][randi() % 3], global_position + Vector2(0, -40), Color("c8ff5a"), 30)
 		main.zumbi_morreu(self)
 
 
@@ -176,6 +179,21 @@ func _ve(j: Node2D) -> bool:
 
 func _draw() -> void:
 	# a origem é o pé; o corpo é desenhado "em pé", para cima (2.5D)
+	var esc0 := 1.35 if tipo == "brutamontes" else 1.0
+	draw_circle(Vector2(2, 2), 13 * esc0, Color(0, 0, 0, 0.35))
+	var mod := Color(4, 4, 4) if t_flash > 0.0 else Color.WHITE
+	if A.boneco(self, "zumbis/" + tipo, frente, fase, true, 60.0 * esc0, mod, false):
+		if tipo == "irradiado":
+			draw_circle(Vector2(0, -30), 20, Color(0.4, 1.0, 0.3, 0.12))
+		if alerta:
+			draw_circle(Vector2(0, -64 * esc0), 3, Color(1, 0.2, 0.15))
+		if t_fogo > 0.0:
+			for k in 3:
+				draw_circle(Vector2(randf_range(-10, 10), randf_range(-50, -10)), randf_range(5, 9), Color(1, randf_range(0.4, 0.8), 0.1, 0.8))
+		if hp < hp_max:
+			draw_rect(Rect2(-14, -70 * esc0, 28, 4), Color(0, 0, 0, 0.6))
+			draw_rect(Rect2(-14, -70 * esc0, 28 * maxf(0.0, hp / hp_max), 4), Color("e85d5d"))
+		return
 	var lado := frente.orthogonal()
 	var bal := sin(fase) * 4.0
 	var esc := 1.35 if tipo == "brutamontes" else 1.0

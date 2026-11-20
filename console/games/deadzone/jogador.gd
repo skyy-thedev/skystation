@@ -3,6 +3,7 @@ extends CharacterBody2D
 ## "p1_…" / "p2_…" que o main.gd cria. Mochila, armas, lanterna/tocha, gasolina, carro e "caído" no coop.
 
 const D := preload("res://dados.gd")
+const A := preload("res://arte.gd")
 const VEL := 185.0
 const VEL_CORRENDO := 295.0
 
@@ -515,6 +516,10 @@ func _draw() -> void:
 		draw_circle(Vector2(20, -4), 8, Color("e0b48a"))
 		draw_string(ThemeDB.fallback_font, Vector2(-40, -24), "%s caído: %.0f s" % [nome, t_caido], HORIZONTAL_ALIGNMENT_CENTER, 80, 12, Color("ff8a8a"))
 		return
+	var mod := Color(1.6, 0.5, 0.5) if t_dano > 0.0 else Color.WHITE
+	if A.boneco(self, "personagens/" + ("iara" if vip else "corvo"), mira, passo, andando, 50.0 if vip else 62.0, mod):
+		_draw_extras(mira.orthogonal(), Vector2(0, -30), true)
+		return
 	var corpo := Vector2(0, -18)
 	draw_line(lado * 5 + Vector2(0, -2), lado * 5 + mira * bal + Vector2(0, -12), Color("2b2d42"), 6, true)
 	draw_line(-lado * 5 + Vector2(0, -2), -lado * 5 - mira * bal + Vector2(0, -12), Color("2b2d42"), 6, true)
@@ -545,12 +550,21 @@ func _draw() -> void:
 	var cab := corpo + Vector2(0, -14) + mira * 2
 	draw_circle(cab, 8, Color("e0b48a"))
 	draw_circle(cab - mira * 2 + Vector2(0, -3), 7, cor_cabelo)
+	_draw_extras(lado, corpo, false)
+
+
+func _draw_extras(lado: Vector2, corpo: Vector2, arte: bool) -> void:
+	## o que vale para os dois jeitos de desenhar: tiros, tocha, barra de ação, P1/P2
+	var topo := -76.0 if arte else -64.0
+	if tocha_t > 0.0 and arte:
+		var t := corpo - lado * 12 + mira * 6
+		draw_circle(t + Vector2(0, -14), 5 + sin(Time.get_ticks_msec() * 0.02) * 1.5, Color(1, 0.6, 0.15, 0.95))
 	for t in tiros:
 		draw_line(to_local(t["de"]) + Vector2(0, -18) + mira * 20, to_local(t["ate"]) + Vector2(0, -12), Color(1, 0.9, 0.5, 0.9), 2, true)
 		draw_circle(to_local(t["de"]) + Vector2(0, -18) + mira * 22, 6, Color(1, 0.85, 0.4, 0.8))
 	if not interacao.is_empty():
 		var f: float = interacao["t"] / interacao["total"]
-		draw_rect(Rect2(-24, -64, 48, 6), Color(0, 0, 0, 0.6))
-		draw_rect(Rect2(-24, -64, 48 * f, 6), Color("ffd166"))
+		draw_rect(Rect2(-24, topo, 48, 6), Color(0, 0, 0, 0.6))
+		draw_rect(Rect2(-24, topo, 48 * f, 6), Color("ffd166"))
 	if main.jogadores.size() > 1:
-		draw_string(ThemeDB.fallback_font, Vector2(-20, -70), "P%d" % n, HORIZONTAL_ALIGNMENT_CENTER, 40, 12, cor_roupa.lightened(0.4))
+		draw_string(ThemeDB.fallback_font, Vector2(-20, topo - 6), "P%d" % n, HORIZONTAL_ALIGNMENT_CENTER, 40, 12, cor_roupa.lightened(0.4))
