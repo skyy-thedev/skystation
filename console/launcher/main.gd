@@ -84,6 +84,7 @@ uniform float intensity = 1.0;
 uniform float sparkle = 1.0;
 uniform int strands = 9;
 uniform float aspect = 1.7778;
+uniform float res_scale = 1.0;   // fração da resolução da tela em que as ondas são desenhadas
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 
@@ -129,7 +130,8 @@ void fragment() {
 	float h = hash(id);
 	vec2 c = fract(g) - vec2(0.5) - (vec2(hash(id + 3.1), hash(id + 7.7)) - 0.5) * 0.6;
 	float sp = step(0.93, h) * exp(-dot(c, c) * 140.0) * (0.45 + 0.55 * sin(t * 1.7 + h * 50.0));
-	col += mix(vec3(1.0), wave_col, 0.4) * sp * 0.65 * sparkle;
+	// em resolução reduzida o ponto ocupa um pixel inteiro e cresce ao ampliar: mais discreto para compensar
+	col += mix(vec3(1.0), wave_col, 0.4) * sp * 0.65 * sparkle * mix(0.45, 1.0, res_scale);
 
 	// vinheta
 	vec2 v = (uv - 0.5) * vec2(1.15, 1.0);
@@ -198,7 +200,47 @@ var accent: Color = Color("4fd1ff")
 var sounds_on: bool = true
 var low_gfx: bool = false
 
-var bg: ColorRect
+var bg: TextureRect        # o fundo de ondas, já ampliado para a tela
+var bg_vp: SubViewport     # onde as ondas são desenhadas, em resolução reduzida (desempenho)
+var bg_escala: float = 0.5
+var bg_quadro: int = 0
+# Transição de abrir/fechar jogo (estilo PS5): a capa cresce até o centro, a tela escurece com a arte do jogo,
+# o jogo abre; ao fechar, a capa volta para o lugar dela e o menu reaparece.
+const TR_ABRIR := 0.55
+const TR_FECHAR := 0.65
+const SPLASH_ANIMADO := 10.0    # segundos de abertura animada antes de o menu "dormir" atrás do jogo
+var tr_kind: String = ""        # "abrir" | "fechar"
+var tr_t: float = 0.0
+var tr_g: Dictionary = {}
+var tr_from: Rect2 = Rect2()
+var tr_art: Texture2D = null
+var sel_rect: Rect2 = Rect2()   # onde a capa do item selecionado foi desenhada no último quadro
+var launch_t: float = 0.0
+var splash_dormindo: bool = false
+# SkyStore em tela cheia (vitrine estilo loja de console)
+const LOJA_ABAS := ["Destaques", "Jogos", "Apps", "Instalados"]
+const LOJA_CORES := {"app": "2b6cb0", "jogo": "9b2c2c", "tema": "6b46c1", "emulador": "2f855a"}
+const LOJA_TIPOS := {"app": "App", "jogo": "Jogo", "tema": "Tema", "emulador": "Emulador"}
+var store_open: bool = false
+var store_t: float = 0.0
+var store_tab: int = 0
+var store_row: int = 0          # Destaques: 0 = banner, 1 = fileira de baixo
+var store_sel: int = 0
+var store_hero: int = 0
+var store_hero_t: float = 0.0
+var store_det: String = ""      # slug aberto na página do item ("" = vitrine)
+var store_det_ult: String = ""  # o último aberto (para a página sumir suavemente)
+var store_det_t: float = 0.0
+var store_btn: int = 0
+var store_confirm: bool = false
+var store_scroll: float = 0.0
+var store_hold: Vector2i = Vector2i.ZERO
+var store_hold_t: float = 0.0
+var store_tex: Dictionary = {}  # caminho da capa → textura
+var store_job: String = ""      # slug baixando agora
+var job_p: float = -1.0
+var store_quieto_t: float = 0.0   # há quanto tempo nada muda na loja (parada = não redesenha)
+var store_economia: bool = false
 var bg_mat: ShaderMaterial
 var font: Font
 var font_bold: Font
@@ -315,16 +357,36 @@ func _ready() -> void:
 	if low_gfx:
 		Engine.max_fps = 30
 
-	bg = ColorRect.new()
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bg.show_behind_parent = true  # a interface (desenhada em _draw) fica por cima do fundo
+	# 20/nov: o fundo de ondas custava ~75% de cada quadro (16 FPS com ele, 65 sem, no teste em software).
+	# Agora ele é desenhado numa tela interna com metade da resolução (1/4 dos pixels) e esticado com
+	# filtro suave: as ondas são macias, então a diferença não aparece, e a placa de vídeo folga.
 	var sh := Shader.new()
 	sh.code = BG_SHADER
 	bg_mat = ShaderMaterial.new()
 	bg_mat.shader = sh
-	bg.material = bg_mat
+	bg_escala = 0.4 if low_gfx else 0.5
+	if OS.get_environment("SKY_FUNDO_ESCALA") != "":
+		bg_escala = clampf(OS.get_environment("SKY_FUNDO_ESCALA").to_float(), 0.2, 1.0)
+	bg_vp = SubViewport.new()
+	bg_vp.disable_3d = true
+	bg_vp.transparent_bg = false
+	bg_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	var ondas := ColorRect.new()
+	ondas.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ondas.material = bg_mat
+	bg_vp.add_child(ondas)
+	add_child(bg_vp)
+	bg = TextureRect.new()
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.show_behind_parent = true  # a interface (desenhada em _draw) fica por cima do fundo
+	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.stretch_mode = TextureRect.STRETCH_SCALE
+	bg.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	bg.texture = bg_vp.get_texture()
 	add_child(bg)
+	_ajusta_fundo()
+	get_viewport().size_changed.connect(_ajusta_fundo)
 	bg_mat.set_shader_parameter("strands", 5 if low_gfx else 11)
 	bg_mat.set_shader_parameter("sparkle", 0.0 if low_gfx else 1.0)
 
@@ -350,6 +412,17 @@ func _ready() -> void:
 		_play("chime")
 
 
+func _ajusta_fundo() -> void:
+	# a tela interna acompanha a janela (TV 1080p → ondas em 960x540)
+	if bg_vp == null:
+		return
+	var real := Vector2(DisplayServer.window_get_size())
+	if real.x < 2.0:
+		real = size
+	bg_vp.size = Vector2i(maxi(64, int(real.x * bg_escala)), maxi(36, int(real.y * bg_escala)))
+	bg_mat.set_shader_parameter("res_scale", bg_escala)
+
+
 func _exit_tree() -> void:
 	update_stop = true
 	if busy_thread != null and busy_thread.is_started():
@@ -373,6 +446,13 @@ func _process(delta: float) -> void:
 	if running_pid != -1:
 		if not OS.is_process_running(running_pid):
 			_on_game_closed()
+		elif not splash_dormindo:
+			if t - launch_t < SPLASH_ANIMADO:
+				queue_redraw()   # abertura animada enquanto o emulador carrega
+			else:
+				splash_dormindo = true
+				OS.low_processor_usage_mode = true
+				Engine.max_fps = 4
 		return  # enquanto o jogo roda, o launcher praticamente dorme
 
 	if quit_at > 0.0 and t >= quit_at:
@@ -381,8 +461,16 @@ func _process(delta: float) -> void:
 
 	intro_t += delta
 	ui_alpha = clamp((intro_t - 2.2) / 0.8, 0.0, 1.0)
-	bg_mat.set_shader_parameter("intensity", clamp(intro_t / 1.6, 0.0, 1.0))
-	bg_mat.set_shader_parameter("aspect", size.x / max(size.y, 1.0))
+	if intro_t < 2.0:   # depois da abertura esses valores não mudam: não reenviar a cada quadro
+		bg_mat.set_shader_parameter("intensity", clamp(intro_t / 1.6, 0.0, 1.0))
+		bg_mat.set_shader_parameter("aspect", size.x / max(size.y, 1.0))
+	# As ondas andam devagar: recalculadas em quadros alternados (30 vezes por segundo), enquanto o menu
+	# segue a 60. Quadro sem recálculo reaproveita a imagem anterior da tela interna.
+	bg_quadro += 1
+	var modo := SubViewport.UPDATE_ONCE if bg_quadro % 2 == 0 and store_t < 1.0 \
+		else SubViewport.UPDATE_DISABLED   # com a SkyStore cobrindo a tela, as ondas param
+	if modo != SubViewport.UPDATE_DISABLED or bg_vp.render_target_update_mode != modo:
+		bg_vp.render_target_update_mode = modo   # reatribuir o mesmo valor também pede um quadro novo
 
 	status_t -= delta
 	if status_t <= 0.0:
@@ -410,7 +498,16 @@ func _process(delta: float) -> void:
 	_tick_install(delta)
 	if t >= loja_at and not loja_busy and running_pid == -1:
 		_loja_refresh()
-	queue_redraw()
+	_store_economia()
+	if not store_economia:
+		queue_redraw()
+	if tr_kind != "":
+		tr_t += delta
+		if tr_kind == "abrir" and tr_t >= TR_ABRIR:
+			_launch_now(tr_g)
+		elif tr_kind == "fechar" and tr_t >= TR_FECHAR:
+			tr_kind = ""
+		return   # sem controle durante a transição
 
 	if settings != null and settings.visible:
 		return
@@ -421,7 +518,7 @@ func _process(delta: float) -> void:
 			intro_t = INTRO_LEN
 			cooldown = 0.25
 		return
-	if job_thread != null and Input.is_action_just_pressed("sky_back") and busy_msg != "Cancelando…":
+	if job_thread != null and job_cancel_hint and Input.is_action_just_pressed("sky_back") and busy_msg != "Cancelando…":
 		_write_text(run_dir + "/cancelar-job", "1")   # B cancela copiar disco / compactar
 		busy_msg = "Cancelando…"
 		queue_redraw()
@@ -431,13 +528,14 @@ func _process(delta: float) -> void:
 			cooldown = 0.25
 			_play("back")
 			_toast("A instalação continua em segundo plano", 2.5, "download")
-	elif busy_msg == "" and not dimmed:
+	elif (busy_msg == "" or (store_open and job_tool == "sky-store")) and not dimmed:
 		_handle_input(delta)
 	var k := 1.0 - exp(-delta * 11.0)
 	cat_smooth = lerp(cat_smooth, float(cat), k)
 	item_smooth = lerp(item_smooth, float(_cur_item()), k)
 	panel_t = move_toward(panel_t, 1.0 if panel_open else 0.0, delta * 6.0)
 	notif_t = move_toward(notif_t, 1.0 if notif_open else 0.0, delta * 6.5)
+	_tick_store(delta)
 	notif_scroll = lerp(notif_scroll, float(notif_sel), 1.0 - exp(-delta * 12.0))
 
 
@@ -473,6 +571,9 @@ func _setup_actions() -> void:
 	_add_action("sky_x", [KEY_X, KEY_DELETE], [JOY_BUTTON_X])            # Quadrado no DS4: apagar
 	# notificações: N no teclado ou CLIQUE no touchpad do controle (além do deslize, que vem do sky-notify)
 	_add_action("sky_notif", [KEY_N], [JOY_BUTTON_TOUCHPAD])
+	# L1/R1 trocam as abas da SkyStore (Q/E no teclado)
+	_add_action("sky_l1", [KEY_Q, KEY_PAGEUP], [JOY_BUTTON_LEFT_SHOULDER])
+	_add_action("sky_r1", [KEY_E, KEY_PAGEDOWN], [JOY_BUTTON_RIGHT_SHOULDER])
 
 
 func _nav_dir() -> Vector2i:
@@ -504,6 +605,9 @@ func _input(event: InputEvent) -> void:
 
 func _handle_input(delta: float) -> void:
 	if cooldown > 0.0:
+		return
+	if store_open:
+		_store_input(delta)
 		return
 	if notif_open:
 		_notif_input(delta)
@@ -1533,8 +1637,11 @@ func _activate() -> void:
 		if settings != null:
 			settings.call("abrir_amigo", action.substr(7))
 		return
+	if action == "loja_vitrine":
+		_store_abrir("")
+		return
 	if action.begins_with("loja:"):
-		_loja_acao(action.substr(5), "")
+		_store_abrir(action.substr(5))   # A num item da loja: abre a página dele na vitrine
 		return
 	if action.begins_with("netplay:"):
 		_entrar_netplay(action.substr(8))
@@ -1634,23 +1741,40 @@ func _activate() -> void:
 
 
 func _launch(g: Dictionary) -> void:
+	# primeiro a transição; o jogo abre quando a capa chega ao centro (_process → _launch_now)
+	if tr_kind != "" or running_pid != -1 or not g.has("exec"):
+		return
+	tr_kind = "abrir"
+	tr_t = 0.0
+	tr_g = g
+	tr_art = art_tex if art_for == str(g.get("id", "")) else null
+	tr_from = sel_rect if sel_rect.has_area() else Rect2(size.x * 0.25 - 40, size.y * 0.5 - 52, 78, 104)
+	panel_open = false
+	queue_redraw()
+
+
+func _launch_now(g: Dictionary) -> void:
+	tr_kind = ""   # nunca repetir a abertura, mesmo se algo abaixo falhar
 	var pid: int
 	if FileAccess.file_exists("/opt/skystation/bin/sky-run"):
 		pid = OS.create_process("/opt/skystation/bin/sky-run", [g["dir"], g["exec"], g["id"], g["title"]])
 	else:
 		pid = OS.create_process("/bin/sh", ["-c", "cd \"%s\" && exec %s" % [g["dir"], g["exec"]]])
 	if pid <= 0:
+		tr_kind = ""
 		_toast("Não consegui abrir " + str(g["title"]))
 		return
 	running_pid = pid
 	running_title = g["title"]
 	running_id = str(g["id"])
-	busy_msg = "Abrindo %s…" % running_title
+	launch_t = t
+	splash_dormindo = false
 	queue_redraw()
-	# Enquanto o jogo roda: sem redesenho, no máximo 4 checagens por segundo.
-	OS.low_processor_usage_mode = true
-	Engine.max_fps = 4
+	# A abertura fica animada enquanto o emulador carrega (até a janela do jogo cobrir a tela); depois de
+	# SPLASH_ANIMADO segundos o menu dorme: sem redesenho, no máximo 4 checagens por segundo.
+	Engine.max_fps = 30
 	bg.visible = false
+	bg_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED   # ondas paradas: o jogo fica com a GPU
 	if music != null:
 		music.stop()
 
@@ -1658,7 +1782,10 @@ func _launch(g: Dictionary) -> void:
 func _on_game_closed() -> void:
 	running_pid = -1
 	busy_msg = ""
+	tr_kind = "fechar"    # a capa volta do centro para o lugar dela
+	tr_t = 0.0
 	bg.visible = true
+	bg_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	OS.low_processor_usage_mode = false
 	_apply_power_mode()
 	_report_exit()
@@ -2605,6 +2732,7 @@ func _run_job(args: Array, title: String, tool: String = "sky-jogos") -> void:
 		_toast("Não consegui iniciar", 3.0, "drive")
 		return
 	busy_msg = title
+	job_p = -1.0
 	job_cancel_hint = args[0] in ["copiar-disco", "compactar", "conferir"]
 	job_thread = Thread.new()
 	job_thread.start(_pipe_reader.bind(info["stdio"], "_on_job_line", int(info.get("pid", -1))))
@@ -2617,6 +2745,7 @@ func _on_job_line(line: String) -> void:
 	if ev.has("etapa"):
 		busy_msg = str(ev["etapa"]) + "…"
 	if ev.has("p"):
+		job_p = clampf(float(ev["p"]), 0.0, 1.0)
 		var base := busy_msg.split("  ")[0]
 		busy_msg = "%s  %d%%" % [base, int(float(ev["p"]) * 100)]
 		if ev.has("v"):   # velocidade e tempo restante (Fase 7.2)
@@ -2625,6 +2754,9 @@ func _on_job_line(line: String) -> void:
 				("%d min" % int(round(falta / 60.0))) if falta > 90 else ("%d s" % falta)]
 	elif ev.has("ok"):
 		busy_msg = ""
+		job_p = -1.0
+		store_job = ""
+		store_confirm = false
 		if ev["ok"]:
 			_toast(str(ev.get("message", "Pronto")), 3.0, "drive")
 			_play_file("salvo")
@@ -3099,8 +3231,7 @@ func _draw() -> void:
 	var w := size.x
 	var h := size.y
 	if running_pid != -1:
-		draw_rect(Rect2(Vector2.ZERO, size), Color(palette[1] if not palette.is_empty() else Color.BLACK))
-		_draw_busy(w, h)
+		_draw_splash(w, h, 1.0, 1.0)
 		return
 	_draw_intro(w, h)
 	if ui_alpha <= 0.0:
@@ -3115,15 +3246,18 @@ func _draw() -> void:
 	elif not storage_data.is_empty():
 		_draw_storage(w, h)
 	else:
-		_draw_game_art(w, h, a)
-		_draw_header(w, h, a)
-		_draw_xmb(w, h, a)
-		_draw_ficha(w, h, a)
-		_draw_footer(w, h, a)
-		if panel_t > 0.0:
-			_draw_panel(w, h)
-		if slider_t > 0.0:
-			_draw_slider(w, h)
+		if store_t < 1.0:   # com a loja cobrindo tudo, o menu nem é desenhado
+			_draw_game_art(w, h, a)
+			_draw_header(w, h, a)
+			_draw_xmb(w, h, a)
+			_draw_ficha(w, h, a)
+			_draw_footer(w, h, a)
+			if panel_t > 0.0:
+				_draw_panel(w, h)
+			if slider_t > 0.0:
+				_draw_slider(w, h)
+		if store_t > 0.0:
+			_draw_store(w, h, a)
 	if notif_t > 0.0:
 		_draw_notifs(w, h)
 	if toast_t > 0.0 and not notif_open:
@@ -3146,7 +3280,9 @@ func _draw() -> void:
 			_draw_install(w, h)
 		else:
 			_draw_install_pill(w, h)
-	if busy_msg != "":
+	if tr_kind != "":
+		_draw_transicao(w, h)
+	if busy_msg != "" and not (store_open and job_tool == "sky-store"):
 		_draw_busy(w, h)
 
 
@@ -3316,6 +3452,8 @@ func _draw_item(it: Dictionary, c: Vector2, sel: float, a: float, is_cur: bool) 
 	if game:
 		if sel > 0.5:  # brilho atrás do item selecionado
 			_glow(c, ih * 1.25, Color(col.lightened(0.2), 0.9 * sel * a))
+		if is_cur:
+			sel_rect = r
 		var cover: Texture2D = it["cover"]
 		if cover != null:
 			_rrect(r.grow(2), Color(0, 0, 0, 0.5 * a), 10)
@@ -3708,6 +3846,7 @@ func _on_loja(r: Dictionary) -> void:
 		return
 	var antes := JSON.stringify(loja.get("itens", []))
 	loja = r
+	store_quieto_t = 0.0
 	if not r.get("ok", false):
 		loja_at = t + 300.0   # sem internet agora: tenta de novo em 5 min
 	var novos := 0
@@ -3738,6 +3877,8 @@ func _build_store_cat() -> Dictionary:
 	if itens.is_empty() and not net.get("na_rede", false):
 		return {}
 	var c := {"id": "skystore", "title": "SkyStore", "icon": "download", "items": []}
+	c["items"].append(_act("Abrir a SkyStore", "Jogos e apps para baixar  ·  L1/R1 trocam as seções", "loja_vitrine",
+		"download", Color(accent)))
 	if itens.is_empty():
 		var msg := "Abrindo a loja…" if loja.is_empty() else (str(loja.get("erro", "")) if not loja.get("ok", true)
 			else "Ainda não há nada publicado. Os jogos e apps oficiais da SkyStation aparecem aqui.")
@@ -3812,6 +3953,644 @@ func _loja_acao(slug: String, o_que: String) -> void:
 					_launch(g)
 					return
 			_toast("Não achei o jogo instalado. Tente Recarregar jogos.", 3.0, "download")
+
+
+# ---------------------------------------------------------------- SkyStore em tela cheia (vitrine)
+# Abre por cima do menu como a loja de um console: abas no topo (L1/R1), banner com os destaques,
+# fileira/grade de cards e a página de cada item com os botões e o download acontecendo ali mesmo.
+
+func _store_abrir(slug: String) -> void:
+	store_open = true
+	store_tab = 0
+	store_row = 0
+	store_sel = 0
+	store_scroll = 0.0
+	store_btn = 0
+	store_confirm = false
+	store_det = slug
+	if slug != "":
+		store_det_ult = slug
+		store_det_t = 1.0
+	panel_open = false
+	cooldown = 0.2
+	if loja.is_empty() and not loja_busy:
+		_loja_refresh()
+
+
+func _store_fechar() -> void:
+	store_open = false
+	store_quieto_t = 0.0
+	store_det = ""
+	_play("back")
+	cooldown = 0.2
+
+
+func _store_lista(tab: int) -> Array:
+	var out := []
+	for i in loja.get("itens", []):
+		var tipo := str(i.get("tipo", "jogo"))
+		match tab:
+			1:
+				if tipo != "jogo":
+					continue
+			2:
+				if tipo == "jogo":
+					continue
+			3:
+				if _nulo(i.get("instalado")) == "":
+					continue
+		out.append(i)
+	if tab == 3:   # quem tem atualização vem primeiro
+		out.sort_custom(func(a, b): return bool(a.get("atualizar", false)) and not bool(b.get("atualizar", false)))
+	return out
+
+
+func _store_destaques() -> Array:
+	var out := []
+	var resto := []
+	for i in loja.get("itens", []):
+		(out if bool(i.get("oficial", false)) else resto).append(i)
+	out.append_array(resto)
+	return out.slice(0, 5)
+
+
+func _store_foco() -> Dictionary:
+	if store_det_ult != "" and store_det_t > 0.0:
+		return _loja_item(store_det_ult)
+	if store_tab == 0 and store_row == 0:
+		var d := _store_destaques()
+		return d[store_hero % d.size()] if not d.is_empty() else {}
+	var l := _store_lista(store_tab)
+	return l[clampi(store_sel, 0, l.size() - 1)] if not l.is_empty() else {}
+
+
+func _store_capa(i: Dictionary) -> Texture2D:
+	var p := str(i.get("capa_local", ""))
+	if p == "":
+		return null
+	if not store_tex.has(p):
+		store_tex[p] = _load_tex(p)
+	return store_tex[p]
+
+
+func _store_tamanho(i: Dictionary) -> float:
+	return float(i["versao"].get("tamanho", 0)) if typeof(i.get("versao")) == TYPE_DICTIONARY else 0.0
+
+
+func _store_selo(i: Dictionary) -> Array:
+	"""[texto, destacado?] da linha de baixo do card, como o preço numa loja."""
+	if not bool(i.get("instalavel", true)):
+		return ["Em breve", false]
+	if _nulo(i.get("instalado")) == "":
+		return ["Grátis", false]
+	if bool(i.get("atualizar", false)):
+		return ["Atualização", true]
+	return ["Instalado", false]
+
+
+func _store_botoes(i: Dictionary) -> Array:
+	if i.is_empty():
+		return []
+	if not bool(i.get("instalavel", true)):
+		return [["Em breve no console", ""]]
+	var tem := _nulo(i.get("instalado"))
+	var rem := "Confirmar: remover" if store_confirm else "Remover"
+	if tem == "":
+		return [["Baixar  ·  " + _fmt_mb(_store_tamanho(i)), "baixar"]]
+	if bool(i.get("atualizar", false)):
+		return [["Atualizar para a " + _loja_versao(i), "baixar"], ["Abrir", "abrir"], [rem, "remover"]]
+	return [["Abrir", "abrir"], [rem, "remover"]]
+
+
+func _store_economia() -> void:
+	# Loja cobrindo a tela e nada mudando há meio segundo: o Godot só desenha quando algo muda
+	# (como o menu faz durante o jogo). Botão, carrossel, download ou aviso acordam o desenho.
+	var parada := store_open and store_t >= 1.0 and (store_det_t <= 0.0 or store_det_t >= 1.0) \
+		and store_quieto_t > 0.5 and toast_t <= 0.0 and busy_msg == "" and tr_kind == "" and not dimmed
+	if parada == store_economia:
+		return
+	store_economia = parada
+	OS.low_processor_usage_mode = parada
+	queue_redraw()
+
+
+func _tick_store(delta: float) -> void:
+	store_quieto_t += delta
+	if bg != null:
+		bg.visible = store_t < 1.0   # as ondas ficam escondidas atrás da loja
+	store_t = move_toward(store_t, 1.0 if store_open else 0.0, delta * 5.0)
+	store_det_t = move_toward(store_det_t, 1.0 if store_det != "" else 0.0, delta * 6.0)
+	if store_det == "" and store_det_t <= 0.0:
+		store_det_ult = ""
+	var alvo := float(store_sel)
+	store_scroll = lerp(store_scroll, alvo, 1.0 - exp(-delta * 12.0))
+	if store_open and store_det == "" and store_tab == 0:
+		store_hero_t += delta
+		if store_hero_t > (9.0 if store_row == 0 else 6.0):   # o banner gira sozinho, como na loja do PS5
+			store_hero_t = 0.0
+			store_hero += 1
+			store_quieto_t = 0.0
+
+
+func _store_input(delta: float) -> void:
+	var d := _nav_dir()
+	if d != Vector2i.ZERO or Input.is_anything_pressed():
+		store_quieto_t = 0.0
+	var passo := Vector2i.ZERO
+	if d != store_hold:
+		store_hold = d
+		store_hold_t = 0.38
+		passo = d
+	elif d != Vector2i.ZERO:
+		store_hold_t -= delta
+		if store_hold_t <= 0.0:
+			store_hold_t = 0.1
+			passo = d
+	if store_det != "":
+		_store_input_item(passo)
+		return
+	if Input.is_action_just_pressed("sky_back"):
+		_store_fechar()
+		return
+	var aba := 0
+	if Input.is_action_just_pressed("sky_l1"):
+		aba = -1
+	elif Input.is_action_just_pressed("sky_r1"):
+		aba = 1
+	if aba != 0:
+		store_tab = wrapi(store_tab + aba, 0, LOJA_ABAS.size())
+		store_sel = 0
+		store_row = 0
+		store_scroll = 0.0
+		_play("tick")
+		return
+	var lista := _store_lista(store_tab)
+	if store_tab == 0 and store_row == 0:
+		var dest := _store_destaques()
+		if passo.x != 0 and dest.size() > 1:
+			store_hero = wrapi(store_hero + passo.x, 0, dest.size())
+			store_hero_t = 0.0
+			_play("tick")
+		elif passo.y > 0 and not lista.is_empty():
+			store_row = 1
+			_play("tick")
+		if Input.is_action_just_pressed("sky_accept") and not dest.is_empty():
+			_store_ver(dest[store_hero % dest.size()])
+		return
+	var cols := 9999 if store_tab == 0 else 6
+	var n := lista.size()
+	var novo := store_sel
+	if passo.x != 0:
+		novo = clampi(store_sel + passo.x, 0, maxi(0, n - 1))
+	elif passo.y != 0:
+		if store_tab == 0:
+			if passo.y < 0:
+				store_row = 0
+				_play("tick")
+		else:
+			var v := store_sel + passo.y * cols
+			if v >= 0 and v < n:
+				novo = v
+			elif passo.y > 0 and store_sel / cols < (n - 1) / cols:
+				novo = n - 1   # última fileira incompleta: vai para o último card
+	if novo != store_sel:
+		store_sel = novo
+		_play("tick")
+	if Input.is_action_just_pressed("sky_accept") and n > 0:
+		_store_ver(lista[clampi(store_sel, 0, n - 1)])
+
+
+func _store_ver(i: Dictionary) -> void:
+	store_det = str(i.get("slug", ""))
+	store_det_ult = store_det
+	store_btn = 0
+	store_confirm = false
+	_play("accept")
+
+
+func _store_input_item(passo: Vector2i) -> void:
+	var i := _loja_item(store_det)
+	var bts := _store_botoes(i)
+	if Input.is_action_just_pressed("sky_back"):
+		store_det = ""
+		store_confirm = false
+		_play("back")
+		return
+	if passo.x != 0 and bts.size() > 1:
+		var nb := clampi(store_btn + passo.x, 0, bts.size() - 1)
+		if nb != store_btn:
+			store_btn = nb
+			store_confirm = false
+			_play("tick")
+	store_btn = clampi(store_btn, 0, maxi(0, bts.size() - 1))
+	if not Input.is_action_just_pressed("sky_accept") or bts.is_empty():
+		return
+	var acao := str(bts[store_btn][1])
+	if acao == "":
+		return
+	if busy_msg != "":
+		_toast("Espere o download atual terminar", 2.5, "download")
+		return
+	match acao:
+		"baixar":
+			store_job = store_det
+			_play("accept")
+			_loja_acao(store_det, "baixar")
+			if busy_msg == "":
+				store_job = ""   # não começou (sem SkyNetwork etc.): o aviso já apareceu
+		"abrir":
+			_loja_acao(store_det, "abrir")   # a transição sai da capa grande desta página
+		"remover":
+			if not store_confirm:
+				store_confirm = true
+				_play("tick")
+				return
+			store_job = store_det
+			confirm_delete = true   # a confirmação já foi feita aqui na página
+			_loja_acao(store_det, "remover")
+
+
+# ---- desenho
+
+func _grad(r: Rect2, c1: Color, c2: Color, horizontal: bool = true) -> void:
+	var pts := PackedVector2Array([r.position, r.position + Vector2(r.size.x, 0), r.end, r.position + Vector2(0, r.size.y)])
+	var cs := PackedColorArray([c1, c2, c2, c1]) if horizontal else PackedColorArray([c1, c1, c2, c2])
+	draw_polygon(pts, cs)
+
+
+func _fit(s: String, fsize: int, width: float, bold: bool = false) -> String:
+	var f := font_bold if bold else font
+	if f.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize).x <= width:
+		return s
+	while s.length() > 1 and f.get_string_size(s + "…", HORIZONTAL_ALIGNMENT_LEFT, -1, fsize).x > width:
+		s = s.substr(0, s.length() - 1)
+	return s.strip_edges() + "…"
+
+
+func _store_cor(i: Dictionary) -> Color:
+	return Color(str(LOJA_CORES.get(str(i.get("tipo", "jogo")), "2b6cb0")))
+
+
+func _store_arte(i: Dictionary, r: Rect2, a: float, raio: int = 10) -> void:
+	"""Capa do item; sem capa, um ladrilho com a cor do tipo e as iniciais."""
+	var tex := _store_capa(i)
+	if tex != null:
+		_draw_cover(tex, r, a)
+		return
+	var col := _store_cor(i)
+	_rrect(r, Color(col.darkened(0.35), a), raio)
+	_grad(r.grow(-2), Color(col.lightened(0.15), 0.0), Color(0, 0, 0, 0.35 * a), false)
+	var ini := ""
+	for p in str(i.get("nome", "?")).split(" ", false).slice(0, 2):
+		ini += p.substr(0, 1).to_upper()
+	var fs := int(r.size.y * 0.26)
+	_text(ini, Vector2(r.position.x, r.get_center().y + fs * 0.35), fs, Color(WHITE, 0.92 * a), true,
+		r.size.x, HORIZONTAL_ALIGNMENT_CENTER)
+	_icon("download", Vector2(r.end.x - 22, r.end.y - 22), 18.0, Color(WHITE, 0.5 * a))
+
+
+func _store_chip(txt: String, pos: Vector2, col: Color, a: float, cheio: bool = true) -> float:
+	var tw := font_bold.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 22.0
+	_rrect(Rect2(pos, Vector2(tw, 26)), Color(col, (0.9 if cheio else 0.0) * a), 13,
+		Color(col.lightened(0.3), (0.0 if cheio else 0.8) * a), 0 if cheio else 1)
+	_text(txt, pos + Vector2(11, 18), 13, Color(WHITE, a), true)
+	return tw + 8.0
+
+
+func _store_dicas(dicas: Array, xr: float, y: float, a: float) -> void:
+	var x := xr
+	for k in range(dicas.size() - 1, -1, -1):
+		var label: String = dicas[k][1]
+		var lw := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
+		x -= lw
+		_text(label, Vector2(x, y), 15, Color(MUTED, a))
+		var g: String = dicas[k][0]
+		var gw := maxf(22.0, font_bold.get_string_size(g, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x + 14.0)
+		x -= gw + 8.0
+		_rrect(Rect2(x, y - 16, gw, 22), Color(WHITE, 0.16 * a), 11)
+		_text(g, Vector2(x, y - 1), 12, Color(WHITE, 0.9 * a), true, gw, HORIZONTAL_ALIGNMENT_CENTER)
+		x -= 26.0
+
+
+func _draw_store(w: float, h: float, ua: float) -> void:
+	var e := store_t * store_t * (3.0 - 2.0 * store_t)
+	var a := e * ua
+	var oy := (1.0 - e) * 36.0   # a loja "sobe" ao abrir
+	draw_rect(Rect2(0, 0, w, h), Color(Color("060a14"), e))
+	var foco := _store_foco()
+	var tex := _store_capa(foco)
+	if tex != null:   # a arte do item em foco tinge o fundo inteiro, bem apagada
+		_draw_cover(tex, Rect2(0, 0, w, h), 0.16 * a)
+		_grad(Rect2(0, 0, w, h), Color(Color("060a14"), 0.3 * e), Color(Color("060a14"), 0.95 * e), false)
+	elif not foco.is_empty():
+		_glow(Vector2(w * 0.7, h * 0.2), h * 0.9, Color(_store_cor(foco), 0.18 * a))
+	# topo: marca e abas
+	_icon("download", Vector2(66, 48 + oy), 26.0, Color(accent, a))
+	_text("Sky", Vector2(88, 57 + oy), 24, Color(WHITE, a), true)
+	_text("Store", Vector2(88 + font_bold.get_string_size("Sky", HORIZONTAL_ALIGNMENT_LEFT, -1, 24).x, 57 + oy), 24,
+		Color(accent, a), true)
+	var larg := 0.0
+	for nome in LOJA_ABAS:
+		larg += font_bold.get_string_size(nome, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x + 44.0
+	var x := (w - larg) / 2.0
+	var tem_atualizacao := false
+	for i in loja.get("itens", []):
+		tem_atualizacao = tem_atualizacao or bool(i.get("atualizar", false))
+	_store_dicas([["L1", ""]], x - 4, 55 + oy, a * (0.0 if store_det != "" else 1.0))
+	for k in LOJA_ABAS.size():
+		var nome: String = LOJA_ABAS[k]
+		var tw := font_bold.get_string_size(nome, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x
+		var on := k == store_tab
+		_text(nome, Vector2(x + 22, 56 + oy), 18, Color(WHITE if on else MUTED, a * (1.0 if on else 0.75)), on)
+		if on:
+			_rrect(Rect2(x + 22, 66 + oy, tw, 3), Color(accent, a), 2)
+		if k == 3 and tem_atualizacao:
+			draw_circle(Vector2(x + 22 + tw + 7, 42 + oy), 4.0, Color(accent, a))
+		x += tw + 44.0
+	_store_dicas([["R1", ""]], x + 34, 55 + oy, a * (0.0 if store_det != "" else 1.0))
+	var online := bool(loja.get("ok", false))
+	var st := "SkyNetwork" if online else ("conectando…" if loja.is_empty() else "sem conexão")
+	var sw := font.get_string_size(st, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
+	draw_circle(Vector2(w - 70 - sw, 50 + oy), 4.0, Color(Color("48d597") if online else DIM, a))
+	_text(st, Vector2(w - 60 - sw, 55 + oy), 14, Color(MUTED, a))
+	# conteúdo: vitrine e página do item se cruzam
+	var dt := store_det_t * store_det_t * (3.0 - 2.0 * store_det_t)
+	if dt < 1.0:
+		var va := a * (1.0 - dt)
+		if loja.get("itens", []).is_empty():
+			var msg := "Abrindo a SkyStore…" if loja.is_empty() else (str(loja.get("erro", "")) if not loja.get("ok", true)
+				else "Ainda não há nada publicado na SkyStore.")
+			_text(msg, Vector2(0, h * 0.48 + oy), 20, Color(MUTED, va), false, w, HORIZONTAL_ALIGNMENT_CENTER)
+		elif store_tab == 0:
+			_draw_store_destaques(w, h, va, oy)
+		else:
+			_draw_store_grade(w, h, va, oy)
+	if dt > 0.0 and store_det_ult != "":
+		_draw_store_item(w, h, a * dt, oy + (1.0 - dt) * 28.0)
+	# rodapé
+	var dicas := [["A", "Escolher"], ["B", "Voltar"]] if store_det != "" else \
+		[["L1", "R1"], ["A", "Ver"], ["B", "Fechar a loja"]]
+	if store_det == "":
+		dicas[0] = ["L1/R1", "Seções"]
+	_store_dicas(dicas, w - 60.0, h - 34.0, a)
+
+
+func _store_card(i: Dictionary, r: Rect2, sel: bool, a: float) -> void:
+	if sel:
+		r = r.grow(r.size.x * 0.05)
+		_glow(r.get_center(), r.size.y * 0.8, Color(_store_cor(i).lightened(0.3), 0.35 * a))
+	_rrect(Rect2(r.position + Vector2(0, 6), r.size), Color(0, 0, 0, 0.4 * a), 12)
+	_store_arte(i, r, a)
+	_rrect(r, Color(0, 0, 0, 0), 10, Color(accent if sel else Color(1, 1, 1, 0.12), (1.0 if sel else 1.0) * a), 3 if sel else 1)
+	var selo := _store_selo(i)
+	_text(_fit(str(i.get("nome", "")), 15, r.size.x, true), Vector2(r.position.x, r.end.y + 24), 15,
+		Color(WHITE if sel else MUTED, a), true)
+	var sc: Color = accent if bool(selo[1]) else (Color("48d597") if selo[0] == "Instalado" else DIM)
+	_text(str(selo[0]), Vector2(r.position.x, r.end.y + 44), 13, Color(sc, a))
+
+
+func _draw_store_destaques(w: float, h: float, a: float, oy: float) -> void:
+	var dest := _store_destaques()
+	var lista := _store_lista(0)
+	var hero := Rect2(64, 100 + oy, w - 128, h * 0.43)
+	if not dest.is_empty():
+		var it: Dictionary = dest[store_hero % dest.size()]
+		var on := store_row == 0
+		var col := _store_cor(it)
+		_rrect(Rect2(hero.position + Vector2(0, 10), hero.size), Color(0, 0, 0, 0.45 * a), 14)
+		_rrect(hero, Color(col.darkened(0.6), a), 12)
+		var tex := _store_capa(it)
+		if tex != null:
+			_draw_cover(tex, hero, 0.55 * a)   # arte cobrindo o banner
+		_grad(hero.grow(-1), Color(Color("05070c"), 0.96 * a), Color(Color("05070c"), 0.05 * a))
+		_grad(Rect2(hero.position.x, hero.end.y - hero.size.y * 0.35, hero.size.x, hero.size.y * 0.35),
+			Color(0, 0, 0, 0), Color(0, 0, 0, 0.5 * a), false)
+		# a capa nítida à direita, como a caixa do jogo
+		var ch := hero.size.y - 56.0
+		var cr := Rect2(hero.end.x - ch * 0.75 - 40.0, hero.position.y + 28.0, ch * 0.75, ch)
+		_rrect(Rect2(cr.position + Vector2(0, 8), cr.size), Color(0, 0, 0, 0.5 * a), 12)
+		_store_arte(it, cr, a)
+		_rrect(cr, Color(0, 0, 0, 0), 10, Color(1, 1, 1, 0.25 * a), 1)
+		var tx := hero.position.x + 44.0
+		var tw := cr.position.x - tx - 40.0
+		var cx := tx
+		cx += _store_chip(str(LOJA_TIPOS.get(str(it.get("tipo", "jogo")), "Item")).to_upper(), Vector2(cx, hero.position.y + 36), col, a)
+		if bool(it.get("oficial", false)):
+			cx += _store_chip("★ OFICIAL", Vector2(cx, hero.position.y + 36), accent.darkened(0.35), a)
+		if bool(it.get("atualizar", false)):
+			_store_chip("ATUALIZAÇÃO", Vector2(cx, hero.position.y + 36), Color("b7791f"), a)
+		var fs := 46 if hero.size.y > 280 else 36
+		draw_multiline_string(font_bold, Vector2(tx, hero.position.y + 76 + fs), str(it.get("nome", "")),
+			HORIZONTAL_ALIGNMENT_LEFT, tw, fs, 2, Color(WHITE, a))
+		var ty := hero.position.y + 108 + fs * (2.2 if font_bold.get_string_size(str(it.get("nome", "")), HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x > tw else 1.15)
+		draw_multiline_string(font, Vector2(tx, ty), str(it.get("resumo", "")), HORIZONTAL_ALIGNMENT_LEFT, tw, 18, 2,
+			Color(WHITE, 0.82 * a))
+		# botão principal
+		var bts := _store_botoes(it)
+		var rot := str(bts[0][0]) if not bts.is_empty() else ""
+		var bw := font_bold.get_string_size(rot, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x + 56.0
+		var br := Rect2(tx, hero.end.y - 76, bw, 48)
+		_rrect(br, Color(WHITE, a) if on else Color(1, 1, 1, 0.16 * a), 24)
+		_text(rot, br.position + Vector2(0, 31), 17, Color(Color("0a0f1c") if on else WHITE, a), true, bw,
+			HORIZONTAL_ALIGNMENT_CENTER)
+		# bolinhas do carrossel
+		if dest.size() > 1:
+			var dx := hero.get_center().x - dest.size() * 9.0
+			for k in dest.size():
+				var ativo := k == store_hero % dest.size()
+				_rrect(Rect2(dx + k * 18.0, hero.end.y - 22, 20.0 if ativo else 8.0, 6), Color(WHITE, (0.95 if ativo else 0.35) * a), 3)
+				if ativo:
+					dx += 12.0
+		if on:
+			_rrect(hero.grow(4), Color(0, 0, 0, 0), 16, Color(accent, 0.9 * a), 2)
+			if dest.size() > 1:
+				_text("‹", Vector2(hero.position.x - 40, hero.get_center().y + 14), 40, Color(WHITE, 0.6 * a), true)
+				_text("›", Vector2(hero.end.x + 18, hero.get_center().y + 14), 40, Color(WHITE, 0.6 * a), true)
+	# fileira: tudo na loja
+	var ry := hero.end.y + 46.0
+	_text("Tudo na SkyStore", Vector2(64, ry), 20, Color(WHITE, a), true)
+	_text("%d itens" % lista.size(), Vector2(64, ry), 15, Color(DIM, a), false, w - 128, HORIZONTAL_ALIGNMENT_RIGHT)
+	var ch2 := clampf(h - ry - 120.0, 110.0, 230.0)
+	var cw := ch2 * 0.75
+	var gap := 26.0
+	var visiveis := (w - 128.0) / (cw + gap)
+	var desloc := maxf(0.0, store_scroll - visiveis + 2.0) if store_row == 1 else 0.0
+	for k in lista.size():
+		var cx2 := 64.0 + (k - desloc) * (cw + gap)
+		if cx2 > w or cx2 + cw < 0:
+			continue
+		_store_card(lista[k], Rect2(cx2, ry + 20, cw, ch2), store_row == 1 and k == store_sel, a)
+
+
+func _draw_store_grade(w: float, h: float, a: float, oy: float) -> void:
+	var lista := _store_lista(store_tab)
+	if lista.is_empty():
+		var msg: String = ["", "Nenhum jogo publicado ainda.", "Nenhum app publicado ainda.",
+			"Nada da SkyStore instalado ainda. Baixe em Destaques, Jogos ou Apps."][store_tab]
+		_text(msg, Vector2(0, h * 0.48 + oy), 19, Color(MUTED, a), false, w, HORIZONTAL_ALIGNMENT_CENTER)
+		return
+	var cols := 6
+	var gap := 30.0
+	var cw := (w - 128.0 - gap * (cols - 1)) / cols
+	var ch := cw * 4.0 / 3.0
+	var rh := ch + 74.0
+	var top := 112.0 + oy
+	var util := h - 80.0 - top
+	var linha := floorf(store_scroll / cols)
+	var off := maxf(0.0, (linha + 1.0) * rh - util)
+	for k in lista.size():
+		var r := Rect2(64.0 + (k % cols) * (cw + gap), top + (k / cols) * rh - off, cw, ch)
+		if r.end.y < top - 10 or r.position.y > h - 70:
+			continue
+		_store_card(lista[k], r, k == store_sel, a)
+
+
+func _draw_store_item(w: float, h: float, a: float, oy: float) -> void:
+	var i := _loja_item(store_det_ult)
+	if i.is_empty():
+		return
+	var ch := minf(h * 0.58, (w * 0.3) / 0.75)
+	var cr := Rect2(96, 112 + oy, ch * 0.75, ch)
+	sel_rect = cr   # se o jogo for aberto daqui, a transição sai desta capa
+	_glow(cr.get_center(), ch * 0.85, Color(_store_cor(i).lightened(0.2), 0.3 * a))
+	_rrect(Rect2(cr.position + Vector2(0, 10), cr.size), Color(0, 0, 0, 0.5 * a), 14)
+	_store_arte(i, cr, a, 12)
+	_rrect(cr, Color(0, 0, 0, 0), 12, Color(1, 1, 1, 0.22 * a), 1)
+	var x := cr.end.x + 56.0
+	var tw := w - x - 96.0
+	var y := cr.position.y + 4.0
+	var cx := x
+	cx += _store_chip(str(LOJA_TIPOS.get(str(i.get("tipo", "jogo")), "Item")).to_upper(), Vector2(cx, y), _store_cor(i), a)
+	if bool(i.get("oficial", false)):
+		cx += _store_chip("★ OFICIAL", Vector2(cx, y), accent.darkened(0.35), a)
+	var selo := _store_selo(i)
+	if selo[0] == "Instalado" or bool(selo[1]):
+		_store_chip(str(selo[0]).to_upper(), Vector2(cx, y), Color("48d597") if selo[0] == "Instalado" else Color("b7791f"), a, false)
+	y += 26.0 + 50.0
+	draw_multiline_string(font_bold, Vector2(x, y), str(i.get("nome", "")), HORIZONTAL_ALIGNMENT_LEFT, tw, 44, 2, Color(WHITE, a))
+	y += 34.0
+	var info := ["por " + str(i.get("autor", "SkyStation"))]
+	var v := _loja_versao(i)
+	if v != "":
+		info.append("versão " + v)
+	if _store_tamanho(i) > 0:
+		info.append(_fmt_mb(_store_tamanho(i)))
+	if int(i.get("downloads", 0)) > 0:
+		info.append("%d downloads" % int(i.get("downloads", 0)))
+	_text("  ·  ".join(info), Vector2(x, y), 16, Color(MUTED, a), false, tw)
+	y += 30.0
+	# botões (ou o download em andamento)
+	var baixando := store_job == store_det_ult and busy_msg != "" and job_tool == "sky-store"
+	if baixando:
+		var br := Rect2(x, y, minf(tw, 520.0), 10)
+		_rrect(br, Color(1, 1, 1, 0.12 * a), 5)
+		var p := job_p if job_p >= 0.0 else fmod(t * 0.6, 1.0)
+		var fill := Rect2(br.position, Vector2(br.size.x * p, br.size.y)) if job_p >= 0.0 else \
+			Rect2(br.position.x + br.size.x * p * 0.75, br.position.y, br.size.x * 0.25, br.size.y)
+		_rrect(fill, Color(accent, a), 5)
+		_text(busy_msg, Vector2(x, y + 38), 16, Color(WHITE, a), false, tw)
+		y += 82.0
+	else:
+		var bts := _store_botoes(i)
+		var bx := x
+		for k in bts.size():
+			var rot := str(bts[k][0])
+			var on := k == store_btn and store_det != ""
+			var bw := font_bold.get_string_size(rot, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x + 56.0
+			var br := Rect2(bx, y, bw, 50)
+			var perigo := rot.begins_with("Confirmar")
+			var fundo: Color = Color(Color("e05260") if perigo else WHITE, a) if on else Color(1, 1, 1, 0.12 * a)
+			_rrect(br, fundo, 25)
+			_text(rot, br.position + Vector2(0, 32), 17, Color(Color("0a0f1c") if on and not perigo else WHITE, a), true, bw,
+				HORIZONTAL_ALIGNMENT_CENTER)
+			bx += bw + 14.0
+		y += 82.0
+	var desc := str(i.get("descricao", ""))
+	if desc == "":
+		desc = str(i.get("resumo", ""))
+	var limite := cr.end.y - y
+	var notas := ""
+	if typeof(i.get("versao")) == TYPE_DICTIONARY:
+		notas = str(i["versao"].get("notas", "")).strip_edges()
+	var linhas := maxi(2, int((limite - (90.0 if notas != "" else 0.0)) / 25.0))
+	draw_multiline_string(font, Vector2(x, y), desc, HORIZONTAL_ALIGNMENT_LEFT, tw, 17, linhas, Color(WHITE, 0.85 * a))
+	if notas != "":
+		var ny := y + minf(linhas, ceilf(font.get_multiline_string_size(desc, HORIZONTAL_ALIGNMENT_LEFT, tw, 17).y / 24.0)) * 24.0 + 30.0
+		if ny < h - 120:
+			_text("Novidades da versão " + v, Vector2(x, ny), 16, Color(accent, a), true)
+			draw_multiline_string(font, Vector2(x, ny + 26), notas, HORIZONTAL_ALIGNMENT_LEFT, tw, 15,
+				maxi(1, int((h - 100 - ny) / 22.0)), Color(MUTED, a))
+
+
+# ---------------------------------------------------------------- transição abrir/fechar jogo
+
+func _ease(x: float) -> float:
+	x = clampf(x, 0.0, 1.0)
+	return 1.0 - pow(1.0 - x, 3.0)   # sai rápido e assenta devagar (como os menus de console)
+
+
+func _rlerp(a: Rect2, b: Rect2, k: float) -> Rect2:
+	return Rect2(a.position.lerp(b.position, k), a.size.lerp(b.size, k))
+
+
+func _splash_rect(w: float, h: float) -> Rect2:
+	var ch := h * 0.44
+	var cw := ch * 0.75
+	return Rect2(w / 2.0 - cw / 2.0, h * 0.40 - ch / 2.0, cw, ch)
+
+
+func _draw_transicao(w: float, h: float) -> void:
+	if tr_kind == "abrir":
+		var e := _ease(tr_t / TR_ABRIR)
+		_draw_splash(w, h, e, e, _rlerp(tr_from, _splash_rect(w, h), e) if tr_from.has_area() else Rect2())
+	elif tr_kind == "fechar":
+		var e := _ease(tr_t / TR_FECHAR)
+		var alvo := sel_rect if sel_rect.has_area() else _splash_rect(w, h)
+		_draw_splash(w, h, 1.0 - e, 1.0 - e * 0.85, _rlerp(_splash_rect(w, h), alvo, e))
+
+
+# Tela de abertura do jogo: fundo escuro com a arte do jogo, capa grande no centro, nome e um anel girando.
+# fundo_a: quanto da tela já escureceu; capa_a: opacidade da capa; r: onde a capa está (vazio = centro).
+func _draw_splash(w: float, h: float, fundo_a: float, capa_a: float, r: Rect2 = Rect2()) -> void:
+	var g := tr_g
+	var escuro := Color("05070c")
+	draw_rect(Rect2(0, 0, w, h), Color(escuro, fundo_a))
+	if tr_art != null and fundo_a > 0.01:
+		_draw_cover(tr_art, Rect2(0, 0, w, h), 0.35 * fundo_a)
+		draw_texture_rect(shade_v, Rect2(0, 0, w, h), false, Color(1, 1, 1, fundo_a))
+	if g.is_empty():
+		return
+	if not r.has_area():
+		r = _splash_rect(w, h)
+	var col: Color = g.get("color", accent)
+	if col.a == 0.0:
+		col = accent
+	var respira := 0.9 + 0.1 * sin(t * 2.2)
+	_glow(r.get_center(), r.size.y * 0.95, Color(col.lightened(0.2), 0.55 * capa_a * respira))
+	_rrect(r.grow(3), Color(0, 0, 0, 0.55 * capa_a), 14)
+	var cover = g.get("cover")
+	if cover is Texture2D:
+		_draw_cover(cover, r, capa_a)
+	else:
+		_rrect(r, Color(col.darkened(0.45), capa_a), 12, Color(col.lightened(0.2), 0.8 * capa_a), 2)
+		var ini := ""
+		for word in str(g.get("title", "")).split(" ", false).slice(0, 2):
+			ini += word.substr(0, 1).to_upper()
+		var fs := int(r.size.y * 0.3)
+		_text(ini, Vector2(r.position.x, r.get_center().y + fs * 0.35), fs, Color(col.lightened(0.45), capa_a), true,
+			r.size.x, HORIZONTAL_ALIGNMENT_CENTER)
+	_rrect(r, Color(0, 0, 0, 0), 12, Color(1, 1, 1, 0.3 * capa_a), 2)
+	# nome e anel de carregamento só quando a capa já está no centro
+	var na := clampf((fundo_a - 0.6) / 0.4, 0.0, 1.0) * capa_a
+	if na <= 0.01:
+		return
+	var base_y := h * 0.40 + h * 0.22 + 52.0
+	_text_shadow(str(g.get("title", "")), Vector2(0, base_y), 30, Color(WHITE, na), true, w, HORIZONTAL_ALIGNMENT_CENTER)
+	if running_pid != -1:
+		var c := Vector2(w / 2.0, base_y + 46.0)
+		for i in 12:
+			var ang := t * 5.0 + i * TAU / 12.0
+			draw_circle(c + Vector2(cos(ang), sin(ang)) * 13.0, 2.4, Color(WHITE, na * float(i + 1) / 12.0))
 
 
 # ---------------------------------------------------------------- instalar jogos compactados (13.1)
