@@ -238,6 +238,12 @@ if [ ! -x /opt/vita3k/AppRun ] && { [ -f /opt/skystation/emu/cores/flycast_libre
     timeout 900 bash "$SRC/setup/fase13.sh" --so-vita || echo "    AVISO: não consegui instalar o Vita3K agora (sem internet?); tenta de novo na próxima atualização."
 fi
 
+# 13.11: Wii U pelo Cemu oficial (o core do RetroArch dava Erro E1).
+if [ ! -x /opt/cemu/AppRun ] && [ -f /opt/skystation/emu/cores/cemu_libretro.so ]; then
+    echo "    instalando o Cemu oficial (Wii U)…"
+    timeout 900 bash "$SRC/setup/fase13.sh" --so-cemu || echo "    AVISO: não consegui instalar o Cemu agora; tenta de novo na próxima atualização."
+fi
+
 # 13.10: RPCS3 mais novo a cada 7 dias (o fase7-0 só instalava uma vez).
 if [ -x /opt/rpcs3/AppRun ] && [ -z "$(find /opt/rpcs3/.skystation-url -mtime -7 2>/dev/null)" ]; then
     timeout 900 bash "$SRC/setup/fase7-0.sh" --atualizar-rpcs3 || echo "    AVISO: RPCS3 não atualizado agora."

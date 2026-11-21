@@ -105,13 +105,19 @@ if [ "${1:-}" = "--so-pkg" ]; then
 fi
 
 # 13.5: "fase13.sh --so-vita" (chamado pelo atualizar.sh) instala só o Vita3K e sai.
+# 13.11: "fase13.sh --so-cemu" instala só o Cemu oficial e sai. O core do RetroArch (cemu_libretro, não oficial)
+# dava "Erro E1" no New Super Mario Bros. U (.wux) em 21/nov.
+if [ "${1:-}" = "--so-cemu" ]; then
+    programa "Cemu (Wii U)" /opt/cemu cemu-project/Cemu 'x86_64\.AppImage$' || exit 1
+    exit 0
+fi
 if [ "${1:-}" = "--so-vita" ]; then
     programa "Vita3K (PS Vita)" /opt/vita3k Vita3K/Vita3K '\.AppImage$' 'x86_64' || exit 1
     exit 0
 fi
 
 echo "==> [2/5] Wii U, PS Vita e Xbox original"
-core "Wii U" cemu || programa "Cemu (Wii U)" /opt/cemu cemu-project/Cemu 'x86_64\.AppImage$' || true
+programa "Cemu (Wii U)" /opt/cemu cemu-project/Cemu 'x86_64\.AppImage$' || core "Wii U" cemu || true   # 13.11: oficial primeiro
 # 13.5: PS Vita sempre pelo Vita3K oficial. O core do RetroArch precisa das pastas data/ e shaders-builtin/ da
 # release dele (o buildbot só entrega o .so) e abortava (E134); o oficial também instala o firmware sozinho.
 programa "Vita3K (PS Vita)" /opt/vita3k Vita3K/Vita3K '\.AppImage$' 'x86_64' || true

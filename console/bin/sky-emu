@@ -62,7 +62,8 @@ export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland;xcb}"
 # funcionam); senão pelo programa oficial instalado pela Fase 13 ("<sistema>-solo").
 ALVO="$SYS"
 case "$SYS" in
-    wiiu) [ -f /opt/skystation/emu/cores/cemu_libretro.so ] || ALVO=wiiu-solo ;;
+    # 13.11: Wii U pelo Cemu oficial sempre que ele existe (o core cemu_libretro, não oficial, dava Erro E1 no .wux).
+    wiiu) { [ -x /opt/cemu/AppRun ] || [ ! -f /opt/skystation/emu/cores/cemu_libretro.so ]; } && ALVO=wiiu-solo ;;
     # 13.5: Vita pelo Vita3K oficial sempre que ele existe (o core só como último recurso: sem as pastas data/ e
     # shaders-builtin/ da release dele, que o buildbot não entrega, ele abortava com "double free", E134).
     vita) { [ -x /opt/vita3k/AppRun ] || [ ! -f /opt/skystation/emu/cores/vita3k_libretro.so ]; } && ALVO=vita-solo ;;
@@ -296,6 +297,28 @@ x360)
     exec "$XENIA" --fullscreen=true --gpu=vulkan --content_root="$X360" "$ROM"
     ;;
 ps3)
+    # 13.11: jogos que não rodam direto do .iso: na 1ª vez o .iso vira pasta (PS3_GAME/…) e o original vai para
+    # ps3/.iso-originais. Assassin's Creed (BLUS30089): pelo .iso o RPCS3 devolvia o caminho do disco vazio
+    # (cellDiscGameGetBootDiscInfo -> sys_fs_opendir("") = ENOENT) e o jogo ficava em tela preta; os AC também
+    # exigem a pasta vazia PS3_GAME/USRDIR/ASSASSIN_ISO, que alguns dumps perdem.
+    case "${ROM,,}" in *.iso)
+        TID="$(python3 -c 'import importlib.machinery as m,sys; p=m.SourceFileLoader("p","/opt/skystation/bin/sky-ps3").load_module(); print((p.game_info(sys.argv[1]) or {}).get("id",""))' "$ROM" 2>/dev/null || true)"
+        case " BLUS30089 BLES00158 BLJM60052 " in *" $TID "*)
+            DEST="${ROM%.*}"
+            if [ ! -d "$DEST/PS3_GAME" ]; then
+                F7="$(command -v 7z || command -v 7zz || true)"
+                [ -n "$F7" ] || fail "Falta o 7-Zip para preparar este jogo. Rode Sistema → Atualizar o SkyStation."
+                echo "PS3: preparando o jogo (só na 1ª vez, uns minutos)." >"$MSG"
+                echo "sky-emu: $TID: extraindo o .iso para $DEST" >&2
+                rm -rf "$DEST.parcial"
+                "$F7" x -y -bd -bso0 -o"$DEST.parcial" "$ROM" >&2 || { rm -rf "$DEST.parcial"; fail "Não consegui extrair o .iso (espaço no disco?)."; }
+                mkdir -p "$DEST.parcial/PS3_GAME/USRDIR/ASSASSIN_ISO"
+                mv "$DEST.parcial" "$DEST"
+                mkdir -p "$(dirname "$ROM")/.iso-originais" && mv "$ROM" "$(dirname "$ROM")/.iso-originais/" || true
+            fi
+            ROM="$DEST" ;;
+        esac ;;
+    esac
     # O sky-ps3 desliga as telas de aviso do RPCS3, configura o controle ligado agora, instala o
     # firmware na primeira vez (demora alguns minutos) e devolve o usuário do perfil em uso.
     PREP="$(python3 /opt/skystation/bin/sky-ps3 preparar "$ROM" 2>>"${LOG:-/dev/null}" | tail -1)"
@@ -363,7 +386,9 @@ vita-solo)
     TID="$(basename "$ROM" | grep -oE '[A-Z]{4}[0-9]{5}' | tail -1)"
     if [ -n "$TID" ] && [ -f "$ROM" ]; then
         APP="$VPREF/ux0/app/$TID"
-        MARCA="$APP/.skystation-instalado"
+        # 13.11: a marca fica FORA da pasta do jogo (o Vita3K recria a pasta no fim da instalação e a apagava)
+        MARCA="$VPREF/.skystation-instalados/$TID"
+        [ -f "$APP/.skystation-instalado" ] && { mkdir -p "${MARCA%/*}"; mv -f "$APP/.skystation-instalado" "$MARCA"; }
         if [ -f "$MARCA" ] && [ -f "$APP/eboot.bin" ]; then
             echo "sky-emu: PS Vita $TID já instalado: abre direto" >&2
             exec /opt/vita3k/AppRun -r "$TID"
@@ -379,13 +404,14 @@ vita-solo)
                 # 13.10: a licença (.rif) é copiada só no FIM da instalação. Antes bastava o eboot.bin com a
                 # pasta parada 12 s, mas a pasta fica parada ~3 min enquanto o Vita3K descriptografa (21/nov):
                 # a marca saía cedo e quem fechasse ali ficava com o jogo pela metade "instalado".
-                ls "$VPREF/ux0/license/$TID/"*.rif >/dev/null 2>&1 || continue
+                # 13.11: só quando o próprio Vita3K diz que terminou (a licença antiga continua lá numa reinstalação)
+                grep -q "\[$TID\] installed successfully" "$HOME/.cache/Vita3K/vita3k.log" 2>/dev/null || continue
                 [ -f "$APP/eboot.bin" ] || continue
                 agora="$(du -sb "$APP" 2>/dev/null | cut -f1)"
                 if [ "$agora" = "$antes" ]; then parado=$((parado + 1)); else parado=0; fi
                 antes="$agora"
-                if [ "$parado" -ge 4 ]; then
-                    : >"$MARCA" && echo "sky-emu: PS Vita $TID instalado ($agora bytes)" >&2
+                if [ "$parado" -ge 2 ]; then
+                    mkdir -p "${MARCA%/*}" && : >"$MARCA" && echo "sky-emu: PS Vita $TID instalado ($agora bytes)" >&2
                     break
                 fi
             done ) &
