@@ -212,7 +212,24 @@ if command -v timedatectl >/dev/null 2>&1 && [ -d /run/systemd/system ] \
         timedatectl set-local-rtc 1 2>/dev/null && echo "    relógio da placa em horário local (igual ao Windows)"
     fi
     timedatectl set-ntp true 2>/dev/null || true
+    # 13.7: o set-local-rtc só grava a hora na placa no instante em que liga; depois disso o systemd não regrava.
+    # Em 21/nov a placa seguia em UTC (16:32 às 13:32) e o Windows, 3 h adiantado. Com a hora já acertada pela
+    # internet, grava agora a hora local na placa (a cada atualização, se estiver mais de 2 min fora).
+    if [ "$(timedatectl show -p LocalRTC --value 2>/dev/null)" = "yes" ] \
+       && [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = "yes" ] && command -v hwclock >/dev/null 2>&1; then
+        rtc="$(date -u -d "$(cat /sys/class/rtc/rtc0/date 2>/dev/null) $(cat /sys/class/rtc/rtc0/time 2>/dev/null)" +%s 2>/dev/null || echo 0)"
+        agora="$(date +%s)"; off="$(( $(date +%z | sed -E 's/^([+-])0?([0-9]+)([0-9]{2})$/\1(\2*3600+\3*60)/') ))"
+        dif=$(( rtc - (agora + off) )); dif=${dif#-}
+        if [ "$dif" -gt 120 ]; then
+            hwclock --systohc --localtime && echo "    relógio da placa acertado para a hora local (estava $((dif / 60)) min fora)"
+        fi
+    fi
 fi
+
+# 13.7: o menu (Godot) às vezes abria desenhando pelo processador (llvmpipe: 12 threads, 300–950% de CPU,
+# notebook a 100 °C) logo depois de uma atualização: o login novo ainda não tinha a permissão da placa de vídeo
+# (o logind só libera /dev/dri para a sessão "ativa"). No grupo render a permissão é fixa.
+getent group render >/dev/null 2>&1 && usermod -aG render "$USER_NAME" 2>/dev/null || true
 
 # 13.5: PS Vita pelo Vita3K oficial. Quem já rodou a Fase 13 mas ficou só com o core do RetroArch (que abortava)
 # ganha o programa aqui, sem precisar rodar a fase de novo.

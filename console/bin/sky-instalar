@@ -272,6 +272,36 @@ def cabecalho_ok(arquivo):
     return None
 
 
+def _nomes_de_dentro(arquivo):
+    """Nomes dos arquivos de dentro (sem extrair). [] se não deu para ler."""
+    if arquivo.lower().endswith(".zip"):
+        try:
+            import zipfile
+            with zipfile.ZipFile(arquivo) as z:
+                return z.namelist()
+        except (OSError, ValueError, RuntimeError, __import__("zipfile").BadZipFile):
+            return []
+    f = _ferramenta()
+    if f and os.path.basename(f[0]).startswith("7z"):
+        try:
+            r = subprocess.run(f + ["l", "-slt", "-ba", arquivo], capture_output=True, text=True, timeout=120)
+            return re.findall(r"^Path = (.+)$", r.stdout, re.M)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return []
+
+
+def conteudo_ok(arquivo, sis):
+    """13.7: recusa antes de extrair o que o console não sabe abrir. None = ok."""
+    nomes = [n.replace("\\", "/") for n in _nomes_de_dentro(arquivo)]
+    if sis == "ps4" and nomes:
+        base = {os.path.basename(n).lower() for n in nomes}
+        if "eboot.bin" not in base and any(n.lower().endswith(".pkg") for n in nomes):
+            return ("é um .pkg de PS4: o emulador (shadPS4) não instala .pkg, só abre o jogo já extraído "
+                    "(a pasta CUSA… com eboot.bin e sce_sys). Baixe a versão em pasta")
+    return None
+
+
 def _iso_raiz(caminho):
     """Nomes da raiz de um ISO 9660 (PS1/PS2/PS3), em maiúsculas. Vazio se não for ISO."""
     try:
@@ -533,6 +563,9 @@ def rodar():
             if not JOGOS.gravavel(pasta):
                 raise RuntimeError("a pasta está só leitura (no Windows, desligue a Inicialização rápida)")
             ruim = cabecalho_ok(arq)
+            if ruim:
+                raise RuntimeError(ruim)
+            ruim = conteudo_ok(arq, sis)
             if ruim:
                 raise RuntimeError(ruim)
             total = tamanho_extraido(arq)

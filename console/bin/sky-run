@@ -95,6 +95,12 @@ if { { [ "$code" -ne 0 ] && [ "$code" -ne 143 ]; } || [ $(( $(date +%s) - START 
     DIAG=/mnt/skyroms/diag
     mkdir -p "$DIAG" 2>/dev/null && {
         cp -f "$LOG" "$DIAG/$ID.log" 2>/dev/null
+        # 13.7: travou de verdade (139 = falha de memória, 134 = abort)? O systemd-coredump guarda a pilha:
+        # diz em qual biblioteca foi (driver de vídeo, MangoHud, ffmpeg, o próprio emulador).
+        if { [ "$code" -eq 139 ] || [ "$code" -eq 134 ]; } && command -v coredumpctl >/dev/null 2>&1; then
+            sleep 2
+            timeout 20 coredumpctl info --no-pager --since "@$START" -1 2>&1 | head -120 >"$DIAG/$ID.pilha.txt" || true
+        fi
         for extra in "$HOME/.cache/Vita3K/vita3k.log" "$HOME/.config/retroarch/logs/retroarch.log" \
                      "$HOME/.cache/rpcs3/RPCS3.log"; do   # 13.7: o log do RPCS3 (o motivo do erro fica nele)
             [ -f "$extra" ] && [ "$(stat -c %Y "$extra")" -ge "$START" ] && cp -f "$extra" "$DIAG/$ID.$(basename "$extra")" 2>/dev/null
