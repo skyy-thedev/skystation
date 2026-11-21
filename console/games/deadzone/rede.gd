@@ -58,7 +58,7 @@ var _proximo_rid := 0
 var _esperando: Array = []       # conectados que ainda não disseram "oi"
 var _cont := PackedInt32Array()  # contador de apertos já aplicado (por ação)
 var _apertado := PackedByteArray()
-var _soltar := PackedByteArray()
+var _soltar: Array = []            # toque rápido: quadro de física em que apertou (-1 = nada)
 var mira_remota := Vector2.ZERO
 # cliente
 var _tentativas: Array = []      # peers tentando ao mesmo tempo
@@ -76,6 +76,7 @@ func _ready() -> void:
 	_cont.resize(ACOES.size())
 	_apertado.resize(ACOES.size())
 	_soltar.resize(ACOES.size())
+	_soltar.fill(-1)
 	_meus_cont.resize(ACOES.size())
 
 
@@ -473,6 +474,7 @@ func _oi(p: ENetPacketPeer, d: Variant) -> void:
 	_ult_lento = PackedByteArray()
 	_cont.fill(-1)
 	_apertado.fill(0)
+	_soltar.fill(-1)
 	var nome := str(d.get("nome", "Amigo")).substr(0, 24)
 	var novo: bool = main.estado == main.SALA
 	if novo:
@@ -527,10 +529,10 @@ func _host_quadro(d: float) -> void:
 		return
 	if outro == null:
 		return
-	# soltar os botões que foram só um toque
+	# soltar os botões que foram só um toque, depois de a física ter visto o aperto (2 passos)
 	for i in ACOES.size():
-		if _soltar[i]:
-			_soltar[i] = 0
+		if _soltar[i] >= 0 and Engine.get_physics_frames() - int(_soltar[i]) >= 2:
+			_soltar[i] = -1
 			_injetar(i, false, 0.0)
 	t_snap -= d
 	if t_snap <= 0.0:
@@ -568,11 +570,11 @@ func _aplicar_controle(c: Dictionary) -> void:
 				_injetar(i, false, 0.0)             # soltar e apertar de novo: vira "acabou de apertar"
 			_injetar(i, true, maxf(s, 1.0))
 			if s < 0.3:
-				_soltar[i] = 1                       # foi um toque rápido: solta no próximo quadro
+				_soltar[i] = Engine.get_physics_frames()   # foi um toque rápido: solta daqui a pouco
 		elif s >= 0.3:
 			if not _apertado[i] or absf(s - Input.get_action_strength("p2_" + ACOES[i])) > 0.03:
 				_injetar(i, true, s)
-		elif _apertado[i] and not _soltar[i]:
+		elif _apertado[i] and _soltar[i] < 0:
 			_injetar(i, false, 0.0)
 	var m: Vector2 = c.get("m", Vector2.ZERO)
 	mira_remota = m if m.length() <= 1.5 else m.normalized()

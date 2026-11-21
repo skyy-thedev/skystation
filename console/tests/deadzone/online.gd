@@ -11,6 +11,7 @@ var fase := 0
 var t := 0
 var x0 := 0.0
 var luz0 := false
+var viu_aviso := false
 
 
 func _initialize() -> void:
@@ -67,13 +68,16 @@ func _host() -> bool:
 			if t % 20 == 0:
 				m.aviso("TESTE-AVISO", Color.WHITE)
 				m.objetos[0].aberto = true
-			if t == 200:
-				var j2: Node2D = m.jogadores[1]
-				_ok(j2.global_position.x - x0 > 60.0, "o jogador 2 andou com o controle do outro console (%.0f px)" % (j2.global_position.x - x0))
-				_ok(j2.luz_on != luz0, "um toque rápido (lanterna) chegou como apertar")
+			# os dois jogos não andam no mesmo compasso: espera o que o convidado fez chegar (até 20 s)
+			var j2: Node2D = m.jogadores[1] if m.jogadores.size() > 1 else null
+			if j2 == null or (j2.global_position.x - x0 > 60.0 and j2.luz_on != luz0) or t == 1200:
+				_ok(j2 != null and j2.global_position.x - x0 > 60.0, "o jogador 2 andou com o controle do outro console")
+				_ok(j2 != null and j2.luz_on != luz0, "um toque rápido (lanterna) chegou como apertar")
 				fase = 2
 				t = 0
 		2:
+			if t % 20 == 0 and r.conectado():
+				m.aviso("TESTE-AVISO", Color.WHITE)
 			if not r.conectado():
 				_ok(m.jogadores.size() == 1, "o convidado saiu: o jogador 2 some")
 				_ok(r.host() and m.estado == m.JOGANDO, "a sala continua aberta para ele voltar")
@@ -95,6 +99,8 @@ func _cliente() -> bool:
 				fase = 1
 				t = 0
 		1:
+			if m.avisos.any(func(a): return a["texto"] == "TESTE-AVISO"):
+				viu_aviso = true
 			if t < 150:
 				Input.action_press("p1_direita")
 			elif t == 150:
@@ -109,7 +115,7 @@ func _cliente() -> bool:
 				_ok(m.jogadores[1].global_position.x - x0 > 40.0, "aqui também se vê o Rocha andando")
 			if t == 230:
 				_ok(m.jogadores[1].luz_on != luz0, "a lanterna do Rocha acendeu nos dois")
-				_ok(m.avisos.any(func(a): return a["texto"] == "TESTE-AVISO"), "avisos do anfitrião chegam")
+				_ok(viu_aviso, "avisos do anfitrião chegam")
 				_ok(m.objetos[0].aberto, "objeto aberto lá aparece aberto aqui")
 				_ok(m.camada_sangue != null and m.manchas is Array, "manchas de sangue sincronizadas")
 				r.fechar("")
