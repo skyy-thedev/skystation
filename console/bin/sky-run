@@ -89,7 +89,9 @@ echo "=== saiu com código $code" >>"$LOG"
 
 # 13.3: deu erro? Copia o log (e o do próprio emulador, quando ele grava um) para SKYROMS/diag, que dá
 # para ler no Windows ou mandar para diagnóstico sem precisar do terminal do console.
-if [ "$code" -ne 0 ] && [ "$code" -ne 143 ] && [ -w /mnt/skyroms ]; then
+# 13.7: também quando o jogo fecha sozinho em menos de 2 min com código 0 (o Vita3K volta para a home assim
+# quando o jogo trava, sem código de erro).
+if { { [ "$code" -ne 0 ] && [ "$code" -ne 143 ]; } || [ $(( $(date +%s) - START )) -lt 120 ]; } && [ -w /mnt/skyroms ]; then
     DIAG=/mnt/skyroms/diag
     mkdir -p "$DIAG" 2>/dev/null && {
         cp -f "$LOG" "$DIAG/$ID.log" 2>/dev/null

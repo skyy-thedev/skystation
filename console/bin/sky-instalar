@@ -148,7 +148,9 @@ def _anota_falha(arq, erro):
 def _desistiu(falhas, real, arq):
     """Já tentou MAX_TENTATIVAS vezes este mesmo arquivo? (outro tamanho/data = arquivo novo)"""
     f = falhas.get(real)
-    return bool(f) and f.get("assinatura") == _assinatura(arq) and f.get("tentativas", MAX_TENTATIVAS) >= MAX_TENTATIVAS
+    # 13.7: falha anotada antes da 13.6 não tem "tentativas" e contava como "já desisti": o arquivo nunca era
+    # tentado de novo e o motivo não aparecia em lugar nenhum. Agora conta como 1 tentativa (ganha mais uma).
+    return bool(f) and f.get("assinatura") == _assinatura(arq) and f.get("tentativas", 1) >= MAX_TENTATIVAS
 
 
 def _esquece(arquivo=None):
@@ -501,6 +503,7 @@ def rodar():
         print(json.dumps({"ok": False, "error": "já está instalando"}))
         return
     feitos, erros, total_jogos = [], [], 0
+    _falhas_txt(_falhas())        # 13.7: as falhas antigas também aparecem em SKYROMS/diag
     fila = procurar()
     total_jogos = len(fila)
     st = {"ativo": True, "total": total_jogos, "feitos": 0, "erros": [], "fila": [j["nome"] for j in fila]}
