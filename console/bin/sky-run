@@ -39,7 +39,12 @@ rm -f "$RUN/game.ajustes"          # 11.7: o sky-emu/sky-ps3 anotam aqui o perfi
 
 # Medição de desempenho: mangohud.on = contador na tela + log; bench.on (11.7) = só o log, sem nada
 # na tela (para medir sem o contador atrapalhar a imagem nem pesar no jogo).
-if { [ -f "$CONF/mangohud.on" ] || [ -f "$CONF/bench.on" ]; } && command -v mangohud >/dev/null 2>&1; then
+# 13.9: o Vita3K (AppImage com bibliotecas próprias: libvulkan 1.4.363, glibc) travava com o MangoHud do
+# sistema dentro do vkCreateDevice (pilha do systemd-coredump em 21/nov: SEGV em libMangoHud.so, chamado pelo
+# ffmpeg do Qt ao abrir o áudio). Jogos de Vita rodam sem o MangoHud (sem benchmark por enquanto).
+SEM_MANGO=""
+case "$ID" in vita-*) SEM_MANGO=1; export DISABLE_MANGOHUD=1 MANGOHUD=0 ;; esac
+if [ -z "$SEM_MANGO" ] && { [ -f "$CONF/mangohud.on" ] || [ -f "$CONF/bench.on" ]; } && command -v mangohud >/dev/null 2>&1; then
     BENCH="$HOME/skystation/benchmarks"
     [ -w /mnt/skystation ] && BENCH="/mnt/skystation/benchmarks"   # na VM, vai direto para a pasta compartilhada
     [ -w /mnt/skyroms ] && BENCH="/mnt/skyroms/benchmarks"         # 8.0.3: no HD/pendrive SKYROMS (dá para ler no Windows)
