@@ -312,7 +312,15 @@ wiiu-solo)
     # O Cemu guarda tudo em ~/.local/share/Cemu; as chaves (keys.txt) vão para lá também.
     CEMU="${XDG_DATA_HOME:-$HOME/.local/share}/Cemu"
     mkdir -p "$CEMU"
-    [ -f "$SKY/bios/wiiu/Cemu/keys.txt" ] && cp -n "$SKY/bios/wiiu/Cemu/keys.txt" "$CEMU/keys.txt"
+    # 13.10: aceita o keys.txt também solto em SKYROMS/bios/wiiu (e atualiza se mudou).
+    for k in "$SKY/bios/wiiu/keys.txt" "$SKY/bios/wiiu/Cemu/keys.txt"; do
+        [ -f "$k" ] && { cmp -s "$k" "$CEMU/keys.txt" || cp -f "$k" "$CEMU/keys.txt"; }
+    done
+    # .wux/.wud são o disco criptografado: sem a chave do disco no keys.txt o Cemu só mostra erro.
+    case "${ROM,,}" in
+        *.wux|*.wud)
+            [ -s "$CEMU/keys.txt" ] || fail "Wii U: este jogo (.wux/.wud) é o disco criptografado e precisa da chave dele. Coloque o keys.txt (tirado do seu Wii U) em SKYROMS/bios/wiiu, ou use a versão .wua / em pasta, que não precisa." ;;
+    esac
     # Sem controle configurado o Cemu não lê o DS4: na 1ª vez abre a tela do Cemu para configurar
     # (Opções → Configurações de entrada → API SDLController → escolher o controle → Salvar).
     if [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/Cemu/controllerProfiles/controller0.xml" ] \

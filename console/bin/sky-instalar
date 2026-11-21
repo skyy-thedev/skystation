@@ -100,9 +100,13 @@ def _assinatura(arq):
 def _falhas():
     try:
         with open(FALHAS) as f:
-            return json.load(f)
+            d = json.load(f)
     except (OSError, ValueError):
         return {}
+    # 13.10: falha por "só leitura" é do disco, não do arquivo. Antes elas só eram esquecidas dentro do
+    # "rodar", mas o menu só chama o "rodar" quando o "procurar" acha pendentes, e o "procurar" pulava
+    # justamente esses arquivos (2 tentativas): o Mario U e o P.T. nunca mais eram tentados.
+    return {k: v for k, v in d.items() if "só leitura" not in v.get("erro", "")}
 
 
 def _grava_falhas(d):
