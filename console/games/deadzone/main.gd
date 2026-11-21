@@ -12,7 +12,7 @@ const CICLO := 300.0      # dia 180 s, entardecer 20 s, noite 85 s, amanhecer 15
 const RECORDE := "user://recorde.json"
 const SAVE := "user://save.json"
 
-enum { TITULO, JOGANDO, PAUSA, FIM, CONVERSA, MOCHILA, CAPITULO }
+enum { TITULO, JOGANDO, PAUSA, FIM, CONVERSA, MOCHILA, CAPITULO, ONLINE, SALA, CONECTANDO }
 
 var estado := TITULO
 var rng := RandomNumberGenerator.new()
@@ -59,6 +59,7 @@ var hud: Control
 var historia: Node
 var sons: Node
 var musica: Node
+var rede: Node                      # coop online (rede.gd)
 var tex_luz: Texture2D
 var tex_cone: Texture2D
 var mat_chao: ShaderMaterial        # chão e paredes sem padrão repetido (chao.gdshader)
@@ -111,8 +112,13 @@ func _ready() -> void:
 	musica.set_script(preload("res://musica.gd"))
 	musica.main = self
 	add_child(musica)
+	rede = Node.new()
+	rede.set_script(preload("res://rede.gd"))
+	rede.main = self
+	add_child(rede)
 	_nova_partida()
 	estado = TITULO
+	rede.linha_de_comando()
 
 
 # ---------------------------------------------------------------- controles (jogador 1 e 2)
@@ -224,6 +230,10 @@ func nova_luz(cor: Color, escala: float, sombra: bool, cone := false) -> PointLi
 # ---------------------------------------------------------------- partida
 
 func _limpar() -> void:
+	# o mundo velho só some no fim do quadro: não pode desenhar no chão novo (duas partidas no mesmo quadro)
+	for par in [[chao, _desenhar_chao], [sombras_no, _desenhar_sombras], [camada_sangue, _desenhar_sangue]]:
+		if par[0] and is_instance_valid(par[0]) and par[0].draw.is_connected(par[1]):
+			par[0].draw.disconnect(par[1])
 	if mundo:
 		mundo.queue_free()
 		mundo = null
@@ -289,6 +299,8 @@ func _nova_partida(p_modo := "historia", p_semente := -1) -> void:
 
 	preload("res://cidade.gd").new().gerar(self)
 	n_gerados = objetos.size()
+	for i in n_gerados:
+		objetos[i].set_meta("rid", i)          # o coop online acha cada objeto pelo índice
 	rng.seed = semente + 7     # daqui para frente o sorteio não precisa repetir
 
 	_novo_jogador(1, locais["iara"] if modo == "coop_in" else locais["inicio"])
@@ -307,6 +319,10 @@ func _nova_partida(p_modo := "historia", p_semente := -1) -> void:
 	cam.global_position = locais["inicio"]
 	cam.reset_smoothing()
 
+	if rede and rede.cliente():
+		_preparar_luz()
+		_ciclo()
+		return                                 # no convidado os zumbis vêm do anfitrião
 	# a delegacia não está vazia
 	for i in 4:
 		_nascer_zumbi(locais["policiais"] + Vector2(rng.randf_range(-300, 300), rng.randf_range(-260, 260)), "policial")
@@ -346,7 +362,7 @@ func _novo_jogador(n: int, p: Vector2) -> Node2D:
 
 
 func _entrar_p2() -> void:
-	if jogadores.size() >= 2 or not Input.get_connected_joypads().has(1):
+	if jogadores.size() >= 2 or not Input.get_connected_joypads().has(1) or rede.online():
 		return
 	var p1: Node2D = jogadores[0]
 	var onde := p1.global_position + Vector2(40, 10)
@@ -357,6 +373,19 @@ func _entrar_p2() -> void:
 	var j := _novo_jogador(2, onde)
 	j.luz_on = p1.luz_on
 	aviso("%s entrou no jogo (coop)!" % j.nome, Color("ffd166"))
+
+
+func entrar_remoto() -> Node2D:
+	## coop online: o jogador 2 é o amigo do outro console (no anfitrião, o rede.gd aperta os botões dele)
+	if jogadores.size() >= 2:
+		return jogadores[1]
+	var p1: Node2D = jogadores[0]
+	var onde := p1.global_position + Vector2(40, 10)
+	if modo == "coop_in" and locais.has("inicio") and p1.global_position.distance_to(locais["iara"]) < 200.0:
+		onde = locais["iara"] + Vector2(46, 8)
+	var j := _novo_jogador(2, onde)
+	j.luz_on = p1.luz_on
+	return j
 
 
 func _npc(id: String, p: Vector2) -> Node2D:
@@ -614,6 +643,7 @@ func mira_assistida(de: Vector2, dir: Vector2, alcance: float) -> Vector2:
 
 
 func molotov(p: Vector2) -> void:
+	rede.evento("fogo", p)
 	var l := nova_luz(Color(1.0, 0.55, 0.2), 2.2, false)
 	l.position = p
 	mundo.add_child(l)
@@ -625,6 +655,7 @@ func molotov(p: Vector2) -> void:
 
 func sangue(p: Vector2, r: float) -> void:
 	manchas.append({"pos": p + Vector2(rng.randf_range(-6, 6), rng.randf_range(-6, 6)), "r": r, "a": rng.randf() * TAU})
+	rede.evento("sangue", manchas[-1])
 	if manchas.size() > 260:
 		manchas.pop_front()
 	camada_sangue.queue_redraw()
@@ -632,9 +663,12 @@ func sangue(p: Vector2, r: float) -> void:
 
 func tremer(q: float) -> void:
 	tremor = maxf(tremor, q)
+	rede.evento("tremer", q)
 
 
-func onomato(texto: String, onde: Vector2, cor: Color, tam := 32) -> void:
+func onomato(texto: String, onde: Vector2, cor: Color, tam := 32, pela_rede := true) -> void:
+	if pela_rede:
+		rede.evento("ono", [texto, onde, cor, tam])
 	var o := preload("res://onomato.gd").new()
 	o.texto = texto
 	o.cor = cor
@@ -644,6 +678,7 @@ func onomato(texto: String, onde: Vector2, cor: Color, tam := 32) -> void:
 
 
 func aviso(texto: String, cor := Color.WHITE) -> void:
+	rede.evento("aviso", [texto, cor])
 	avisos.append({"texto": texto, "cor": cor, "t": 3.0})
 	if avisos.size() > 5:
 		avisos.pop_front()
@@ -857,6 +892,18 @@ func carregar() -> bool:
 # ---------------------------------------------------------------- laço
 
 func _process(d: float) -> void:
+	if estado in [ONLINE, SALA, CONECTANDO]:
+		rede.menu(d)
+		hud.queue_redraw()
+		return
+	if rede.cliente():
+		rede._quadro_visual(d)                 # o convidado só mostra: quem joga é o anfitrião
+		for a in avisos:
+			a["t"] -= d
+		avisos = avisos.filter(func(a): return a["t"] > 0.0)
+		_camera(d)
+		hud.queue_redraw()
+		return
 	match estado:
 		TITULO:
 			_menu_titulo()
@@ -873,7 +920,10 @@ func _process(d: float) -> void:
 			if Input.is_action_just_pressed("p2_pausa") and jogadores.size() < 2:
 				_entrar_p2()
 		PAUSA:
-			_menu(["Continuar", "Recomeçar", "Voltar ao título", "Sair do jogo"])
+			if rede.online():
+				_menu_online()
+			else:
+				_menu(["Continuar", "Recomeçar", "Voltar ao título", "Sair do jogo"])
 		CONVERSA:
 			if apertou("m_cima"):
 				historia.comando("cima")
@@ -885,7 +935,7 @@ func _process(d: float) -> void:
 			_menu_mochila()
 		FIM, CAPITULO:
 			if not hud.so_fade and hud.fade <= 0.05:
-				if estado == FIM and tem_save() and apertou("interagir"):
+				if estado == FIM and tem_save() and apertou("interagir") and not rede.online():
 					carregar()                       # volta para a última cama
 				elif apertou("interagir") or (estado == FIM and apertou("voltar")):
 					_nova_partida(modo)
@@ -909,6 +959,7 @@ func opcoes_titulo() -> Array:
 	ops.append({"id": "coop_cr", "txt": "Coop: Corvo e Rocha — O Preço do Ar%s" % ("" if dois else " (2º controle entra com Start)")})
 	ops.append({"id": "coop_in", "txt": "Coop: Iara e Nina — Fuga%s" % ("" if dois else " (2º controle entra com Start)")})
 	ops.append({"id": "sobrevivencia", "txt": "Sobrevivência (sem fim)"})
+	ops.append({"id": "online", "txt": "Coop online (internet ou mesma rede)"})
 	ops.append({"id": "sair", "txt": "Sair"})
 	return ops
 
@@ -935,6 +986,10 @@ func _menu_titulo() -> void:
 				if Input.get_connected_joypads().has(1):
 					_entrar_p2()
 				historia.iniciar()
+			"online":
+				rede.motivo = ""
+				rede.menu_sel = 0
+				estado = ONLINE
 			"sair":
 				get_tree().quit()
 
@@ -963,6 +1018,39 @@ func _menu(ops: Array) -> void:
 				menu_sel = 0
 			3:
 				get_tree().quit()
+
+
+func opcoes_pausa() -> Array:
+	if rede.online():
+		return ["Continuar", "Sair da sala", "Sair do jogo"]
+	return ["Continuar", "Recomeçar", "Voltar ao título", "Sair do jogo"]
+
+
+func _menu_online() -> void:
+	## pausa no coop online: o convidado sai sozinho; o anfitrião fecha a sala para os dois
+	var ops := opcoes_pausa()
+	if apertou("m_cima"):
+		menu_sel = wrapi(menu_sel - 1, 0, ops.size())
+	elif apertou("m_baixo"):
+		menu_sel = wrapi(menu_sel + 1, 0, ops.size())
+	elif apertou("voltar") or apertou("pausa"):
+		estado = JOGANDO
+	elif apertou("interagir"):
+		var do_amigo := Input.is_action_just_pressed("p2_interagir")
+		match menu_sel:
+			0:
+				estado = JOGANDO
+			1, 2:
+				if do_amigo:
+					rede.expulsar()
+					estado = JOGANDO
+					aviso("O parceiro saiu da sala.", Color("ff9f43"))
+				elif menu_sel == 1:
+					_nova_partida(modo)
+					estado = TITULO               # o rede.gd avisa o convidado e fecha
+					menu_sel = 0
+				else:
+					get_tree().quit()
 
 
 func itens_mochila(j: Node) -> Array:

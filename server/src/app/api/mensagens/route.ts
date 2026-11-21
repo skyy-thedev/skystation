@@ -12,6 +12,8 @@ const salaSchema = z.object({
   senha: z.string().max(32).default(""),
   crc: z.string().max(16).regex(/^[0-9A-Fa-f]*$/).optional(),
   core: z.string().max(80).optional(),
+  // DEADZONE online: outros endereços do mesmo anfitrião (IPv6, rede local, UPnP); o amigo tenta todos
+  alternativos: z.array(z.string().trim().min(3).max(100).regex(/^[A-Za-z0-9.:-]+$/)).max(8).optional(),
 });
 
 const envio = z.object({

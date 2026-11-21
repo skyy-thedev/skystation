@@ -1293,6 +1293,9 @@ func _entrar_netplay(msg_id: String) -> void:
 	var gid := _nulo(r.get("jogoId"))
 	var tn := _titulo_normal(_nulo(r.get("jogo")))
 	for g in games:
+		if sis == "deadzone" and str(g["id"]) == "deadzone":
+			alvo = g                 # coop online do DEADZONE: o jogo lê deadzone-entrar.json ao abrir
+			break
 		if str(g["sys"]) != sis:
 			continue
 		if str(g["id"]) == gid:
@@ -1302,6 +1305,7 @@ func _entrar_netplay(msg_id: String) -> void:
 			alvo = g
 	if alvo.is_empty():
 		DirAccess.remove_absolute(run_dir + "/netplay-entrar.json")
+		DirAccess.remove_absolute(run_dir + "/deadzone-entrar.json")
 		_toast("Você não tem %s (%s) neste console: copie o mesmo arquivo do amigo para jogar junto" % [
 			_nulo(r.get("jogo")), sis.to_upper()], 5.0, "pad")
 		return
