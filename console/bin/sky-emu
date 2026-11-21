@@ -451,6 +451,15 @@ ps4)
     EBOOT="$ROM"
     [ -d "$ROM" ] && EBOOT="$ROM/eboot.bin"
     [ -f "$EBOOT" ] || fail "PS4: a pasta do jogo precisa ter o eboot.bin."
+    # 13.13: módulos e fontes do sistema tirados do PS4 do próprio usuário. Coloque em SKYROMS/bios/ps4/sys_modules
+    # (os .sprx de /system/common/lib) e SKYROMS/bios/ps4/fonts (as fontes do sistema, como o
+    # que o dumper gerar). O shadPS4 procura em ~/.local/share/shadPS4/{sys_modules,fonts}.
+    SHAD="${XDG_DATA_HOME:-$HOME/.local/share}/shadPS4"
+    for d in sys_modules fonts; do
+        [ -d "/mnt/skyroms/bios/ps4/$d" ] || continue
+        mkdir -p "$SHAD/$d"
+        cp -rn "/mnt/skyroms/bios/ps4/$d/." "$SHAD/$d/" 2>/dev/null || true
+    done
     exec /opt/shadps4/AppRun --fullscreen true -g "$EBOOT"
     ;;
 switch)
