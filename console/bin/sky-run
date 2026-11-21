@@ -93,7 +93,8 @@ if [ "$code" -ne 0 ] && [ "$code" -ne 143 ] && [ -w /mnt/skyroms ]; then
     DIAG=/mnt/skyroms/diag
     mkdir -p "$DIAG" 2>/dev/null && {
         cp -f "$LOG" "$DIAG/$ID.log" 2>/dev/null
-        for extra in "$HOME/.cache/Vita3K/vita3k.log" "$HOME/.config/retroarch/logs/retroarch.log"; do
+        for extra in "$HOME/.cache/Vita3K/vita3k.log" "$HOME/.config/retroarch/logs/retroarch.log" \
+                     "$HOME/.cache/rpcs3/RPCS3.log"; do   # 13.7: o log do RPCS3 (o motivo do erro fica nele)
             [ -f "$extra" ] && [ "$(stat -c %Y "$extra")" -ge "$START" ] && cp -f "$extra" "$DIAG/$ID.$(basename "$extra")" 2>/dev/null
         done
     }

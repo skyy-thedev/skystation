@@ -18,6 +18,19 @@ fi
 
 # wlroots (base do cage) recusa renderização por software por padrão.
 export WLR_RENDERER_ALLOW_SOFTWARE=1
+# 13.7: teclado ABNT2 (com Ç). O cage e o gamescope leem o layout destas variáveis; sem elas ficava o
+# americano e o terminal secreto não digitava | ~ " nos lugares certos. Para trocar: ~/.config/skystation/teclado
+# com "layout variante" (ex.: "us" ou "br abnt2").
+if [ -z "${XKB_DEFAULT_LAYOUT:-}" ]; then
+    read -r kb_layout kb_variante 2>/dev/null <"$HOME/.config/skystation/teclado" || true
+    export XKB_DEFAULT_LAYOUT="${kb_layout:-br}"
+    if [ -n "${kb_variante:-}" ]; then
+        export XKB_DEFAULT_VARIANT="$kb_variante"
+    elif [ "$XKB_DEFAULT_LAYOUT" = br ]; then
+        export XKB_DEFAULT_VARIANT=abnt2
+    fi
+    unset kb_layout kb_variante
+fi
 # Cursores por hardware falham em várias VMs.
 export WLR_NO_HARDWARE_CURSORS=1
 
