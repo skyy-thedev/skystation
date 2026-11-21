@@ -301,7 +301,15 @@ GOW3 = """# SkyStation: teste 3 do God of War III (apague esta linha para editar
 Video:
   Frame limit: 30
 """
+# 13.7: Assassin's Creed (EUA) fechava 0,1 s depois de achar a GPU (RADV RENOIR, Mesa 26.2.6): "Verification
+# failed" em vk::die_with_error, antes de compilar qualquer shader. Os outros jogos de PS3 rodam no Vulkan; este
+# vai pelo OpenGL (mais lento, mas não passa por esse caminho do Vulkan). Se não abrir, apague e teste outra coisa.
+AC1_GL = """# SkyStation: Assassin's Creed pelo OpenGL (apague esta linha para editar à mão)
+Video:
+  Renderer: OpenGL
+"""
 POR_JOGO = {
+    "BLUS30089": AC1_GL,  # Assassin's Creed (EUA)
     # 8.3: o SPU "Mega" piorou as lutas (33 FPS vs 45 com o padrão "Safe"); voltou ao padrão.
     # 8.3.2: travado em 30 (as cenas leves não esquentam o processador antes das lutas) e
     # no máximo 4 SPURS por grupo (menos disputa pelos 6 núcleos do Ryzen 5 5500U).
