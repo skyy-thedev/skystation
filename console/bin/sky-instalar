@@ -203,6 +203,33 @@ def nome_do_jogo(arquivo):
     return n.strip() or "jogo"
 
 
+# 13.12: PS3 que não roda direto do .iso: vira pasta aqui, com a tela Instalando (antes era na hora de abrir o jogo,
+# sem nada na tela, e quem fechava deixava a extração pela metade). Assassin's Creed: pelo .iso o RPCS3 devolve o
+# caminho do disco vazio e o jogo fica em tela preta; a série também exige PS3_GAME/USRDIR/ASSASSIN_ISO.
+ISO_PARA_PASTA = {"BLUS30089", "BLES00158", "BLJM60052"}
+_PS3 = {}
+
+
+def _ps3_id(iso):
+    try:
+        chave = (iso, os.path.getsize(iso))
+    except OSError:
+        return ""
+    if chave not in _PS3:
+        try:
+            mod = importlib.machinery.SourceFileLoader("sky_ps3", os.path.join(BIN, "sky-ps3")).load_module()
+            _PS3[chave] = (mod.game_info(iso) or {}).get("id", "")
+        except Exception:
+            _PS3[chave] = ""
+    return _PS3[chave]
+
+
+def iso_vira_pasta(arq, sis):
+    return (sis == "ps3" and arq.lower().endswith(".iso")
+            and not os.path.isdir(os.path.join(os.path.splitext(arq)[0], "PS3_GAME"))
+            and _ps3_id(arq) in ISO_PARA_PASTA)
+
+
 def procurar(com_falhas=False):
     achados, vistos = [], set()
     falhas = {} if com_falhas else _falhas()
@@ -224,7 +251,8 @@ def procurar(com_falhas=False):
             for n in nomes:
                 arq = os.path.join(pasta, n)
                 pkg_solto = sis == "ps4" and n.lower().endswith(".pkg")     # 13.8: .pkg de PS4 sem compactar
-                if n.startswith(".") or not (pkg_solto or COMPACTADO.search(n)) or not _parte_principal(n) \
+                iso_ps3 = not n.startswith(".") and os.path.isfile(arq) and iso_vira_pasta(arq, sis)   # 13.12
+                if n.startswith(".") or not (pkg_solto or iso_ps3 or COMPACTADO.search(n)) or not _parte_principal(n) \
                         or not os.path.isfile(arq):
                     continue
                 if sis == "vita" and n.lower().endswith(".zip"):
@@ -244,7 +272,7 @@ def procurar(com_falhas=False):
                 if real in vistos or _desistiu(falhas, real, arq):
                     continue
                 vistos.add(real)
-                achados.append({"arquivo": arq, "nome": nome_do_jogo(arq), "sistema": sis,
+                achados.append({"arquivo": arq, "nome": os.path.splitext(n)[0] if iso_ps3 else nome_do_jogo(arq), "sistema": sis,
                                 "tamanho": sum(os.path.getsize(x) for x in partes)})
     return achados
 
@@ -651,6 +679,32 @@ def rodar():
                 st["atual"].update({"pct": round(p, 3), "etapa": "Instalando"})
                 _grava_estado(st)
 
+            if iso_vira_pasta(arq, sis):                             # 13.12: .iso de PS3 -> pasta
+                destino = os.path.splitext(arq)[0]
+                parcial = destino + ".parcial"
+                shutil.rmtree(parcial, ignore_errors=True)
+                total = os.path.getsize(arq)
+                if total + 200 * 1024 * 1024 > shutil.disk_usage(pasta).free:
+                    raise RuntimeError(f"falta espaço para preparar o jogo: precisa de {total / 1e9:.1f} GB")
+                st["atual"]["etapa"] = "Instalando"
+                _grava_estado(st)
+                t1 = time.time()
+                extrair(arq, parcial, total, progresso)
+                if not os.path.isdir(os.path.join(parcial, "PS3_GAME")):
+                    shutil.rmtree(parcial, ignore_errors=True)
+                    raise RuntimeError("o .iso abriu mas não tem PS3_GAME")
+                os.makedirs(os.path.join(parcial, "PS3_GAME", "USRDIR", "ASSASSIN_ISO"), exist_ok=True)
+                os.replace(parcial, destino)
+                guarda = os.path.join(pasta, ".iso-originais")
+                os.makedirs(guarda, exist_ok=True)
+                os.replace(arq, os.path.join(guarda, os.path.basename(arq)))
+                log(f"   .iso virou pasta em {time.time() - t1:.0f} s: {destino} (original em .iso-originais)", arq)
+                feitos.append({"nome": nome, "sistema": sis, "caminho": destino})
+                _esquece(arq)
+                _aviso("jogos")
+                _aviso("jogo", f"{nome} pronto para jogar ({NOMES.get(sis, sis)})")
+                st.update({"feitos": len(feitos), "erros": erros})
+                continue
             if sis == "ps4" and arq.lower().endswith(".pkg"):        # 13.8: .pkg solto
                 st["atual"]["etapa"] = "Instalando"
                 _grava_estado(st)

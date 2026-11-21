@@ -305,17 +305,8 @@ ps3)
         TID="$(python3 -c 'import importlib.machinery as m,sys; p=m.SourceFileLoader("p","/opt/skystation/bin/sky-ps3").load_module(); print((p.game_info(sys.argv[1]) or {}).get("id",""))' "$ROM" 2>/dev/null || true)"
         case " BLUS30089 BLES00158 BLJM60052 " in *" $TID "*)
             DEST="${ROM%.*}"
-            if [ ! -d "$DEST/PS3_GAME" ]; then
-                F7="$(command -v 7z || command -v 7zz || true)"
-                [ -n "$F7" ] || fail "Falta o 7-Zip para preparar este jogo. Rode Sistema → Atualizar o SkyStation."
-                echo "PS3: preparando o jogo (só na 1ª vez, uns minutos)." >"$MSG"
-                echo "sky-emu: $TID: extraindo o .iso para $DEST" >&2
-                rm -rf "$DEST.parcial"
-                "$F7" x -y -bd -bso0 -o"$DEST.parcial" "$ROM" >&2 || { rm -rf "$DEST.parcial"; fail "Não consegui extrair o .iso (espaço no disco?)."; }
-                mkdir -p "$DEST.parcial/PS3_GAME/USRDIR/ASSASSIN_ISO"
-                mv "$DEST.parcial" "$DEST"
-                mkdir -p "$(dirname "$ROM")/.iso-originais" && mv "$ROM" "$(dirname "$ROM")/.iso-originais/" || true
-            fi
+            # 13.12: a extração agora é do sky-instalar (tela Instalando, em segundo plano no menu).
+            [ -d "$DEST/PS3_GAME" ] || fail "PS3: este jogo está sendo preparado (tela Instalando, só na 1ª vez). Espere terminar e abra de novo."
             ROM="$DEST" ;;
         esac ;;
     esac
@@ -344,6 +335,15 @@ wiiu-solo)
         *.wux|*.wud)
             [ -s "$CEMU/keys.txt" ] || fail "Wii U: este jogo (.wux/.wud) é o disco criptografado e precisa da chave dele. Coloque o keys.txt (tirado do seu Wii U) em SKYROMS/bios/wiiu, ou use a versão .wua / em pasta, que não precisa." ;;
     esac
+    # 13.12: sem settings.xml o Cemu abre o assistente de primeira vez, e escolher a pasta nele travava (139:
+    # o seletor de arquivos do GTK quebra dentro do cage). Com este arquivo ele pula o assistente.
+    CCONF="${XDG_CONFIG_HOME:-$HOME/.config}/Cemu"
+    if [ ! -f "$CCONF/settings.xml" ]; then
+        mkdir -p "$CCONF"
+        printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<content>' '    <check_update>false</check_update>' \
+            '    <fullscreen>true</fullscreen>' '    <GamePaths>' "        <Entry>$(dirname "$ROM")</Entry>" '    </GamePaths>' \
+            '</content>' >"$CCONF/settings.xml"
+    fi
     # Sem controle configurado o Cemu não lê o DS4: na 1ª vez abre a tela do Cemu para configurar
     # (Opções → Configurações de entrada → API SDLController → escolher o controle → Salvar).
     if [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/Cemu/controllerProfiles/controller0.xml" ] \
@@ -387,8 +387,11 @@ vita-solo)
     if [ -n "$TID" ] && [ -f "$ROM" ]; then
         APP="$VPREF/ux0/app/$TID"
         # 13.11: a marca fica FORA da pasta do jogo (o Vita3K recria a pasta no fim da instalação e a apagava)
-        MARCA="$VPREF/.skystation-instalados/$TID"
-        [ -f "$APP/.skystation-instalado" ] && { mkdir -p "${MARCA%/*}"; mv -f "$APP/.skystation-instalado" "$MARCA"; }
+        # 13.12: marcas antigas (13.6–13.11) saíam antes da hora e o jogo ficava com o eboot.bin ainda
+        # criptografado ("Invalid SELF ... still encrypted", 21/nov). Só vale a marca nova, gravada depois
+        # do "installed successfully" do Vita3K; as antigas são ignoradas e o jogo reinstala uma vez.
+        MARCA="$VPREF/.skystation-instalados/$TID.ok"
+        rm -f "$APP/.skystation-instalado" "$VPREF/.skystation-instalados/$TID"
         if [ -f "$MARCA" ] && [ -f "$APP/eboot.bin" ]; then
             echo "sky-emu: PS Vita $TID já instalado: abre direto" >&2
             exec /opt/vita3k/AppRun -r "$TID"
@@ -398,6 +401,7 @@ vita-solo)
             rm -rf "$APP"
         fi
         echo "PS Vita: instalando o jogo (só na 1ª vez; pode levar alguns minutos com a tela parada). Não feche." >"$MSG"
+        rm -f "$HOME/.cache/Vita3K/vita3k.log"   # o "installed successfully" tem que ser desta vez
         (   antes=-1; parado=0
             while kill -0 $$ 2>/dev/null; do
                 sleep 3
