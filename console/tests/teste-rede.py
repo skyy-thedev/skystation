@@ -221,6 +221,24 @@ try:
        and entrada["senha"] == "abc123", "A aceita: os dados da sala ficam prontos para o sky-emu conectar")
     os.close(leitor)
     srv.shutdown()
+
+    # DEADZONE 0.8: coop online próprio (o jogo abre a sala; o convite leva todos os endereços)
+    B.jogo("deadzone", "DEADZONE", "")
+    ok(not B.sky("hospedar", idA, prog="sky-netplay")["ok"], "DEADZONE sem sala aberta: pede para abrir no jogo")
+    with open(os.path.join(B.run, "deadzone-sala.json"), "w") as f:
+        json.dump({"porta": 24680, "senha": "dz12ab34", "enderecos": ["2804:14c::1", "192.168.0.10", "$(rm -rf)"],
+                   "upnp": False}, f)
+    ok(B.sky("hospedar", idA, prog="sky-netplay")["ok"], "B convida A para o DEADZONE online")
+    A.sky("uma-vez", prog="sky-net")
+    dz = next(m for m in A.net()["mensagens"] if m.get("sistema") == "deadzone")
+    ok(dz["sala"]["ip"] == "2804:14c::1" and dz["sala"]["alternativos"][0] == "192.168.0.10"
+       and not any("rm" in x for x in dz["sala"]["alternativos"]) and dz["sala"]["senha"] == "dz12ab34",
+       "A recebe a sala do DEADZONE (IPv6 + rede local, endereço estranho fora)")
+    e = A.sky("entrar", dz["id"], prog="sky-netplay")
+    with open(os.path.join(A.run, "deadzone-entrar.json")) as f:
+        entrada = json.load(f)
+    ok(e["ok"] and e["sistema"] == "deadzone" and entrada["porta"] == 24680 and entrada["senha"] == "dz12ab34"
+       and "192.168.0.10" in entrada["alternativos"], "A aceita: deadzone-entrar.json pronto para o jogo")
     B.jogo(None)
 
     # ------------------------------------------------------------ saves na nuvem

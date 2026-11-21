@@ -18,9 +18,15 @@ Como funciona:
 
 Os dois precisam do mesmo jogo (mesmo arquivo) e da mesma versão do emulador — o SkyStation instala a
 mesma nos dois consoles. Saída: uma linha JSON, como os outros comandos do console.
+
+DEADZONE (0.8) tem coop online próprio, sem RetroArch: o jogo abre a sala (título → Coop online) e
+grava deadzone-sala.json com a porta, a senha e os endereços (UPnP, IPv6, rede local). "hospedar"
+junta o IP público (GET /api/rede/ip) e manda tudo no convite; "entrar" grava deadzone-entrar.json
+e o jogo, ao abrir, tenta todos os endereços ao mesmo tempo.
 """
 import json
 import os
+import re
 import sys
 import time
 import unicodedata
@@ -88,6 +94,36 @@ def comando_retroarch(cmd):
     return True
 
 
+ENDERECO_OK = re.compile(r"^[A-Za-z0-9.:-]{3,100}$")
+
+
+def hospedar_deadzone(amigo_id, cfg, titulo):
+    sala = skynet.ler_json(os.path.join(skynet.RUN, "deadzone-sala.json"), None)
+    if not (isinstance(sala, dict) and sala.get("porta") and sala.get("senha")):
+        return skynet.saida({"ok": False, "error": "Abra a sala no DEADZONE primeiro: título → Coop online → Abrir sala."})
+    ends = [str(e) for e in sala.get("enderecos", []) if ENDERECO_OK.match(str(e))]
+    # o IP público como a internet vê: serve se o roteador abriu a porta (UPnP) ou ela foi aberta à mão
+    try:
+        st, r = skynet.api("GET", "/api/rede/ip", cfg=cfg, token=False)
+        pub = r.get("ip") if st == 200 and isinstance(r, dict) else ""
+        if pub and ENDERECO_OK.match(pub) and pub not in ends:
+            ends.insert(1 if sala.get("upnp") else len(ends), pub)
+    except Exception:
+        pass
+    if not ends:
+        return skynet.saida({"ok": False, "error": "O console está sem rede."})
+    corpo = {"paraId": amigo_id, "tipo": "netplay", "texto": "Bora jogar DEADZONE? A sala está aberta!",
+             "jogoId": "deadzone", "jogo": titulo or "DEADZONE", "sistema": "deadzone",
+             "sala": {"ip": ends[0], "porta": int(sala["porta"]), "senha": str(sala["senha"])[:32],
+                      "alternativos": ends[1:9]}}
+    perfil, _ = skynet.perfis()
+    st, r = skynet.api("POST", "/api/mensagens", corpo, perfil=perfil, cfg=cfg)
+    if st not in (200, 201):
+        return skynet.saida({"ok": False, "error": skynet.mensagem(r, "Não consegui mandar o convite.")})
+    skynet.aviso("netplay", "Convite do DEADZONE enviado: quando o amigo aceitar, ele entra na sua sala.", historico=False)
+    return skynet.saida({"ok": True, "message": "Convite enviado: a sala do DEADZONE está aberta"})
+
+
 def hospedar(amigo_id):
     cfg = skynet.config()
     if not skynet.conectado(cfg):
@@ -96,6 +132,8 @@ def hospedar(amigo_id):
     if not jogo:
         return skynet.saida({"ok": False, "error": "Abra o jogo primeiro."})
     gid, titulo, sistema = jogo
+    if gid == "deadzone":
+        return hospedar_deadzone(amigo_id, cfg, titulo)
     if sistema not in SISTEMAS:
         return skynet.saida({"ok": False, "error": "Jogar junto online funciona em PS1, SNES, N64, NES, Mega Drive e Game Boy."})
     np = skynet.ler_json(os.path.join(skynet.RUN, "netplay.json"), {}) or {}
@@ -138,8 +176,12 @@ def entrar(msg_id):
     if not m or m.get("tipo") != "netplay" or not isinstance(m.get("sala"), dict):
         return skynet.saida({"ok": False, "error": "Esse convite não existe mais."})
     sala = m["sala"]
-    destino = os.path.join(skynet.RUN, "netplay-entrar.json")
-    skynet.gravar_json(destino, {k: sala.get(k) for k in ("ip", "porta", "sessao", "senha")}, 0o600)
+    if m.get("sistema") == "deadzone":
+        destino = os.path.join(skynet.RUN, "deadzone-entrar.json")
+        skynet.gravar_json(destino, {k: sala.get(k) for k in ("ip", "porta", "senha", "alternativos")}, 0o600)
+    else:
+        destino = os.path.join(skynet.RUN, "netplay-entrar.json")
+        skynet.gravar_json(destino, {k: sala.get(k) for k in ("ip", "porta", "sessao", "senha")}, 0o600)
     return skynet.saida({"ok": True, "jogoId": m.get("jogoId"), "jogo": m.get("jogo"), "sistema": m.get("sistema"),
                          "titulo_normal": normal(m.get("jogo") or ""), "de": (m.get("de") or {}).get("id")})
 

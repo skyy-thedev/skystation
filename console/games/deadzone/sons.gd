@@ -54,6 +54,8 @@ func _ready() -> void:
 func tocar(nome: String, onde: Variant = null, vol := 0.0, tom := 1.0) -> void:
 	if not bancos.has(nome) or main == null:
 		return
+	if main.rede and nome not in ["geiger", "coracao"]:
+		main.rede.evento("som", [nome, onde, vol, tom])     # coop online: o convidado ouve também
 	var lista: Array = bancos[nome]
 	var s: AudioStreamWAV = lista[rng.randi_range(0, lista.size() - 1)]
 	if onde == null:
@@ -152,7 +154,7 @@ func _onomato(nome: String, pos: Vector2) -> void:
 	t_onomato[nome] = agora
 	var o: Array = ONOMATO[nome]
 	var textos: Array = o[0]
-	main.onomato(textos[rng.randi_range(0, textos.size() - 1)], pos + Vector2(rng.randf_range(-18, 18), -58), o[1], o[2])
+	main.onomato(textos[rng.randi_range(0, textos.size() - 1)], pos + Vector2(rng.randf_range(-18, 18), -58), o[1], o[2], false)
 	if o[3] > 0.0 and pos.distance_to(main.cam.global_position) < 700.0:
 		main.tremer(o[3])
 

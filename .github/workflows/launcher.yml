@@ -64,3 +64,5 @@ jobs:
             test "${PIPESTATUS[0]}" = 0
             grep -q "RESULTADO: tudo certo" "/tmp/zm-$t.log"
           done
+          # coop online: dois jogos ao mesmo tempo (anfitrião e convidado) conversando por UDP
+          GODOT=./godot sh console/tests/deadzone/online.sh

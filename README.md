@@ -154,7 +154,7 @@ PS1, SNES, N64, NES, Mega Drive e Game Boy: o netplay do RetroArch com convite p
 - `sky-netplay hospedar|entrar|sala` faz o trabalho; o `sky-emu` deixa todo jogo de RetroArch pronto para virar sala.
 - PS1 e N64 podem perder a sincronia em alguns jogos (limitação dos núcleos); SNES, NES e Mega Drive são os mais estáveis.
 
-## DEADZONE — primeiro jogo oficial (versão 0.7 demo; antes "Zona Morta")
+## DEADZONE — primeiro jogo oficial (versão 0.8 demo; antes "Zona Morta")
 
 RPG de sobrevivência zumbi em **2.5D** (Godot, `console/games/deadzone`) com cara de **história em quadrinhos**.
 A arte (retratos, peças do mapa, ícones, chão, telas e páginas de HQ) foi gerada por IA a partir da direção de
@@ -233,7 +233,26 @@ sintetizados. Fontes: Bangers e Comic Neue (OFL). A bíblia da história e o rot
     foge com a Nina: sair do bunker sem ser vista, suprimentos, o rádio que põe preço na cabeça dela, carro,
     pedágio do Tião, rumo à Serra). Cada personagem tem vida, velocidade, ruído e armas próprias
     (`dados.PERSONAGENS`).
-- **Testes:** `console/tests/deadzone/roteiro.gd` joga o capítulo inteiro (31 checagens, inclusive salvar e
+- **0.8 — coop online** (`rede.gd`): título → **Coop online** → abrir sala (Corvo e Rocha, Iara e Nina ou
+  Sobrevivência) ou entrar. Um console é o **anfitrião** (roda o jogo de verdade: zumbis, história, saves); o
+  outro é o **convidado**: gera a mesma cidade pela semente, não simula nada e mostra o que chega; os botões dele
+  viajam até o anfitrião e viram o jogador 2 de lá. ENet (UDP) direto, porta **24680**, sem servidor no meio:
+  - **Achar a sala:** na mesma rede ela aparece sozinha (anúncio na UDP 24681). Pela internet, a sala lista os
+    amigos online da SkyNetwork para convidar (ou Home → Amigos → Jogar junto); o `sky-netplay hospedar`
+    manda no convite todos os endereços (UPnP do roteador, IPv6, rede local e o IP público de
+    `GET /api/rede/ip`, campo novo `sala.alternativos`) e o convidado tenta todos ao mesmo tempo. Aceitar o
+    convite no launcher abre o DEADZONE já entrando (`deadzone-entrar.json`), ou dá para entrar pela tela
+    do Coop online. Senha da sala sorteada; versões diferentes não entram.
+  - **O que viaja:** controle do convidado (até 60x/s, com contador de apertos: toque rápido não se perde),
+    fotos do mundo 20x/s (jogadores, zumbis, carros, NPCs, relógio, fase de alerta), estado lento 4x/s
+    (mochilas, história, falas), objetos só quando mudam, e eventos (sons, onomatopeias, avisos, sangue,
+    fogo, itens voando). O pause é dos dois; "Sair da sala" do convidado só tira ele (a sala continua para
+    voltar), o do anfitrião fecha para os dois.
+  - **Limite conhecido:** os dois atrás de CGNAT sem IPv6 e sem UPnP não se acham (falta um servidor de
+    retransmissão; fica para depois). Para testar sem rede: `--sala=coop_cr` e `--entrar=IP,PORTA,SENHA`.
+- **Testes:** `console/tests/deadzone/online.sh` roda dois jogos ao mesmo tempo (anfitrião e convidado) e
+  confere entrada com senha, o jogador 2 andando e apertando de longe, zumbis, avisos, objetos e a saída.
+  `console/tests/deadzone/roteiro.gd` joga o capítulo inteiro (31 checagens, inclusive salvar e
   carregar), `controles.gd` aperta os botões e `furtivo.gd` testa cone de visão, "!", fases, abate silencioso,
   agachar, uso de item (e a interrupção) e a mochila em grade; `tensao.gd` testa ruído, tensão, cigarro e as
   duplas do coop; os quatro rodam no CI do launcher. `console/tests/teste-controle-som.py` testa o

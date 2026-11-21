@@ -52,6 +52,7 @@ var golpe_anim := 0.0
 var tiros: Array = []                   # rastros {de, ate, t}
 var passo := 0.0
 var mouse_t := 0.0
+var mira_rede := Vector2.ZERO          # coop online: o analógico/mouse do amigo (rede.gd)
 
 var carro: Node = null
 var caido := false
@@ -410,6 +411,8 @@ func _physics_process(d: float) -> void:
 	# mira: analógico direito > mouse (jogador 1) > direção do movimento
 	var dev: int = main.dispositivo(n)
 	var rs := Vector2(Input.get_joy_axis(dev, JOY_AXIS_RIGHT_X), Input.get_joy_axis(dev, JOY_AXIS_RIGHT_Y)) if dev >= 0 else Vector2.ZERO
+	if rs.length() <= 0.35 and mira_rede.length() > 0.35:
+		rs = mira_rede
 	if rs.length() > 0.35:
 		mira = rs.normalized()
 	elif n == 1 and mouse_t > 0.0:

@@ -117,6 +117,9 @@ func _tela(p: Vector2) -> Vector2:
 func _draw() -> void:
 	var w := size.x
 	var h := size.y
+	if main.estado in [main.ONLINE, main.SALA, main.CONECTANDO]:
+		main.rede.desenhar(self, w, h)
+		return
 	if main.estado == main.TITULO:
 		_titulo(w, h)
 		return
@@ -389,6 +392,7 @@ func _chave(it: Dictionary) -> String:
 
 
 func voar(item: String, de: Vector2, dono := 1) -> void:
+	main.rede.evento("voar", [item, de, dono])
 	if voando.size() < 8:
 		voando.append({"item": item, "de": de, "dono": dono, "t": 0.0})
 
@@ -867,7 +871,7 @@ func _titulo(w: float, h: float) -> void:
 	_fundo("titulo", w, h)
 	draw_rect(Rect2(0, h * 0.33, w, h * 0.67), Color(0, 0, 0, 0.5))
 	_logo(Vector2(w / 2, h * 0.2), 132)
-	_txt("Versão 0.7 (demo) · Jogo oficial da SkyStation · Brasil, 2033", Vector2(0, h * 0.2 + 44), 18, Color(1, 1, 1, 0.8), w, HORIZONTAL_ALIGNMENT_CENTER)
+	_txt("Versão 0.8 (demo) · Jogo oficial da SkyStation · Brasil, 2033", Vector2(0, h * 0.2 + 44), 18, Color(1, 1, 1, 0.8), w, HORIZONTAL_ALIGNMENT_CENTER)
 	var ops: Array = main.opcoes_titulo()
 	for i in ops.size():
 		var y := h * 0.40 + i * 44
@@ -888,7 +892,7 @@ func _titulo(w: float, h: float) -> void:
 func _pausa(w: float, h: float) -> void:
 	draw_rect(Rect2(0, 0, w, h), Color(0, 0, 0, 0.65))
 	_txt("Pausa", Vector2(0, h * 0.26), 40, Color.WHITE, w, HORIZONTAL_ALIGNMENT_CENTER)
-	var ops := ["Continuar", "Recomeçar", "Voltar ao título", "Sair do jogo"]
+	var ops: Array = main.opcoes_pausa()
 	for i in ops.size():
 		var y := h * 0.38 + i * 44
 		if i == main.menu_sel:

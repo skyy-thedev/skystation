@@ -142,6 +142,15 @@ try {
   sb = await api("POST", "/api/sync", { ...B, corpo: { desde: marca2 } });
   const np = sb.dados.mensagens.find((m) => m.tipo === "netplay");
   ok(np && np.sala.sessao === sala.sessao && np.sala.porta === 55435 && np.jogo === "Super Mario World", "B recebe a sala do netplay no sync");
+  // DEADZONE online: a sala leva os outros endereços do anfitrião
+  const salaDz = { ip: "200.1.2.3", porta: 24680, senha: "a1b2c3d4", alternativos: ["2804:14c::1", "192.168.0.10"] };
+  ok((await api("POST", "/api/mensagens", { ...A, corpo: { paraId: idB, tipo: "netplay", texto: "Bora pro DEADZONE?", jogoId: "deadzone", jogo: "DEADZONE", sistema: "deadzone", sala: salaDz } })).status === 201, "convite do DEADZONE online");
+  sb = await api("POST", "/api/sync", { ...B, corpo: { desde: marca2 } });
+  const dz = sb.dados.mensagens.find((m) => m.sistema === "deadzone");
+  ok(dz && dz.sala.alternativos.length === 2 && dz.sala.alternativos[0] === "2804:14c::1", "B recebe os endereços alternativos");
+  ok((await api("POST", "/api/mensagens", { ...A, corpo: { paraId: idB, tipo: "netplay", texto: "x", sistema: "deadzone", sala: { ...salaDz, alternativos: ["$(rm)"] } } })).status === 400, "endereço estranho = 400");
+  const ipq = await api("GET", "/api/rede/ip", {});
+  ok(ipq.status === 200 && typeof ipq.dados.ip === "string", "GET /api/rede/ip responde");
   await api("POST", "/api/mensagens/lidas", { ...B, corpo: { deId: idA } });
 
   // ---------------------------------------------------------------- troféus
