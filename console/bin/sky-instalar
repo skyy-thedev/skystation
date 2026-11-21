@@ -195,7 +195,7 @@ def _parado(arq, espera=2.0):
 
 def nome_do_jogo(arquivo):
     n = os.path.basename(arquivo)
-    n = re.sub(r"(\.part0*\d+)?\.(zip|7z|rar)(\.\d{3})?$", "", n, flags=re.I)
+    n = re.sub(r"(\.part0*\d+)?\.(zip|7z|rar|pkg)(\.\d{3})?$", "", n, flags=re.I)
     return n.strip() or "jogo"
 
 
@@ -219,7 +219,9 @@ def procurar(com_falhas=False):
                 continue
             for n in nomes:
                 arq = os.path.join(pasta, n)
-                if n.startswith(".") or not COMPACTADO.search(n) or not _parte_principal(n) or not os.path.isfile(arq):
+                pkg_solto = sis == "ps4" and n.lower().endswith(".pkg")     # 13.8: .pkg de PS4 sem compactar
+                if n.startswith(".") or not (pkg_solto or COMPACTADO.search(n)) or not _parte_principal(n) \
+                        or not os.path.isfile(arq):
                     continue
                 if sis == "vita" and n.lower().endswith(".zip"):
                     continue                         # o .zip É o jogo de Vita
@@ -296,10 +298,85 @@ def conteudo_ok(arquivo, sis):
     nomes = [n.replace("\\", "/") for n in _nomes_de_dentro(arquivo)]
     if sis == "ps4" and nomes:
         base = {os.path.basename(n).lower() for n in nomes}
-        if "eboot.bin" not in base and any(n.lower().endswith(".pkg") for n in nomes):
-            return ("é um .pkg de PS4: o emulador (shadPS4) não instala .pkg, só abre o jogo já extraído "
-                    "(a pasta CUSA… com eboot.bin e sce_sys). Baixe a versão em pasta")
+        if "eboot.bin" not in base and any(n.lower().endswith(".pkg") for n in nomes) and not os.access(ORBIS, os.X_OK):
+            return ("é um .pkg de PS4 e o extrator de .pkg ainda não está instalado no console. "
+                    "Rode Sistema → Atualizar o SkyStation (com internet) e ele tenta de novo")
     return None
+
+
+ORBIS = "/opt/orbis/bin/orbis-pkg-util"
+
+
+def _pkgs_em(caminho):
+    """.pkg dentro do que foi extraído (arquivo solto ou pasta), só se não houver já um eboot.bin."""
+    if os.path.isfile(caminho):
+        return [caminho] if caminho.lower().endswith(".pkg") else []
+    achados, tem_eboot = [], False
+    for d, _, fs in os.walk(caminho):
+        for x in fs:
+            if x.lower() == "eboot.bin":
+                tem_eboot = True
+            elif x.lower().endswith(".pkg"):
+                achados.append(os.path.join(d, x))
+    return [] if tem_eboot else sorted(achados, key=os.path.getsize, reverse=True)
+
+
+def pkg_info(pkg):
+    """Title ID e tipo do .pkg (orbis-pkg-util info)."""
+    try:
+        r = subprocess.run([ORBIS, "info", pkg], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    d = {}
+    for ln in r.stdout.splitlines():
+        if ":" in ln:
+            k, v = ln.split(":", 1)
+            d[k.strip().lower()] = v.strip()
+    return d
+
+
+def instalar_pkg(pkg, pasta_sistema, nome, progresso):
+    """13.8: .pkg de PS4 -> pasta do jogo (eboot.bin + sce_sys) que o shadPS4 abre. Devolve o caminho final."""
+    if not os.access(ORBIS, os.X_OK):
+        raise RuntimeError("falta o extrator de .pkg de PS4. Rode Sistema → Atualizar o SkyStation (com internet)")
+    info = pkg_info(pkg)
+    tid = info.get("title id", "") or nome
+    tipo = info.get("content type", "").lower()
+    log(f"   .pkg: {tid} · {info.get('content type', '?')} · DRM {info.get('drm type', '?')}")
+    if any(x in tipo for x in ("patch", "additional content", "app license")):   # DP, AC, AL (não é o jogo)
+        raise RuntimeError(f"este .pkg é atualização ou DLC ({info.get('content type')}), não o jogo. Instale o jogo base primeiro")
+    total = os.path.getsize(pkg)
+    livre = shutil.disk_usage(pasta_sistema).free
+    if total + 200 * 1024 * 1024 > livre:
+        raise RuntimeError(f"falta espaço para abrir o .pkg: precisa de {total / 1e9:.1f} GB e há {livre / 1e9:.1f} GB livres")
+    tmp = os.path.join(pasta_sistema, f".{tid}.pkg-instalando")
+    shutil.rmtree(tmp, ignore_errors=True)
+    proc = subprocess.Popen([ORBIS, "extract", pkg, "-o", tmp, "-q", "-f"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    while proc.poll() is None:
+        time.sleep(0.5)
+        progresso(min(0.99, _du(tmp) / total) if total else 0.5)
+    if proc.returncode != 0:
+        err = (proc.stderr.read() if proc.stderr else "").strip().splitlines()
+        shutil.rmtree(tmp, ignore_errors=True)
+        motivo = err[-1] if err else f"código {proc.returncode}"
+        log(f"   orbis-pkg-util: {' | '.join(err[-6:])}")
+        if any(x in motivo.lower() for x in ("decrypt", "key", "ekpfs", "encrypted")):
+            motivo = "o .pkg é criptografado de loja (só .pkg 'fake'/fpkg abre no emulador)"
+        raise RuntimeError(f"não consegui abrir o .pkg: {motivo}"[:200])
+    jogo = None      # a pasta com eboot.bin mais perto da raiz
+    for d, _, fs in os.walk(tmp):
+        if any(x.lower() == "eboot.bin" for x in fs):
+            if jogo is None or d.count(os.sep) < jogo.count(os.sep):
+                jogo = d
+    if not jogo:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise RuntimeError("o .pkg abriu mas não tem eboot.bin (é atualização, DLC ou tema?)")
+    final = _sem_conflito(os.path.join(pasta_sistema, nome))
+    os.replace(jogo, final)
+    shutil.rmtree(tmp, ignore_errors=True)
+    log(f"   .pkg aberto: {final}")
+    return final
 
 
 def _iso_raiz(caminho):
@@ -562,6 +639,22 @@ def rodar():
                 continue                       # desistiu por agora: a próxima procura do menu pega de novo
             if not JOGOS.gravavel(pasta):
                 raise RuntimeError("a pasta está só leitura (no Windows, desligue a Inicialização rápida)")
+            def progresso(p):
+                st["atual"].update({"pct": round(p, 3), "etapa": "Instalando"})
+                _grava_estado(st)
+
+            if sis == "ps4" and arq.lower().endswith(".pkg"):        # 13.8: .pkg solto
+                st["atual"]["etapa"] = "Instalando"
+                _grava_estado(st)
+                final = instalar_pkg(arq, pasta, nome, progresso)
+                os.remove(arq)
+                feitos.append({"nome": nome, "sistema": sis, "caminho": final})
+                _esquece(arq)
+                log(f"   ok em {time.time() - t0:.0f} s: {final}", arq)
+                _aviso("jogos")
+                _aviso("jogo", f"{nome} instalado ({NOMES.get(sis, sis)})")
+                st.update({"feitos": len(feitos), "erros": erros})
+                continue
             ruim = cabecalho_ok(arq)
             if ruim:
                 raise RuntimeError(ruim)
@@ -583,10 +676,6 @@ def rodar():
                 if not seg["ok"]:
                     raise Bloqueado(f"bloqueado pelo sky-security: {seg['motivo']}. Está em SKYROMS/.quarentena")
 
-            def progresso(p):
-                st["atual"].update({"pct": round(p, 3), "etapa": "Instalando"})
-                _grava_estado(st)
-
             st["atual"]["etapa"] = "Instalando"
             t1 = time.time()
             extrair(arq, tmp, total, progresso)
@@ -594,6 +683,20 @@ def rodar():
             st["atual"].update({"pct": 1.0, "etapa": "Finalizando"})
             _grava_estado(st)
             final = posicionar(_limpar(tmp), pasta, nome, sis)
+            pkgs = _pkgs_em(final) if sis == "ps4" else []
+            if pkgs:                       # 13.8: o compactado trazia um .pkg (ex.: P.T.): abre o maior
+                st["atual"].update({"pct": 0.0, "etapa": "Instalando"})
+                _grava_estado(st)
+                velho = final
+                final = instalar_pkg(pkgs[0], pasta, nome + " (pkg)" if os.path.isdir(velho) else nome, progresso)
+                if os.path.isdir(velho):
+                    shutil.rmtree(velho, ignore_errors=True)
+                else:
+                    os.remove(velho)
+                if final.endswith(" (pkg)"):
+                    limpo = _sem_conflito(final[:-6])
+                    os.replace(final, limpo)
+                    final = limpo
             certo = sistema_do_iso(final) if sis in ("ps1", "ps2", "ps3") and os.path.isfile(final) else None
             if certo and certo != sis:     # ex.: Gran Turismo 3 (PS2) baixado na pasta ps3
                 destino = _sem_conflito(os.path.join(_pasta_do_sistema(pasta, certo), os.path.basename(final)))

@@ -238,6 +238,11 @@ if [ ! -x /opt/vita3k/AppRun ] && { [ -f /opt/skystation/emu/cores/flycast_libre
     timeout 900 bash "$SRC/setup/fase13.sh" --so-vita || echo "    AVISO: não consegui instalar o Vita3K agora (sem internet?); tenta de novo na próxima atualização."
 fi
 
+# 13.8: extrator de .pkg de PS4 (o sky-instalar usa para transformar o .pkg na pasta que o shadPS4 abre).
+if [ -x /opt/shadps4/AppRun ] && [ ! -x /opt/orbis/bin/orbis-pkg-util ]; then
+    timeout 1200 bash "$SRC/setup/fase13.sh" --so-pkg || echo "    AVISO: extrator de .pkg não instalado agora; tenta de novo na próxima atualização."
+fi
+
 # Fase 13.1: jogos que chegam compactados (.zip/.7z/.rar) são instalados pelo sky-instalar com o 7-Zip
 # (que abre RAR/RAR5 também). O pacote se chama "7zip" no Arch atual e "p7zip" nos mais antigos.
 if ! command -v 7z >/dev/null 2>&1 && ! command -v 7zz >/dev/null 2>&1; then

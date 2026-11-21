@@ -81,6 +81,29 @@ core "Dreamcast" flycast || true
 core "Saturn (com BIOS)" mednafen_saturn || true
 core "Saturn (sem BIOS)" yabasanshiro || true
 
+# 13.8: extrator de .pkg de PS4. O shadPS4 tirou o instalador de .pkg; o orbis-pkg-util (Rust, MIT/Apache,
+# github.com/videobitva/orbis) extrai para a pasta CUSA… que ele abre. Compila uma vez aqui (cargo) e tira o
+# compilador depois, para não ocupar o pendrive. Uso: fase13.sh --so-pkg (chamado pelo atualizar.sh).
+extrator_pkg() {
+    [ -x /opt/orbis/bin/orbis-pkg-util ] && { echo "    extrator de .pkg (PS4): ok"; return 0; }
+    local tinha_rust=1
+    command -v cargo >/dev/null 2>&1 || { tinha_rust=0; pacman -S --needed --noconfirm rust >/dev/null 2>&1 || true; }
+    command -v cargo >/dev/null 2>&1 || { echo "    extrator de .pkg: sem o compilador Rust (sem internet?)"; anota "orbis: sem cargo"; return 1; }
+    echo "    compilando o extrator de .pkg de PS4 (orbis-pkg-util; uns minutos, só uma vez)…"
+    if CARGO_HOME="$TMP/cargo" cargo install --locked orbis-pkg-util --version 0.1.0 --root /opt/orbis >>"$LOG_INST" 2>&1; then
+        echo "    extrator de .pkg instalado em /opt/orbis"; anota "orbis-pkg-util ok"
+    else
+        echo "    AVISO: não consegui compilar o extrator de .pkg (detalhes em SKYROMS/diag-instalar.txt)"
+        anota "orbis-pkg-util falhou"; copia_log
+    fi
+    [ "$tinha_rust" -eq 0 ] && pacman -Rns --noconfirm rust >/dev/null 2>&1 || true
+    [ -x /opt/orbis/bin/orbis-pkg-util ]
+}
+if [ "${1:-}" = "--so-pkg" ]; then
+    extrator_pkg || exit 1
+    exit 0
+fi
+
 # 13.5: "fase13.sh --so-vita" (chamado pelo atualizar.sh) instala só o Vita3K e sai.
 if [ "${1:-}" = "--so-vita" ]; then
     programa "Vita3K (PS Vita)" /opt/vita3k Vita3K/Vita3K '\.AppImage$' 'x86_64' || exit 1
@@ -96,6 +119,7 @@ core "Xbox original" xemu || programa "xemu (Xbox)" /opt/xemu xemu-project/xemu 
 
 echo "==> [3/5] PS4 (shadPS4, experimental)"
 programa "shadPS4 (PS4)" /opt/shadps4 shadps4-emu/shadPS4 'linux.*(\.zip|\.AppImage|\.tar\.gz)$' 'sdl' || true
+extrator_pkg || true
 
 echo "==> [4/5] Switch 1 (só testes)"
 # Os emuladores de Switch vivem fugindo de pedidos de remoção da Nintendo e há sites FALSOS com vírus
