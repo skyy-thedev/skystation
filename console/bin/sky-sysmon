@@ -359,10 +359,69 @@ def resumo(base):
     return len(linhas), destino
 
 
+def _threads(pids):
+    """tid -> (nome da thread, ticks de CPU) dos processos dados."""
+    out = {}
+    for pid in pids:
+        for d in glob.glob(f"/proc/{pid}/task/[0-9]*"):
+            try:
+                st = ler(d + "/stat")
+                c = st[st.rindex(")") + 2:].split()
+                out[d.rsplit("/", 1)[1]] = (ler(d + "/comm") or "?", int(c[11]) + int(c[12]))
+            except (ValueError, IndexError):
+                pass
+    return out
+
+
+def anotar_menu_pesado(base, cpu_menu):
+    """13.6: o menu passou de 2 núcleos (21/nov: 900% por 9 min logo depois de uma atualização, sem
+    tocar no disco). Anota quais threads do Godot estão gastando, para achar a culpada."""
+    pids = [pid for pid, v in processos().items() if v[0] == "menu"]
+    a = _threads(pids)
+    time.sleep(1.0)
+    b = _threads(pids)
+    linhas = []
+    for tid, (nome, t1) in b.items():
+        if tid in a:
+            pct = (t1 - a[tid][1]) * 100.0 / TICKS
+            if pct >= 5:
+                linhas.append((pct, tid, nome))
+    linhas.sort(reverse=True)
+    destino = os.path.join(base, "sistema", f"menu-pesado-{time.strftime('%Y-%m-%d')}.txt")
+    os.makedirs(os.path.dirname(destino), exist_ok=True)
+    with open(destino, "a", encoding="utf-8") as f:
+        f.write(f"{time.strftime('%H:%M:%S')}  menu {cpu_menu:.0f}%  versão {ler('/opt/skystation/VERSION')}  "
+                f"threads: {len(b)}\n")
+        for pct, tid, nome in linhas[:15]:
+            f.write(f"    {pct:6.1f}%  {nome}  (tid {tid})\n")
+
+
+def anotar_relogio(base):
+    """13.6: o Windows continuava 3 h adiantado em 21/nov. Uma linha por sessão para conferir o 13.4."""
+    def tdc(p):
+        try:
+            return subprocess.run(["timedatectl", "show", "-p", p, "--value"], capture_output=True,
+                                  text=True, timeout=10).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    rtc = (ler("/sys/class/rtc/rtc0/date") + " " + ler("/sys/class/rtc/rtc0/time")).strip()
+    destino = os.path.join(base, "sistema", "relogio.csv")
+    os.makedirs(os.path.dirname(destino), exist_ok=True)
+    novo = not os.path.exists(destino)
+    with open(destino, "a", newline="", encoding="utf-8") as f:
+        w = csv.writer(f, delimiter=";")
+        if novo:
+            w.writerow(["hora_linux", "relogio_placa", "placa_em_horario_local", "ntp_sincronizado", "fuso", "versao"])
+        w.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), rtc, tdc("LocalRTC"), tdc("NTPSynchronized"),
+                    tdc("Timezone"), ler("/opt/skystation/VERSION")])
+
+
 def laco():
     m = Medidor()
     inicio = time.time()
     boot_feito = False
+    relogio_em = time.time() + 120     # depois do NTP ter tido tempo de acertar
+    pesado_em = 0.0
     while True:
         if not ligado():
             m.antes = None
@@ -379,6 +438,13 @@ def laco():
             linha = m.amostra()
             if linha:
                 gravar(linha, os.path.join(base, "sistema", f"sistema-{time.strftime('%Y-%m-%d')}.csv"))
+                cpu_menu = float(linha.get("cpu_menu") or 0)
+                if cpu_menu > 200 and time.time() >= pesado_em:
+                    pesado_em = time.time() + 60
+                    anotar_menu_pesado(base, cpu_menu)
+            if relogio_em and time.time() >= relogio_em:
+                relogio_em = 0
+                anotar_relogio(base)
         except Exception as e:      # medir nunca pode derrubar nada
             sys.stderr.write(f"sky-sysmon: {e}\n")
         time.sleep(INTERVALO)

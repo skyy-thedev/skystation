@@ -4,6 +4,13 @@
   sky-instalar procurar     -> {"pendentes": [{"arquivo", "nome", "sistema", "tamanho"}]}
   sky-instalar rodar        -> instala todos, um por vez (o menu abre em segundo plano)
   sky-instalar estado       -> o que está acontecendo agora (o mesmo de instalando.json)
+  sky-instalar falhas       -> {"falhas": [...]} os que não instalaram (e por quê)
+  sky-instalar repetir [arq]-> esquece a falha (de um arquivo ou de todos) para tentar de novo
+
+13.6 (21/nov): tudo fica anotado em SKYROMS/diag/instalar.log (cada etapa, com hora e duração) e a lista
+do que falhou em SKYROMS/diag/instalar-falhas.txt, para ler no Windows. Antes de qualquer coisa pesada,
+um teste rápido do cabeçalho pega .7z/.zip incompletos sem ler GBs; cada arquivo tem no máximo 2
+tentativas; e um ISO de PS1/PS2/PS3 que caiu na pasta errada vai para a pasta do console certo.
 
 Como instala:
   1. Extrai em uma pasta escondida ao lado (.nome.instalando), no mesmo disco: no fim é só renomear.
@@ -54,6 +61,31 @@ COMPACTADO = re.compile(r"\.(zip|7z|rar)$|\.7z\.001$|\.zip\.001$", re.I)
 PARTE_N = re.compile(r"\.part0*(\d+)\.rar$", re.I)
 MIN_IDADE = 60          # segundos sem mudar para considerar que terminou de copiar
 FALHAS = os.path.join(HOME, ".cache/skystation/instalar-falhas.json")
+MAX_TENTATIVAS = 2      # o mesmo arquivo (mesmo tamanho e data) não é tentado mais que isso
+_LOG = {"arq": None}
+
+
+def _base_de(arquivo):
+    """A raiz do SKYROMS onde o arquivo está (pai da pasta do sistema)."""
+    return os.path.dirname(os.path.dirname(os.path.abspath(arquivo)))
+
+
+def log(msg, arquivo=None):
+    """Diário do instalador em SKYROMS/diag/instalar.log (dá para ler no Windows)."""
+    if arquivo:
+        _LOG["arq"] = os.path.join(_base_de(arquivo), "diag", "instalar.log")
+    linha = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
+    sys.stderr.write(linha + "\n")
+    if not _LOG["arq"]:
+        return
+    try:
+        os.makedirs(os.path.dirname(_LOG["arq"]), exist_ok=True)
+        if os.path.exists(_LOG["arq"]) and os.path.getsize(_LOG["arq"]) > 2_000_000:   # não cresce para sempre
+            os.replace(_LOG["arq"], _LOG["arq"][:-4] + "-antigo.log")
+        with open(_LOG["arq"], "a", encoding="utf-8") as f:
+            f.write(linha + "\n")
+    except OSError:
+        pass
 
 
 def _assinatura(arq):
@@ -73,13 +105,60 @@ def _falhas():
         return {}
 
 
-def _anota_falha(arq, erro):
-    d = _falhas()
-    d[os.path.realpath(arq)] = {"assinatura": _assinatura(arq), "erro": erro}
+def _grava_falhas(d):
     os.makedirs(os.path.dirname(FALHAS), exist_ok=True)
     with open(FALHAS + ".tmp", "w") as f:
         json.dump(d, f, ensure_ascii=False)
     os.replace(FALHAS + ".tmp", FALHAS)
+    _falhas_txt(d)
+
+
+def _falhas_txt(d):
+    """SKYROMS/diag/instalar-falhas.txt: o mesmo, em português, para quem olha pelo Windows."""
+    bases = {}
+    for real, v in d.items():
+        bases.setdefault(_base_de(real), []).append((real, v))
+    for base, itens in bases.items():
+        try:
+            os.makedirs(os.path.join(base, "diag"), exist_ok=True)
+            with open(os.path.join(base, "diag", "instalar-falhas.txt"), "w", encoding="utf-8") as f:
+                f.write("Jogos que o SkyStation não conseguiu instalar\n")
+                f.write("(baixe de novo: um arquivo novo é tentado sozinho. Atualizado em "
+                        f"{time.strftime('%d/%m %H:%M')})\n\n")
+                for real, v in sorted(itens):
+                    n = v.get("tentativas", 1)
+                    f.write(f"- {os.path.relpath(real, base)}\n    {v.get('erro', '?')}\n"
+                            f"    tentativas: {n}{' (desisti)' if n >= MAX_TENTATIVAS else ''}\n")
+        except OSError:
+            pass
+
+
+def _anota_falha(arq, erro):
+    d = _falhas()
+    real = os.path.realpath(arq)
+    ass = _assinatura(arq)
+    antes = d.get(real, {})
+    n = antes.get("tentativas", 1) + 1 if antes.get("assinatura") == ass else 1
+    d[real] = {"assinatura": ass, "erro": erro, "tentativas": n, "quando": time.time(),
+               "nome": nome_do_jogo(arq)}
+    _grava_falhas(d)
+    return n
+
+
+def _desistiu(falhas, real, arq):
+    """Já tentou MAX_TENTATIVAS vezes este mesmo arquivo? (outro tamanho/data = arquivo novo)"""
+    f = falhas.get(real)
+    return bool(f) and f.get("assinatura") == _assinatura(arq) and f.get("tentativas", MAX_TENTATIVAS) >= MAX_TENTATIVAS
+
+
+def _esquece(arquivo=None):
+    d = _falhas()
+    if arquivo:
+        d.pop(os.path.realpath(arquivo), None)
+    else:
+        d = {}
+    _grava_falhas(d)
+    return d
 
 
 def _parte_principal(nome):
@@ -154,12 +233,114 @@ def procurar(com_falhas=False):
                 if 0 <= idade < MIN_IDADE:
                     continue                         # ainda chegando (cópia, download)
                 real = os.path.realpath(arq)
-                if real in vistos or falhas.get(real, {}).get("assinatura") == _assinatura(arq):
+                if real in vistos or _desistiu(falhas, real, arq):
                     continue
                 vistos.add(real)
                 achados.append({"arquivo": arq, "nome": nome_do_jogo(arq), "sistema": sis,
                                 "tamanho": sum(os.path.getsize(x) for x in partes)})
     return achados
+
+
+# ---------------------------------------------------------------- conferências rápidas (13.6)
+
+def cabecalho_ok(arquivo):
+    """Teste barato (lê poucos KB): o compactado está inteiro? None = ok; senão o motivo.
+    .7z: o 7-Zip escreve o cabeçalho de início por último; zerado = compactação ou download interrompido.
+    .zip: o diretório central fica no fim; sem ele, o arquivo foi cortado."""
+    n = arquivo.lower()
+    try:
+        tam = os.path.getsize(arquivo)
+        with open(arquivo, "rb") as f:
+            if n.endswith(".7z"):
+                h = f.read(32)
+                if h[:6] != b"7z\xbc\xaf\x27\x1c":
+                    return "não é um .7z de verdade (baixe de novo)"
+                import struct
+                off, size = struct.unpack("<QQ", h[12:28])
+                if off == 0 and size == 0:
+                    return "o .7z não foi terminado (cabeçalho zerado): a compactação ou o download parou no meio. Baixe de novo"
+                if 32 + off + size > tam:
+                    return "o .7z está cortado (falta o fim do arquivo). Baixe de novo"
+            elif n.endswith(".zip"):
+                f.seek(max(0, tam - 70000))
+                if b"PK\x05\x06" not in f.read() and tam < 0xFFFFFFFF:
+                    return "o .zip está cortado (falta o fim do arquivo). Baixe de novo"
+    except OSError as e:
+        return f"não consegui ler o arquivo ({e.strerror})"
+    return None
+
+
+def _iso_raiz(caminho):
+    """Nomes da raiz de um ISO 9660 (PS1/PS2/PS3), em maiúsculas. Vazio se não for ISO."""
+    try:
+        with open(caminho, "rb") as f:
+            f.seek(16 * 2048)
+            pvd = f.read(2048)
+            if pvd[1:6] != b"CD001":
+                return set()
+            rec = pvd[156:190]
+            lba = int.from_bytes(rec[2:6], "little")
+            tam = int.from_bytes(rec[10:14], "little")
+            f.seek(lba * 2048)
+            dados = f.read(min(tam, 64 * 1024))
+    except OSError:
+        return set()
+    nomes, i = set(), 0
+    while i < len(dados):
+        ln = dados[i]
+        if ln == 0:                       # fim do setor: pula para o próximo
+            i = (i // 2048 + 1) * 2048
+            continue
+        nl = dados[i + 32]
+        nome = dados[i + 33:i + 33 + nl].decode("ascii", "replace").split(";")[0].upper()
+        if nome not in ("\x00", "\x01"):
+            nomes.add(nome)
+        i += ln
+    return nomes
+
+
+def sistema_do_iso(caminho):
+    """ps3 (PS3_GAME), ps2 (SYSTEM.CNF com BOOT2) ou ps1 (SYSTEM.CNF com BOOT). None = não sei."""
+    if not caminho.lower().endswith(".iso"):
+        return None
+    raiz = _iso_raiz(caminho)
+    if "PS3_GAME" in raiz or "PS3_DISC.SFB" in raiz:
+        return "ps3"
+    if "SYSTEM.CNF" in raiz:
+        try:   # o SYSTEM.CNF é pequeno: lê pelo próprio diretório
+            with open(caminho, "rb") as f:
+                f.seek(16 * 2048)
+                pvd = f.read(2048)
+                rec = pvd[156:190]
+                f.seek(int.from_bytes(rec[2:6], "little") * 2048)
+                d = f.read(64 * 1024)
+                i = d.find(b"SYSTEM.CNF;1")
+                if i > 33:
+                    r = i - 33
+                    lba = int.from_bytes(d[r + 2:r + 6], "little")
+                    f.seek(lba * 2048)
+                    cnf = f.read(2048).upper()
+                    if b"BOOT2" in cnf:
+                        return "ps2"
+                    if b"BOOT" in cnf:
+                        return "ps1"
+        except OSError:
+            pass
+    return None
+
+
+def _pasta_do_sistema(pasta_atual, sis):
+    """Pasta do sistema 'sis' no mesmo SKYROMS (usa a que já existir, com apelido ou não)."""
+    base = os.path.dirname(pasta_atual)
+    try:
+        for n in sorted(os.listdir(base)):
+            if JOGOS.sistema_da_pasta(n) == sis and os.path.isdir(os.path.join(base, n)):
+                return os.path.join(base, n)
+    except OSError:
+        pass
+    p = os.path.join(base, sis)
+    os.makedirs(p, exist_ok=True)
+    return p
 
 
 # ---------------------------------------------------------------- extração
@@ -333,6 +514,8 @@ def rodar():
                    "fila": [j["nome"] for j in fila], "feitos": len(feitos)})
         _grava_estado(st)
         tmp = os.path.join(pasta, "." + nome + ".instalando")
+        t0 = time.time()
+        log(f"== {nome} ({sis}) <- {os.path.basename(arq)} ({jogo.get('tamanho', 0) / 1e9:.2f} GB)", arq)
         try:
             if not os.path.exists(arq):
                 raise RuntimeError("o arquivo sumiu")
@@ -346,7 +529,11 @@ def rodar():
                 continue                       # desistiu por agora: a próxima procura do menu pega de novo
             if not JOGOS.gravavel(pasta):
                 raise RuntimeError("a pasta está só leitura (no Windows, desligue a Inicialização rápida)")
+            ruim = cabecalho_ok(arq)
+            if ruim:
+                raise RuntimeError(ruim)
             total = tamanho_extraido(arq)
+            log(f"   cabeçalho ok; {total / 1e9:.2f} GB depois de extrair", arq)
             livre = shutil.disk_usage(pasta).free
             if total and total + 100 * 1024 * 1024 > livre:
                 raise RuntimeError(f"falta espaço: precisa de {total / 1e9:.1f} GB e há {livre / 1e9:.1f} GB livres")
@@ -354,7 +541,9 @@ def rodar():
             if SEG:
                 st["atual"]["etapa"] = "Verificando"
                 _grava_estado(st)
+                t1 = time.time()
                 seg = SEG.verificar(arq, partes=_partes(arq), sistema=sis, avisar=False)
+                log(f"   sky-security: {'ok' if seg['ok'] else seg.get('motivo')} ({time.time() - t1:.0f} s)", arq)
                 if not seg["ok"]:
                     raise Bloqueado(f"bloqueado pelo sky-security: {seg['motivo']}. Está em SKYROMS/.quarentena")
 
@@ -363,21 +552,34 @@ def rodar():
                 _grava_estado(st)
 
             st["atual"]["etapa"] = "Instalando"
+            t1 = time.time()
             extrair(arq, tmp, total, progresso)
+            log(f"   extraído em {time.time() - t1:.0f} s", arq)
             st["atual"].update({"pct": 1.0, "etapa": "Finalizando"})
             _grava_estado(st)
             final = posicionar(_limpar(tmp), pasta, nome, sis)
+            certo = sistema_do_iso(final) if sis in ("ps1", "ps2", "ps3") and os.path.isfile(final) else None
+            if certo and certo != sis:     # ex.: Gran Turismo 3 (PS2) baixado na pasta ps3
+                destino = _sem_conflito(os.path.join(_pasta_do_sistema(pasta, certo), os.path.basename(final)))
+                os.replace(final, destino)
+                log(f"   era jogo de {NOMES.get(certo, certo)}, não de {NOMES.get(sis, sis)}: movido para {os.path.basename(os.path.dirname(destino))}/", arq)
+                _aviso("jogo", f"{nome} é de {NOMES.get(certo, certo)}: mudei para a pasta certa")
+                final, sis = destino, certo
             shutil.rmtree(tmp, ignore_errors=True)
             for parte in _partes(arq):
                 os.remove(parte)
             feitos.append({"nome": nome, "sistema": sis, "caminho": final})
+            _esquece(arq)
+            log(f"   ok em {time.time() - t0:.0f} s: {final}", arq)
             _aviso("jogos")
             _aviso("jogo", f"{nome} instalado ({NOMES.get(sis, sis)})")
         except (OSError, RuntimeError, subprocess.SubprocessError) as e:
             shutil.rmtree(tmp, ignore_errors=True)
             erros.append({"nome": nome, "erro": str(e)})
+            n = 0
             if not isinstance(e, Bloqueado):          # o bloqueado já saiu da pasta (quarentena)
-                _anota_falha(arq, str(e))
+                n = _anota_falha(arq, str(e))
+            log(f"   FALHOU (tentativa {n or '-'}, {time.time() - t0:.0f} s): {e}", arq)
             _aviso("jogo", f"Não instalei {nome}: {e}")
         st.update({"feitos": len(feitos), "erros": erros})
         # chegou outro compactado enquanto instalava? entra na fila
@@ -397,6 +599,11 @@ def main():
         print(json.dumps({"pendentes": procurar()}, ensure_ascii=False))
     elif cmd == "rodar":
         rodar()
+    elif cmd == "falhas":
+        print(json.dumps({"falhas": [dict(v, arquivo=k) for k, v in _falhas().items()]}, ensure_ascii=False))
+    elif cmd == "repetir":
+        _esquece(sys.argv[2] if len(sys.argv) > 2 else None)
+        print(json.dumps({"ok": True}))
     elif cmd == "estado":
         try:
             print(open(ESTADO).read())

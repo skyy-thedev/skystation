@@ -347,6 +347,37 @@ vita-solo)
     done
     [ -d "$VPREF/vs0" ] || fail "PS Vita: o firmware não foi instalado. Confira se o PSVUPDAT.PUP em SKYROMS/bios/vita é o do site da Sony."
     # Com um .vpk/.zip o Vita3K instala o jogo (só na 1ª vez demora) e já abre.
+    # 13.6 (21/nov): antes ele reinstalava do .zip a cada vez que o jogo abria, e quem fechava durante a
+    # instalação (a tela fica parada) deixava o jogo pela metade em ux0/app. Agora: instalado e marcado =
+    # abre direto pelo ID (-r); pela metade = apaga e instala de novo; a marca só sai quando a pasta do
+    # jogo para de crescer com o eboot.bin já lá.
+    VPREF="${VPREF:-${XDG_DATA_HOME:-$HOME/.local/share}/Vita3K/Vita3K}"
+    TID="$(basename "$ROM" | grep -oE '[A-Z]{4}[0-9]{5}' | tail -1)"
+    if [ -n "$TID" ] && [ -f "$ROM" ]; then
+        APP="$VPREF/ux0/app/$TID"
+        MARCA="$APP/.skystation-instalado"
+        if [ -f "$MARCA" ] && [ -f "$APP/eboot.bin" ]; then
+            echo "sky-emu: PS Vita $TID já instalado: abre direto" >&2
+            exec /opt/vita3k/AppRun -r "$TID"
+        fi
+        if [ -d "$APP" ]; then
+            echo "sky-emu: PS Vita $TID ficou pela metade numa vez anterior: instalando de novo" >&2
+            rm -rf "$APP"
+        fi
+        echo "PS Vita: instalando o jogo (só na 1ª vez; pode levar alguns minutos com a tela parada). Não feche." >"$MSG"
+        (   antes=-1; parado=0
+            while kill -0 $$ 2>/dev/null; do
+                sleep 3
+                [ -f "$APP/eboot.bin" ] || continue
+                agora="$(du -sb "$APP" 2>/dev/null | cut -f1)"
+                if [ "$agora" = "$antes" ]; then parado=$((parado + 1)); else parado=0; fi
+                antes="$agora"
+                if [ "$parado" -ge 4 ]; then
+                    : >"$MARCA" && echo "sky-emu: PS Vita $TID instalado ($agora bytes)" >&2
+                    break
+                fi
+            done ) &
+    fi
     exec /opt/vita3k/AppRun "$ROM"
     ;;
 xbox-solo)
