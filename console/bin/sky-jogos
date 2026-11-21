@@ -58,8 +58,28 @@ def mounted(path):
 
 
 def gravavel(path):
-    """Fase 7.6: a pasta SKYROMS do HD fica só leitura com o Windows hibernado."""
-    return os.access(path, os.W_OK)
+    """Fase 7.6: a pasta SKYROMS do HD fica só leitura com o Windows hibernado.
+    13.9: testa gravando de verdade. O os.access olhava só as permissões, e o driver ntfs3 mostra como
+    "só leitura" uma pasta com o atributo Somente leitura do Windows (comum em pastas criadas/copiadas lá),
+    mesmo com o disco gravável: o Mario U e o P.T. falhavam com o disco em rw. Nesse caso tira o atributo
+    (chmod u+w, que o ntfs3 traduz) e testa de novo."""
+    def tenta():
+        teste = os.path.join(path, f".skystation-teste-{os.getpid()}")
+        try:
+            with open(teste, "w") as f:
+                f.write("ok")
+            os.remove(teste)
+            return True
+        except OSError:
+            return False
+    if tenta():
+        return True
+    try:
+        st = os.stat(path)
+        os.chmod(path, st.st_mode | 0o200)
+    except OSError:
+        return False
+    return tenta()
 
 
 SO_LEITURA = ("SKYROMS do HD está só leitura: no Windows, desligue a Inicialização rápida "

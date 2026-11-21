@@ -610,7 +610,11 @@ def rodar():
         print(json.dumps({"ok": False, "error": "já está instalando"}))
         return
     feitos, erros, total_jogos = [], [], 0
-    _falhas_txt(_falhas())        # 13.7: as falhas antigas também aparecem em SKYROMS/diag
+    d = _falhas()                 # 13.9: falhas por "só leitura" (disco) não contam: tenta de novo
+    if any("só leitura" in v.get("erro", "") for v in d.values()):
+        d = {k: v for k, v in d.items() if "só leitura" not in v.get("erro", "")}
+        _grava_falhas(d)
+    _falhas_txt(d)                # 13.7: as falhas antigas também aparecem em SKYROMS/diag
     fila = procurar()
     total_jogos = len(fila)
     st = {"ativo": True, "total": total_jogos, "feitos": 0, "erros": [], "fila": [j["nome"] for j in fila]}
@@ -716,7 +720,8 @@ def rodar():
             shutil.rmtree(tmp, ignore_errors=True)
             erros.append({"nome": nome, "erro": str(e)})
             n = 0
-            if not isinstance(e, Bloqueado):          # o bloqueado já saiu da pasta (quarentena)
+            # 13.9: "só leitura" é do disco, não do arquivo: não gasta tentativa
+            if not isinstance(e, Bloqueado) and "só leitura" not in str(e):
                 n = _anota_falha(arq, str(e))
             log(f"   FALHOU (tentativa {n or '-'}, {time.time() - t0:.0f} s): {e}", arq)
             _aviso("jogo", f"Não instalei {nome}: {e}")
