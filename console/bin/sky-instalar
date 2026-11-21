@@ -103,10 +103,20 @@ def _falhas():
             d = json.load(f)
     except (OSError, ValueError):
         return {}
-    # 13.10: falha por "só leitura" é do disco, não do arquivo. Antes elas só eram esquecidas dentro do
-    # "rodar", mas o menu só chama o "rodar" quando o "procurar" acha pendentes, e o "procurar" pulava
-    # justamente esses arquivos (2 tentativas): o Mario U e o P.T. nunca mais eram tentados.
-    return {k: v for k, v in d.items() if "só leitura" not in v.get("erro", "")}
+    # 13.10: falha por "só leitura" é do disco/pasta, não do arquivo: não conta tentativa.
+    # 13.14: mas também não fica em loop (a tela Instalando abria a cada 2 min): espera 30 min ou outro boot.
+    agora, boot = time.time(), time.time() - _uptime()
+    return {k: v for k, v in d.items()
+            if "só leitura" not in v.get("erro", "")
+            or (v.get("quando", 0) > agora - 1800 and v.get("quando", 0) > boot)}
+
+
+def _uptime():
+    try:
+        with open("/proc/uptime") as f:
+            return float(f.read().split()[0])
+    except (OSError, ValueError):
+        return 0.0
 
 
 def _grava_falhas(d):
@@ -149,11 +159,26 @@ def _anota_falha(arq, erro):
     return n
 
 
+def _anota_pausa(arq, erro):
+    """13.14: 'só leitura' fica 30 min (ou até o próximo boot) sem tentar, sem gastar tentativa."""
+    try:
+        with open(FALHAS) as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        d = {}
+    d[os.path.realpath(arq)] = {"assinatura": _assinatura(arq), "erro": erro, "tentativas": 0,
+                                "quando": time.time(), "nome": nome_do_jogo(arq)}
+    _grava_falhas(d)
+    return 0
+
+
 def _desistiu(falhas, real, arq):
     """Já tentou MAX_TENTATIVAS vezes este mesmo arquivo? (outro tamanho/data = arquivo novo)"""
     f = falhas.get(real)
     # 13.7: falha anotada antes da 13.6 não tem "tentativas" e contava como "já desisti": o arquivo nunca era
     # tentado de novo e o motivo não aparecia em lugar nenhum. Agora conta como 1 tentativa (ganha mais uma).
+    if f and "só leitura" in f.get("erro", ""):
+        return True               # 13.14: em pausa (o _falhas() só devolve as pausas recentes)
     return bool(f) and f.get("assinatura") == _assinatura(arq) and f.get("tentativas", 1) >= MAX_TENTATIVAS
 
 
@@ -642,10 +667,7 @@ def rodar():
         print(json.dumps({"ok": False, "error": "já está instalando"}))
         return
     feitos, erros, total_jogos = [], [], 0
-    d = _falhas()                 # 13.9: falhas por "só leitura" (disco) não contam: tenta de novo
-    if any("só leitura" in v.get("erro", "") for v in d.values()):
-        d = {k: v for k, v in d.items() if "só leitura" not in v.get("erro", "")}
-        _grava_falhas(d)
+    d = _falhas()
     _falhas_txt(d)                # 13.7: as falhas antigas também aparecem em SKYROMS/diag
     fila = procurar()
     total_jogos = len(fila)
@@ -674,7 +696,13 @@ def rodar():
                     st["total"] = max(st["total"], len(feitos) + len(erros) + len(fila))
                 continue                       # desistiu por agora: a próxima procura do menu pega de novo
             if not JOGOS.gravavel(pasta):
-                raise RuntimeError("a pasta está só leitura (no Windows, desligue a Inicialização rápida)")
+                # 13.14: com o disco gravável, o culpado é a própria pasta (criada pelo Windows com uma trava
+                # que o Linux não consegue tirar). Foi assim com ps4, wiiu e ps3 em 21/nov.
+                disco_ok = JOGOS.gravavel(os.path.dirname(pasta))
+                raise RuntimeError(
+                    f"a pasta {os.path.basename(pasta)} está só leitura: no Windows, renomeie a pasta, crie uma nova "
+                    f"com o nome {os.path.basename(pasta)} e mova os jogos para ela" if disco_ok else
+                    "a pasta está só leitura (no Windows, desligue a Inicialização rápida)")
             def progresso(p):
                 st["atual"].update({"pct": round(p, 3), "etapa": "Instalando"})
                 _grava_estado(st)
@@ -778,9 +806,9 @@ def rodar():
             shutil.rmtree(tmp, ignore_errors=True)
             erros.append({"nome": nome, "erro": str(e)})
             n = 0
-            # 13.9: "só leitura" é do disco, não do arquivo: não gasta tentativa
-            if not isinstance(e, Bloqueado) and "só leitura" not in str(e):
-                n = _anota_falha(arq, str(e))
+            # 13.9: "só leitura" é do disco, não do arquivo: não gasta tentativa (13.14: mas pausa 30 min)
+            if not isinstance(e, Bloqueado):
+                n = _anota_falha(arq, str(e)) if "só leitura" not in str(e) else _anota_pausa(arq, str(e))
             log(f"   FALHOU (tentativa {n or '-'}, {time.time() - t0:.0f} s): {e}", arq)
             _aviso("jogo", f"Não instalei {nome}: {e}")
         st.update({"feitos": len(feitos), "erros": erros})
