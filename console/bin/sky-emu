@@ -376,6 +376,10 @@ vita-solo)
         (   antes=-1; parado=0
             while kill -0 $$ 2>/dev/null; do
                 sleep 3
+                # 13.10: a licença (.rif) é copiada só no FIM da instalação. Antes bastava o eboot.bin com a
+                # pasta parada 12 s, mas a pasta fica parada ~3 min enquanto o Vita3K descriptografa (21/nov):
+                # a marca saía cedo e quem fechasse ali ficava com o jogo pela metade "instalado".
+                ls "$VPREF/ux0/license/$TID/"*.rif >/dev/null 2>&1 || continue
                 [ -f "$APP/eboot.bin" ] || continue
                 agora="$(du -sb "$APP" 2>/dev/null | cut -f1)"
                 if [ "$agora" = "$antes" ]; then parado=$((parado + 1)); else parado=0; fi

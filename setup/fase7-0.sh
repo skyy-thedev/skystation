@@ -20,6 +20,35 @@ instalar() {
     done
 }
 
+# 13.10: "fase7-0.sh --atualizar-rpcs3" (chamado pelo atualizar.sh): troca o RPCS3 pela versão mais nova,
+# guardando a atual em /opt/rpcs3.anterior (para voltar: sudo rm -rf /opt/rpcs3 && sudo mv /opt/rpcs3.anterior /opt/rpcs3).
+# O RPCS3 nunca era atualizado depois da instalação; o Assassin's Creed (BLUS30089) trava/cai na versão de 15/nov.
+if [ "${1:-}" = "--atualizar-rpcs3" ]; then
+    source "$SRC/setup/appimage.sh"
+    anota "== fase7-0: atualizar RPCS3"
+    URL="$(curl -fsSL https://api.github.com/repos/RPCS3/rpcs3-binaries-linux/releases/latest 2>>"$LOG_INST" \
+        | grep -o '"browser_download_url": *"[^"]*linux[^"]*\.AppImage"' | grep -v -i aarch64 | head -1 \
+        | sed 's/.*"\(https[^"]*\)"/\1/' || true)"
+    [ -n "$URL" ] || { echo "    RPCS3: a API do GitHub não respondeu; fica a versão atual"; exit 0; }
+    ATUAL="$(cat /opt/rpcs3/.skystation-url 2>/dev/null || true)"
+    if [ "$URL" = "$ATUAL" ]; then echo "    RPCS3 já é o mais novo"; touch /opt/rpcs3/.skystation-url; exit 0; fi
+    TMP="$(mktemp -d /var/tmp/skystation-rpcs3.XXXXXX)"
+    echo "    baixando o RPCS3 mais novo ($(basename "$URL"))…"
+    if curl -fsSL -o "$TMP/rpcs3.AppImage" "$URL" && [ "$(stat -c %s "$TMP/rpcs3.AppImage")" -gt 20000000 ] \
+       && instalar_appimage "$TMP/rpcs3.AppImage" /opt/rpcs3.novo && [ -x /opt/rpcs3.novo/AppRun ]; then
+        rm -rf /opt/rpcs3.anterior
+        [ -d /opt/rpcs3 ] && mv /opt/rpcs3 /opt/rpcs3.anterior
+        mv /opt/rpcs3.novo /opt/rpcs3
+        echo "$URL" >/opt/rpcs3/.skystation-url
+        echo "    RPCS3 atualizado (o anterior ficou em /opt/rpcs3.anterior)"; anota "rpcs3 atualizado: $URL"
+    else
+        rm -rf /opt/rpcs3.novo
+        echo "    AVISO: não consegui atualizar o RPCS3 agora; fica a versão atual"; anota "rpcs3: atualização falhou"
+    fi
+    rm -rf "$TMP"
+    exit 0
+fi
+
 echo "==> [1/6] Drivers para outros PCs (vídeo AMD/Intel, Wi-Fi, microcódigo)"
 instalar linux-firmware mesa vulkan-radeon vulkan-intel vulkan-icd-loader amd-ucode intel-ucode alsa-utils
 

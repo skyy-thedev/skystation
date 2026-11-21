@@ -238,6 +238,11 @@ if [ ! -x /opt/vita3k/AppRun ] && { [ -f /opt/skystation/emu/cores/flycast_libre
     timeout 900 bash "$SRC/setup/fase13.sh" --so-vita || echo "    AVISO: não consegui instalar o Vita3K agora (sem internet?); tenta de novo na próxima atualização."
 fi
 
+# 13.10: RPCS3 mais novo a cada 7 dias (o fase7-0 só instalava uma vez).
+if [ -x /opt/rpcs3/AppRun ] && [ -z "$(find /opt/rpcs3/.skystation-url -mtime -7 2>/dev/null)" ]; then
+    timeout 900 bash "$SRC/setup/fase7-0.sh" --atualizar-rpcs3 || echo "    AVISO: RPCS3 não atualizado agora."
+fi
+
 # 13.8: extrator de .pkg de PS4 (o sky-instalar usa para transformar o .pkg na pasta que o shadPS4 abre).
 if [ -x /opt/shadps4/AppRun ] && [ ! -x /opt/orbis/bin/orbis-pkg-util ]; then
     timeout 1200 bash "$SRC/setup/fase13.sh" --so-pkg || echo "    AVISO: extrator de .pkg não instalado agora; tenta de novo na próxima atualização."
