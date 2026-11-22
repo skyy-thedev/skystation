@@ -1,0 +1,9 @@
+{
+  "title": "Heroic (Epic Games)",
+  "type": "app",
+  "exec": "/opt/skystation/bin/sky-pc heroic",
+  "cover": "cover.png",
+  "color": "#2a2a2a",
+  "order": 75,
+  "description": "Seus jogos da Epic Games instalados no Windows (HD). Na 1ª vez entre na conta Epic aqui; depois os jogos abrem direto da categoria PC."
+}

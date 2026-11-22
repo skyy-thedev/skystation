@@ -171,6 +171,8 @@ var bench_t: float = 0.0
 var bench_pior: float = 0.0
 var net: Dictionary = {}        # Fase 10: o que o sky-net sabe da SkyNetwork (net.json)
 var net_sig: String = ""        # para só refazer o menu quando algo mudou de verdade
+var pc_sig: String = ""         # 13.27: jogos de PC (Steam/Epic do HD) — refaz quando as bibliotecas mudam
+var pc_sync := false
 var avatar_cache: Dictionary = {}   # Fase 10.5: id do ícone de perfil -> textura (ou null se não existe)
 
 var t: float = 0.0
@@ -1051,6 +1053,33 @@ func _skyroms_check() -> void:
 	skyroms_hd = skyroms_present and hd.get("estado", "") == "ok" and hd.get("dev", "") == src
 	skyroms_nome = "HD (pasta SKYROMS)" if skyroms_hd else "pendrive SKYROMS"
 	skyroms_rw = not (skyroms_hd and hd.get("modo", "") == "ro")
+
+
+func _pc_check() -> void:
+	# 13.27: o skystation-pcjogos (root) achou/montou as bibliotecas Steam/Epic do HD, ou a Steam/Heroic
+	# foi instalada pela SkyStore: o sky-pc cria os game.json em ~/skystation/games/pc-* e o menu é refeito.
+	if pc_sync:
+		return
+	var sig := ""
+	for f in ["/run/skystation/pcjogos.mudou", "/run/skystation/pcjogos.json"]:
+		sig += str(FileAccess.get_modified_time(f) if FileAccess.file_exists(f) else 0) + ","
+	for app in ["com.valvesoftware.Steam", "com.heroicgameslauncher.hgl"]:
+		sig += "1," if DirAccess.dir_exists_absolute("/var/lib/flatpak/app/" + app) else "0,"
+	if sig == pc_sig:
+		return
+	var primeira := pc_sig == ""
+	pc_sig = sig
+	if primeira and not FileAccess.file_exists("/run/skystation/pcjogos.json"):
+		return
+	pc_sync = true
+	_bg(func():
+		var out := []
+		return OS.execute(SKY_BIN + "/sky-pc", ["sincronizar"], out, true),
+		func(_r):
+			pc_sync = false
+			if not panel_open and not cats.is_empty() and cats[0].has("title"):
+				_reload_games()
+				_build_cats())
 
 
 func _scan_roms() -> void:
@@ -2277,6 +2306,7 @@ func _refresh_status() -> void:
 			if parts.size() > 2:
 				wifi_q = int(parts[2].replace(".", ""))
 	_skyroms_check()
+	_pc_check()
 	var mounts := ["/"]
 	if skyroms_present:
 		mounts.append("/mnt/skyroms")

@@ -75,6 +75,13 @@ CATALOGO = [
      "pacotes": ["chromium"], "resumo": "Jogos do Game Pass pela nuvem"},
     {"id": "geforcenow", "nome": "GeForce NOW", "tipo": "app", "jeito": "flatpak", "jogo": "geforcenow",
      "flatpak": "com.nvidia.geforcenow", "resumo": "Jogos do seu Steam/Epic pela nuvem da NVIDIA"},
+    # 13.27: jogos de PC de verdade (Proton/Wine traduzem o DirectX direto para a placa de vídeo, sem emular)
+    {"id": "steam", "nome": "Steam", "tipo": "app", "jeito": "flatpak", "jogo": "steam", "remoto": "flathub",
+     "flatpak": "com.valvesoftware.Steam", "acesso": ["/mnt/pc"],
+     "resumo": "Seus jogos da Steam (os do Windows também, pelo Proton)"},
+    {"id": "heroic", "nome": "Heroic (Epic e GOG)", "tipo": "app", "jeito": "flatpak", "jogo": "heroic", "remoto": "flathub",
+     "flatpak": "com.heroicgameslauncher.hgl", "acesso": ["/mnt/pc"],
+     "resumo": "Seus jogos da Epic Games e da GOG"},
 ]
 POR_ID = {e["id"]: e for e in CATALOGO}
 
@@ -541,6 +548,8 @@ def fazer_pacman(e, t, forcar):
 
 
 def fazer_flatpak(e, t, forcar):
+    if e.get("remoto") == "flathub":
+        return fazer_flathub(e, t, forcar)
     t.marca("Baixando pela NVIDIA (alguns minutos)", -1.0)
     nuvem = "/usr/local/bin/skystation-nuvem"
     if forcar and shutil.which("flatpak") and versao_instalada(e):
@@ -549,6 +558,37 @@ def fazer_flatpak(e, t, forcar):
     r = subprocess.run([nuvem], timeout=3600) if os.access(nuvem, os.X_OK) else None
     if r is None or r.returncode != 0 or not versao_instalada(e):
         return t.fim(False, "Não consegui instalar o app agora (veja espaço livre e internet). A versão web continua.")
+    return t.fim(True, f"{e['nome']} pronto")
+
+
+def fazer_flathub(e, t, forcar):
+    """13.27: app do Flathub (Steam, Heroic). Atualiza se já tem; dá acesso às bibliotecas de PC do HD (/mnt/pc)."""
+    livre = shutil.disk_usage("/var/lib").free if os.path.isdir("/var/lib/flatpak") else shutil.disk_usage("/").free
+    if livre < 4 * 1024 ** 3:
+        return t.fim(False, "Precisa de 4 GB livres no pendrive do sistema para instalar")
+    with open(LOG, "a") as log:
+        if not shutil.which("flatpak"):
+            t.marca("Instalando o Flatpak", -1.0)
+            subprocess.run(["pacman", "-S", "--needed", "--noconfirm", "flatpak"], stdout=log, stderr=log, timeout=900)
+        subprocess.run(["flatpak", "remote-add", "--system", "--if-not-exists", "flathub",
+                        "https://dl.flathub.org/repo/flathub.flatpakrepo"], stdout=log, stderr=log, timeout=300)
+        tem = bool(versao_instalada(e))
+        if tem and forcar:
+            t.marca("Removendo para reinstalar", -1.0)
+            subprocess.run(["flatpak", "uninstall", "--system", "-y", "--noninteractive", e["flatpak"]], stdout=log, stderr=log)
+            tem = False
+        t.marca(("Atualizando " if tem else "Baixando ") + e["nome"] + " (pode levar vários minutos)", -1.0)
+        cmd = ["flatpak", "update" if tem else "install", "--system", "-y", "--noninteractive"] + \
+            ([] if tem else ["flathub"]) + [e["flatpak"]]
+        r = subprocess.run(cmd, stdout=log, stderr=log, timeout=5400)
+        for pasta in e.get("acesso", []):    # a Steam/Heroic enxergam os jogos do HD do Windows
+            subprocess.run(["flatpak", "override", "--system", "--filesystem=" + pasta, e["flatpak"]], stdout=log, stderr=log)
+    if r.returncode != 0 or not versao_instalada(e):
+        return t.fim(False, "Não consegui instalar agora (internet ou espaço). Tente de novo.")
+    # depois de instalar, procura de novo as bibliotecas do HD (o skystation-pcjogos cria os jogos no menu)
+    pcj = "/usr/local/bin/skystation-pcjogos"
+    if os.access(pcj, os.X_OK):
+        subprocess.run([pcj], timeout=300, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return t.fim(True, f"{e['nome']} pronto")
 
 

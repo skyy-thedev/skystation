@@ -1,0 +1,9 @@
+{
+  "title": "Steam",
+  "type": "app",
+  "exec": "/opt/skystation/bin/sky-pc steam",
+  "cover": "cover.png",
+  "color": "#1b2838",
+  "order": 74,
+  "description": "Seus jogos de PC da Steam, os mesmos já instalados no Windows (HD). Na 1ª vez entre na conta (dá para usar o QR code com o app da Steam no celular). Os jogos aparecem sozinhos na categoria PC. Home do controle para sair."
+}

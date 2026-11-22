@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""SkyStation 13.27: jogos de PC (Steam e Epic) que já estão instalados no HD do Windows.
+
+    sky-pc sincronizar        cria/atualiza os jogos da categoria PC no menu (e ajusta a Steam, se fechada)
+    sky-pc jogar steam <appid>     abre o jogo pela Steam (Proton)
+    sky-pc jogar epic <AppName>    abre o jogo pelo Heroic (Epic)
+    sky-pc steam | heroic     abre o app (entrar na conta, baixar jogos, configurar)
+    sky-pc estado             JSON: bibliotecas achadas, apps instalados, jogos
+
+As bibliotecas são achadas e montadas pelo skystation-pcjogos (root), em /mnt/pc/steamN e /mnt/pc/epicN.
+Steam e Heroic são os Flatpaks oficiais do Flathub (instalados pela SkyStore). Cada jogo vira uma pasta em
+~/skystation/games/pc-steam-<appid> (ou pc-epic-<AppName>) com game.json, como os outros jogos do menu.
+"""
+import glob
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import urllib.request
+
+HOME = os.path.expanduser("~")
+JOGOS = os.path.join(HOME, "skystation/games")
+ESTADO = "/run/skystation/pcjogos.json"
+STEAM_ID = "com.valvesoftware.Steam"
+HEROIC_ID = "com.heroicgameslauncher.hgl"
+STEAM_DIR = os.path.join(HOME, ".var/app", STEAM_ID, ".local/share/Steam")
+HEROIC_CFG = os.path.join(HOME, ".var/app", HEROIC_ID, "config")
+MSG = os.environ.get("SKY_MSG_FILE", "")
+SKY_BIN = os.path.dirname(os.path.abspath(__file__))
+# O que a Steam instala junto e não é jogo
+NAO_JOGO = re.compile(r"proton|steam linux runtime|steamworks|redistributable|steamvr|soundtrack|dedicated server", re.I)
+
+
+def saida(d):
+    print(json.dumps(d, ensure_ascii=False))
+    return 0 if d.get("ok", True) else 1
+
+
+def falha(texto):
+    if MSG:
+        try:
+            with open(MSG, "w") as f:
+                f.write(texto)
+        except OSError:
+            pass
+    print(texto, file=sys.stderr)
+    return 3
+
+
+def flatpak_tem(app):
+    return bool(shutil.which("flatpak")) and subprocess.run(
+        ["flatpak", "info", app], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+
+def rodando(padrao):
+    return subprocess.run(["pgrep", "-f", padrao], stdout=subprocess.DEVNULL).returncode == 0
+
+
+def bibliotecas():
+    try:
+        return json.load(open(ESTADO))
+    except (OSError, ValueError):
+        return {"steam": [], "epic": []}
+
+
+# ---------------------------------------------------------------- VDF (o formato de texto da Steam)
+
+def vdf_ler(texto):
+    toks = re.findall(r'"((?:[^"\\]|\\.)*)"|([{}])', texto)
+    pos = 0
+
+    def bloco():
+        nonlocal pos
+        d = {}
+        while pos < len(toks):
+            s, ch = toks[pos]
+            pos += 1
+            if ch == "}":
+                return d
+            chave = s
+            s2, ch2 = toks[pos]
+            pos += 1
+            d[chave] = bloco() if ch2 == "{" else s2
+        return d
+    return bloco()
+
+
+def vdf_escrever(d, nivel=0):
+    t = "\t" * nivel
+    out = []
+    for k, v in d.items():
+        if isinstance(v, dict):
+            out.append(f'{t}"{k}"\n{t}{{\n{vdf_escrever(v, nivel + 1)}{t}}}\n')
+        else:
+            out.append(f'{t}"{k}"\t\t"{v}"\n')
+    return "".join(out)
+
+
+def acf(caminho):
+    try:
+        return vdf_ler(open(caminho, encoding="utf-8", errors="replace").read()).get("AppState", {})
+    except (OSError, IndexError, ValueError):
+        return {}
+
+
+# ---------------------------------------------------------------- Steam: bibliotecas e Proton
+
+def ajustar_steam(libs):
+    """Põe as bibliotecas do HD na Steam e liga o Proton para todos os jogos. Só com a Steam fechada
+    (ela reescreve esses arquivos ao sair). Na 1ª vez a Steam ainda não criou nada: fica para depois."""
+    if not os.path.isdir(os.path.join(STEAM_DIR, "steamapps")) or rodando("steamwebhelper|/app/bin/steam|ubuntu12_32/steam"):
+        return False
+    mudou = False
+    lf = os.path.join(STEAM_DIR, "steamapps/libraryfolders.vdf")
+    try:
+        d = vdf_ler(open(lf).read())
+    except (OSError, IndexError, ValueError):
+        d = {}
+    pastas = d.setdefault("libraryfolders", {})
+    tem = {v.get("path") for v in pastas.values() if isinstance(v, dict)}
+    for lib in libs:
+        if lib["ponto"] not in tem:
+            k = str(max([int(x) for x in pastas if x.isdigit()] + [-1]) + 1)
+            pastas[k] = {"path": lib["ponto"], "label": "HD do Windows", "contentid": "0", "totalsize": "0", "apps": {}}
+            mudou = True
+    if mudou:
+        with open(lf + ".tmp", "w") as f:
+            f.write(vdf_escrever(d))
+        os.replace(lf + ".tmp", lf)
+    cfg = os.path.join(STEAM_DIR, "config/config.vdf")
+    try:
+        c = vdf_ler(open(cfg).read())
+        steam = c.setdefault("InstallConfigStore", {}).setdefault("Software", {}).setdefault("Valve", {}).setdefault("Steam", {})
+        mapa = steam.setdefault("CompatToolMapping", {})
+        if "0" not in mapa:      # "Ativar o Steam Play para todos os outros títulos" com o Proton Experimental
+            mapa["0"] = {"name": "proton_experimental", "config": "", "priority": "75"}
+            with open(cfg + ".tmp", "w") as f:
+                f.write(vdf_escrever(c))
+            os.replace(cfg + ".tmp", cfg)
+            mudou = True
+    except (OSError, IndexError, ValueError):
+        pass
+    return mudou
+
+
+def capa(destino, urls):
+    if os.path.exists(destino):
+        return
+    for u in urls:
+        try:
+            req = urllib.request.Request(u, headers={"User-Agent": "SkyStation/13.27"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                dados = r.read()
+            if dados[:2] == b"\xff\xd8" and len(dados) > 5000:
+                with open(destino + ".tmp", "wb") as f:
+                    f.write(dados)
+                os.replace(destino + ".tmp", destino)
+                return
+        except OSError:
+            continue
+
+
+def grava_jogo(pasta, dados):
+    os.makedirs(pasta, exist_ok=True)
+    caminho = os.path.join(pasta, "game.json")
+    novo = json.dumps(dados, ensure_ascii=False, indent=1)
+    try:
+        if open(caminho).read() == novo:
+            return
+    except OSError:
+        pass
+    with open(caminho + ".tmp", "w") as f:
+        f.write(novo)
+    os.replace(caminho + ".tmp", caminho)
+
+
+def sincronizar():
+    est = bibliotecas()
+    steam_ok, heroic_ok = flatpak_tem(STEAM_ID), flatpak_tem(HEROIC_ID)
+    if steam_ok:
+        ajustar_steam(est.get("steam", []))
+    vistos = set()
+    n = 0
+    for lib in est.get("steam", []):
+        for m in glob.glob(os.path.join(lib["ponto"], "steamapps/appmanifest_*.acf")):
+            a = acf(m)
+            appid, nome = str(a.get("appid", "")), str(a.get("name", ""))
+            if not appid.isdigit() or not nome or NAO_JOGO.search(nome):
+                continue
+            if not int(a.get("StateFlags", "4") or 4) & 4:      # 4 = totalmente instalado
+                continue
+            pasta = os.path.join(JOGOS, f"pc-steam-{appid}")
+            vistos.add(os.path.basename(pasta))
+            desc = "Steam · roda pelo Proton, direto na placa de vídeo (sem emulação). Do HD do Windows (" + \
+                lib.get("origem", "") + ")."
+            if not steam_ok:
+                desc = "Instale a Steam pela SkyStore (Apps) para jogar. " + desc
+            if lib.get("modo") == "ro":
+                desc += " O HD está só leitura (Windows hibernado): a Steam pode não abrir o jogo."
+            grava_jogo(pasta, {"title": nome, "type": "windows", "exec": f"{SKY_BIN}/sky-pc jogar steam {appid}",
+                               "cover": "cover.jpg", "color": "#1b2838", "order": 50, "description": desc})
+            cdn = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}"
+            capa(os.path.join(pasta, "cover.jpg"), [cdn + "/library_600x900_2x.jpg", cdn + "/library_600x900.jpg",
+                                                    cdn + "/header.jpg"])
+            n += 1
+    for jg in est.get("epic", []):
+        app = re.sub(r"[^A-Za-z0-9_-]", "", jg.get("appName", ""))
+        if not app:
+            continue
+        pasta = os.path.join(JOGOS, f"pc-epic-{app}")
+        vistos.add(os.path.basename(pasta))
+        desc = "Epic Games · roda pelo Heroic (Wine/Proton), direto na placa de vídeo."
+        if not heroic_ok:
+            desc = "Instale o Heroic pela SkyStore (Apps) e entre na sua conta Epic para jogar. " + desc
+        grava_jogo(pasta, {"title": jg.get("titulo") or app, "type": "windows",
+                           "exec": f"{SKY_BIN}/sky-pc jogar epic {app}", "cover": "cover.jpg", "color": "#2a2a2a",
+                           "order": 51, "description": desc})
+        n += 1
+    # jogo que sumiu do HD (desinstalado no Windows) sai do menu
+    for p in glob.glob(os.path.join(JOGOS, "pc-steam-*")) + glob.glob(os.path.join(JOGOS, "pc-epic-*")):
+        if os.path.basename(p) not in vistos:
+            shutil.rmtree(p, ignore_errors=True)
+    return saida({"ok": True, "jogos": n, "steam": steam_ok, "heroic": heroic_ok,
+                  "bibliotecas": len(est.get("steam", [])) + len(est.get("epic", []))})
+
+
+# ---------------------------------------------------------------- jogar
+
+def jogar_steam(appid):
+    if not flatpak_tem(STEAM_ID):
+        return falha("Instale a Steam pela SkyStore (aba Apps) para jogar os jogos de PC.")
+    ajustar_steam(bibliotecas().get("steam", []))
+    # -gamepadui: a interface de TV da Steam (a mesma do Steam Deck). Na 1ª vez ela pede o login
+    # (dá para entrar pelo QR code com o app da Steam no celular). Para voltar ao SkyStation: Home → Fechar.
+    os.execvp("flatpak", ["flatpak", "run", STEAM_ID, "-gamepadui", f"steam://rungameid/{appid}"])
+
+
+def jogar_epic(app):
+    if not flatpak_tem(HEROIC_ID):
+        return falha("Instale o Heroic pela SkyStore (aba Apps) e entre na sua conta Epic.")
+    instalados = os.path.join(HEROIC_CFG, "legendary/installed.json")
+    try:
+        conhecido = app in json.load(open(instalados))
+    except (OSError, ValueError):
+        conhecido = False
+    if not conhecido:
+        jg = next((j for j in bibliotecas().get("epic", []) if j.get("appName") == app), None)
+        if jg and not importar_epic(app, jg["ponto"]):
+            return falha("Abra o Heroic (Apps), entre na conta Epic e tente de novo: o jogo ainda não foi importado.")
+    os.execvp("flatpak", ["flatpak", "run", HEROIC_ID, "--no-gui", f"heroic://launch?appName={app}&runner=legendary"])
+
+
+def importar_epic(app, pasta):
+    """O jogo já está no HD: o legendary (o "motor" da Epic dentro do Heroic) só anota onde ele está."""
+    script = 'L="$(find /app -name legendary -type f -perm -u+x 2>/dev/null | head -1)"; [ -n "$L" ] && exec "$L" import "$0" "$1"'
+    try:
+        r = subprocess.run(["flatpak", "run", "--command=sh", HEROIC_ID, "-c", script, app, pasta],
+                           capture_output=True, text=True, timeout=300)
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def main():
+    a = sys.argv[1:]
+    cmd = a[0] if a else "estado"
+    if cmd == "sincronizar":
+        return sincronizar()
+    if cmd == "jogar" and len(a) == 3 and a[1] == "steam" and a[2].isdigit():
+        return jogar_steam(a[2])
+    if cmd == "jogar" and len(a) == 3 and a[1] == "epic" and re.fullmatch(r"[A-Za-z0-9_-]+", a[2]):
+        return jogar_epic(a[2])
+    if cmd == "steam":
+        if not flatpak_tem(STEAM_ID):
+            return falha("Instale a Steam pela SkyStore (aba Apps).")
+        ajustar_steam(bibliotecas().get("steam", []))
+        os.execvp("flatpak", ["flatpak", "run", STEAM_ID, "-gamepadui"])
+    if cmd == "heroic":
+        if not flatpak_tem(HEROIC_ID):
+            return falha("Instale o Heroic pela SkyStore (aba Apps).")
+        os.execvp("flatpak", ["flatpak", "run", HEROIC_ID])
+    if cmd == "estado":
+        return saida({"ok": True, **bibliotecas(), "steamInstalada": flatpak_tem(STEAM_ID),
+                      "heroicInstalado": flatpak_tem(HEROIC_ID), "t": int(time.time())})
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)

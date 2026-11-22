@@ -57,7 +57,7 @@ for pair in skystation-atualizar.sh:skystation-atualizar expandir.sh:skystation-
             energia.sh:skystation-energia som-ligar.sh:skystation-som-ligar \
             atualizar-menu.sh:skystation-atualizar-menu diag-ps2.sh:skystation-diag-ps2 verificar.sh:skystation-verificar \
             potencia.sh:skystation-potencia skyroms-hd.sh:skystation-skyroms-hd nuvem.sh:skystation-nuvem \
-            emuladores.py:skystation-emuladores; do  # (o sky-backup vai junto com console/bin)
+            emuladores.py:skystation-emuladores pcjogos.sh:skystation-pcjogos; do  # (o sky-backup vai junto com console/bin)
     f="$SRC/setup/${pair%%:*}"; [ -f "$f" ] || continue
     sed 's/\r$//' "$f" > "/usr/local/bin/${pair##*:}.new"
     chmod 755 "/usr/local/bin/${pair##*:}.new"
@@ -213,13 +213,31 @@ TimeoutStartSec=90
 [Install]
 WantedBy=multi-user.target
 UNIT
+# 13.27: jogos de PC — acha as bibliotecas Steam/Epic do Windows no HD e libera só elas para executar.
+cat >/etc/systemd/system/skystation-pcjogos.service <<'UNIT'
+[Unit]
+Description=SkyStation: jogos de PC (bibliotecas Steam/Epic do HD do Windows)
+After=local-fs.target skystation-skyroms-hd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/skystation-pcjogos
+ExecStop=/usr/local/bin/skystation-pcjogos parar
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
+UNIT
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
+    systemctl enable skystation-pcjogos.service >/dev/null 2>&1 || true
     systemctl enable skystation-skyroms-hd.service >/dev/null 2>&1 || true
     rfkill unblock bluetooth 2>/dev/null || true
     systemctl enable bluetooth.service >/dev/null 2>&1 || true
     systemctl restart bluetooth.service >/dev/null 2>&1 || true
     systemctl restart skystation-skyroms-hd.service >/dev/null 2>&1 || true
+    systemctl restart skystation-pcjogos.service >/dev/null 2>&1 || true
     systemctl enable skystation-potencia.path >/dev/null 2>&1 || true
     systemctl restart skystation-potencia.path >/dev/null 2>&1 || true
     systemctl enable skystation-atualizar.path >/dev/null 2>&1 || true
