@@ -28,6 +28,8 @@ STEAM_ID = "com.valvesoftware.Steam"
 HEROIC_ID = "com.heroicgameslauncher.hgl"
 STEAM_DIR = os.path.join(HOME, ".var/app", STEAM_ID, ".local/share/Steam")
 HEROIC_CFG = os.path.join(HOME, ".var/app", HEROIC_ID, "config")
+# o Heroic guarda a config do legendary (o "motor" da Epic) dentro da dele, não em ~/.config/legendary
+LEGENDARY = os.path.join(HEROIC_CFG, "heroic/legendaryConfig/legendary")
 MSG = os.environ.get("SKY_MSG_FILE", "")
 SKY_BIN = os.path.dirname(os.path.abspath(__file__))
 # O que a Steam instala junto e não é jogo
@@ -206,18 +208,29 @@ def sincronizar():
             capa(os.path.join(pasta, "cover.jpg"), [cdn + "/library_600x900_2x.jpg", cdn + "/library_600x900.jpg",
                                                     cdn + "/header.jpg"])
             n += 1
-    for jg in est.get("epic", []):
+    epic = est.get("epic", [])
+    if heroic_ok and epic:
+        ajustar_heroic(epic)
+    inst = epic_instalados()
+    for jg in epic:
         app = re.sub(r"[^A-Za-z0-9_-]", "", jg.get("appName", ""))
         if not app:
             continue
+        if heroic_ok and epic_logado() and app not in inst and jg.get("modo") != "ro" \
+                and not rodando("heroic"):
+            importar_epic(app, jg["ponto"])
         pasta = os.path.join(JOGOS, f"pc-epic-{app}")
         vistos.add(os.path.basename(pasta))
         desc = "Epic Games · roda pelo Heroic (Wine/Proton), direto na placa de vídeo."
         if not heroic_ok:
             desc = "Instale o Heroic pela SkyStore (Apps) e entre na sua conta Epic para jogar. " + desc
-        grava_jogo(pasta, {"title": jg.get("titulo") or app, "type": "windows",
+        elif not epic_logado():
+            desc = "Abra o Heroic (Apps) e entre na sua conta Epic: depois o jogo aparece lá e abre daqui. " + desc
+        titulo = (epic_instalados().get(app) or {}).get("title") or jg.get("titulo") or app
+        grava_jogo(pasta, {"title": titulo, "type": "windows",
                            "exec": f"{SKY_BIN}/sky-pc jogar epic {app}", "cover": "cover.jpg", "color": "#2a2a2a",
                            "order": 51, "description": desc})
+        capa(os.path.join(pasta, "cover.jpg"), capas_epic(app))
         n += 1
     # jogo que sumiu do HD (desinstalado no Windows) sai do menu
     for p in glob.glob(os.path.join(JOGOS, "pc-steam-*")) + glob.glob(os.path.join(JOGOS, "pc-epic-*")):
@@ -241,25 +254,70 @@ def jogar_steam(appid):
 def jogar_epic(app):
     if not flatpak_tem(HEROIC_ID):
         return falha("Instale o Heroic pela SkyStore (aba Apps) e entre na sua conta Epic.")
-    instalados = os.path.join(HEROIC_CFG, "legendary/installed.json")
-    try:
-        conhecido = app in json.load(open(instalados))
-    except (OSError, ValueError):
-        conhecido = False
-    if not conhecido:
+    if not epic_logado():
+        # 1ª vez: abre o Heroic para entrar na conta Epic; o SkyStation importa os jogos do HD quando ele fechar
+        os.execvp("flatpak", ["flatpak", "run", HEROIC_ID])
+    if app not in epic_instalados():
         jg = next((j for j in bibliotecas().get("epic", []) if j.get("appName") == app), None)
         if jg and not importar_epic(app, jg["ponto"]):
-            return falha("Abra o Heroic (Apps), entre na conta Epic e tente de novo: o jogo ainda não foi importado.")
+            return falha("Não consegui importar o jogo do HD no Heroic. Abra o Heroic (Apps) e confira a conta Epic.")
     os.execvp("flatpak", ["flatpak", "run", HEROIC_ID, "--no-gui", f"heroic://launch?appName={app}&runner=legendary"])
 
 
+def epic_logado():
+    return os.path.exists(os.path.join(LEGENDARY, "user.json"))
+
+
+def epic_instalados():
+    try:
+        d = json.load(open(os.path.join(LEGENDARY, "installed.json")))
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def capas_epic(app):
+    """A capa vertical da loja (DieselGameBoxTall), do metadata que o legendary baixou ao entrar na conta."""
+    try:
+        imgs = json.load(open(os.path.join(LEGENDARY, "metadata", app + ".json")))["metadata"]["keyImages"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    ordem = ["DieselGameBoxTall", "OfferImageTall", "DieselGameBox"]
+    return [i["url"] for t in ordem for i in imgs if i.get("type") == t and i.get("url")]
+
+
+def ajustar_heroic(epic):
+    """Jogo novo instalado pelo Heroic vai para a mesma pasta Epic do HD (com exec) em vez do pendrive."""
+    mae = next((j.get("mae") for j in epic if j.get("mae") and j.get("modo") != "ro"), "")
+    cfg = os.path.join(HEROIC_CFG, "heroic/config.json")
+    if not mae or not os.path.exists(cfg) or rodando("heroic"):
+        return
+    try:
+        c = json.load(open(cfg))
+        ds = c.setdefault("defaultSettings", {})
+        if ds.get("defaultInstallPath") == mae:
+            return
+        ds["defaultInstallPath"] = mae
+        with open(cfg + ".tmp", "w") as f:
+            json.dump(c, f, indent=2)
+        os.replace(cfg + ".tmp", cfg)
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
 def importar_epic(app, pasta):
-    """O jogo já está no HD: o legendary (o "motor" da Epic dentro do Heroic) só anota onde ele está."""
-    script = 'L="$(find /app -name legendary -type f -perm -u+x 2>/dev/null | head -1)"; [ -n "$L" ] && exec "$L" import "$0" "$1"'
+    """O jogo já está no HD: o legendary (o "motor" da Epic dentro do Heroic) só anota onde ele está.
+    Precisa da conta Epic conectada no Heroic (ele confere o jogo na sua biblioteca)."""
+    script = ('export LEGENDARY_CONFIG_PATH="$XDG_CONFIG_HOME/heroic/legendaryConfig/legendary"; '
+              'L="$(find /app -name legendary -type f -perm -u+x 2>/dev/null | head -1)"; '
+              '[ -n "$L" ] && exec "$L" -y import --with-dlcs "$0" "$1"')
     try:
         r = subprocess.run(["flatpak", "run", "--command=sh", HEROIC_ID, "-c", script, app, pasta],
-                           capture_output=True, text=True, timeout=300)
-        return r.returncode == 0
+                           capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL)
+        os.makedirs(os.path.join(HOME, ".local/state/skystation"), exist_ok=True)
+        with open(os.path.join(HOME, ".local/state/skystation/pc-epic.log"), "a") as f:
+            f.write(f"--- import {app} {pasta} rc={r.returncode}\n{r.stdout[-2000:]}{r.stderr[-2000:]}\n")
+        return r.returncode == 0 and app in epic_instalados()
     except (OSError, subprocess.SubprocessError):
         return False
 

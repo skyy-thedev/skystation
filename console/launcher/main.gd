@@ -1063,6 +1063,10 @@ func _pc_check() -> void:
 	var sig := ""
 	for f in ["/run/skystation/pcjogos.mudou", "/run/skystation/pcjogos.json"]:
 		sig += str(FileAccess.get_modified_time(f) if FileAccess.file_exists(f) else 0) + ","
+	# entrou na conta Epic no Heroic (user.json) ou um jogo foi importado/instalado (installed.json)
+	var leg := home_dir + "/.var/app/com.heroicgameslauncher.hgl/config/heroic/legendaryConfig/legendary/"
+	for f in [leg + "user.json", leg + "installed.json"]:
+		sig += str(FileAccess.get_modified_time(f) if FileAccess.file_exists(f) else 0) + ","
 	for app in ["com.valvesoftware.Steam", "com.heroicgameslauncher.hgl"]:
 		sig += "1," if DirAccess.dir_exists_absolute("/var/lib/flatpak/app/" + app) else "0,"
 	if sig == pc_sig:

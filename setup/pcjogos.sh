@@ -85,6 +85,13 @@ if hibernado; then
     log "Windows hibernado: as bibliotecas ficam só leitura (no Windows: powercfg /h off)"
 fi
 
+# Os manifestos do Epic Games Launcher (no C:\ProgramData) dizem o nome certo de cada jogo e o que é DLC.
+MANIF=""
+for mp in "${PONTO[@]}"; do
+    d="$(find "$mp" -maxdepth 5 -ipath '*/ProgramData/Epic/EpicGamesLauncher/Data/Manifests' -type d -print -quit 2>/dev/null)"
+    [ -n "$d" ] && MANIF+="${MANIF:+:}$d"
+done
+
 install -d -m 755 "$ALVO"
 install -d -o "$USER_NAME" -g "$USER_NAME" "$LOCAL"
 steam_json=""; epic_json=""; n=0; e=0
@@ -120,13 +127,41 @@ for dev in "${!PONTO[@]}"; do
             mount --bind "$mae" "${MAES[$mae]}" && mount -o "remount,bind,$modo,exec,nosuid,nodev" "${MAES[$mae]}" \
                 || { rmdir "${MAES[$mae]}"; MAES[$mae]="-"; }; }
         [ "${MAES[$mae]}" = "-" ] && continue
-        app="$(python3 -c 'import json,glob,sys
-for f in glob.glob(sys.argv[1] + "/*.mancpn"):
+        # devolve: AppName <tab> título  (nada se for DLC/conteúdo extra, que entra junto com o jogo principal)
+        linha="$(python3 - "$eg" "$MANIF" <<'PY'
+import glob, json, os, re, sys
+eg, manif = sys.argv[1], sys.argv[2]
+app = ""
+for f in glob.glob(eg + "/*.mancpn"):
     try:
-        d = json.load(open(f)); print(d.get("AppName", "")); break
-    except Exception: pass' "$eg")"
-        [ -n "$app" ] || continue
-        epic_json+="${epic_json:+,}{\"appName\":$(json_esc "$app"),\"titulo\":$(json_esc "${jogo##*/}"),\"ponto\":$(json_esc "${MAES[$mae]}/${jogo##*/}"),\"modo\":\"$modo\"}"
+        app = json.load(open(f)).get("AppName", ""); break
+    except Exception: pass
+if not app:
+    sys.exit()
+titulo, dlc = "", None
+for d in filter(None, manif.split(":")):
+    for f in glob.glob(d + "/*.item"):
+        try:
+            m = json.load(open(f, encoding="utf-8-sig"))
+        except Exception:
+            continue
+        if m.get("AppName") == app:
+            titulo = m.get("DisplayName", "")
+            dlc = (m.get("MainGameAppName") or app) != app or m.get("bIsApplication") is False
+            break
+jogo = os.path.dirname(eg)
+if dlc is None:   # sem manifesto: DLC é a pasta sem nenhum .exe
+    dlc = not any(n.lower().endswith(".exe") for _, _, fs in os.walk(jogo) for n in fs)
+if dlc:
+    sys.exit()
+if not titulo:    # "TheWitcher3" → "The Witcher 3"
+    titulo = re.sub(r"(?<=[a-z])(?=[A-Z0-9])|(?<=[0-9])(?=[A-Za-z])", " ", os.path.basename(jogo))
+print(app + "\t" + titulo)
+PY
+)"
+        [ -n "$linha" ] || continue
+        app="${linha%%$'\t'*}"; titulo="${linha#*$'\t'}"
+        epic_json+="${epic_json:+,}{\"appName\":$(json_esc "$app"),\"titulo\":$(json_esc "$titulo"),\"ponto\":$(json_esc "${MAES[$mae]}/${jogo##*/}"),\"mae\":$(json_esc "${MAES[$mae]}"),\"modo\":\"$modo\"}"
         log "Epic: ${jogo##*/} ($app) → ${MAES[$mae]}"
     done < <(find "$mp" -mindepth 2 -maxdepth 5 -type d -name .egstore -not -path '*/$RECYCLE.BIN/*' -print0 2>/dev/null)
     unset MAES
