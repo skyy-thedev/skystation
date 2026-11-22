@@ -47,6 +47,7 @@ import os
 import re
 import shlex
 import socket
+import subprocess
 import sys
 import time
 import urllib.error
@@ -532,7 +533,14 @@ def exigir_rede():
     if not skynet.conectado(cfg):
         saida({"ok": False, "error": "Este console ainda não entrou na SkyNetwork."})
         sys.exit(1)
-    perfil, _ = skynet.perfis()
+    perfil, lst = skynet.perfis()
+    # 13.21: a tela "Quem vai jogar?" liga a conta do Jogador 2 sem trocar o perfil em uso
+    outro = os.environ.get("SKY_PERFIL", "")
+    if outro and outro in [str(p.get("id")) for p in lst]:
+        perfil = outro
+    if perfil == skynet.CONVIDADO:
+        saida({"ok": False, "error": "Convidado não usa a SkyNetwork: escolha um perfil em Quem vai jogar."})
+        sys.exit(1)
     return cfg, perfil
 
 
@@ -623,16 +631,24 @@ def main():
                 st, r = api("POST", "/api/conta", {"usuario": usuario, "senha": senha}, perfil=perfil, cfg=cfg)
             if st != 201:
                 return saida({"ok": False, "error": skynet.mensagem(r)})
+            skynet.guardar_usuario(perfil, usuario)
             sincronizar_ja()
             return saida({"ok": True, "usuario": usuario,
                           "message": f"Conta @{usuario} criada! Entre no site com esse ID: {skynet.url_base(cfg)}"})
         st, r = api("POST", "/api/perfis/entrar", {"localId": perfil, "usuario": usuario, "senha": senha}, cfg=cfg)
         if st != 200:
             return saida({"ok": False, "error": skynet.mensagem(r)})
-        gravar_estado({"unidades": {}, "conflitos": {}})      # saves agora comparam com a nuvem da conta
+        conta = r["perfil"]["usuario"]
+        skynet.guardar_usuario(perfil, conta)
+        if os.environ.get("SKY_DUPLA") == "1":     # 13.21: entrou como Jogador 2
+            subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "sky-perfis"),
+                            "dupla", perfil], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            sincronizar_ja()
+            return saida({"ok": True, "usuario": conta, "message": f"@{conta} entrou como Jogador 2"})
+        if perfil == skynet.perfis()[0]:
+            gravar_estado({"unidades": {}, "conflitos": {}})      # saves agora comparam com a nuvem da conta
         sincronizar_ja()
-        return saida({"ok": True, "usuario": r["perfil"]["usuario"],
-                      "message": f"Este perfil agora é a conta @{r['perfil']['usuario']}"})
+        return saida({"ok": True, "usuario": conta, "message": f"Este perfil agora é a conta @{conta}"})
     if c == "icone" and len(a) == 2:
         cfg, perfil = exigir_rede()
         lista = [x["id"] for x in skynet.avatares()]

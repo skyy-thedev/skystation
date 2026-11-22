@@ -404,6 +404,8 @@ func _ready() -> void:
 	_make_sounds()
 	_make_music()
 	_load_state()
+	_sky_json("sky-perfis", ["inicio"])   # 13.21: o Jogador 2 é escolhido de novo a cada vez que liga
+	quem_pendente = not FileAccess.file_exists(conf_dir + "/quem.off")
 	_reload_games()
 	_refresh_status()
 	version_txt = _read_text("/opt/skystation/VERSION", "")
@@ -526,6 +528,10 @@ func _process(delta: float) -> void:
 	if settings != null and settings.visible:
 		return
 	cooldown = max(0.0, cooldown - delta)
+	quem_t = move_toward(quem_t, 1.0 if quem_open else 0.0, delta * 6.0)
+	if quem_pendente and intro_t >= INTRO_LEN:
+		quem_pendente = false
+		_quem_abrir()
 	if intro_t < INTRO_LEN:
 		if Input.is_action_just_pressed("sky_accept") or Input.is_action_just_pressed("sky_back") \
 				or Input.is_action_just_pressed("sky_menu"):
@@ -619,6 +625,9 @@ func _input(event: InputEvent) -> void:
 
 func _handle_input(delta: float) -> void:
 	if cooldown > 0.0:
+		return
+	if quem_open:
+		_quem_input(delta)
 		return
 	if store_open:
 		_store_input(delta)
@@ -720,6 +729,16 @@ func _cur() -> Dictionary:
 var profiles: Array = []
 var profile_id: String = ""
 var profile_name: String = ""
+# 13.21: "Quem vai jogar?" (ao ligar e pelo Sistema): Jogador 1 = perfil em uso (ou convidado), Jogador 2 =
+# perfil do 2º controle (troféus e tempo em dupla) ou ninguém.
+var jogador2_id: String = ""
+var jogador2_nome: String = ""
+var quem_open: bool = false
+var quem_pendente: bool = true     # abre depois da abertura animada
+var quem_passo: int = 1            # 1 = Jogador 1, 2 = Jogador 2
+var quem_sel: int = 0
+var quem_t: float = 0.0
+var quem_opcoes: Array = []
 var trophies: Dictionary = {}
 
 
@@ -737,9 +756,16 @@ func _load_profile(args: Array = ["listar"]) -> void:
 	if d.has("perfis"):
 		profiles = d["perfis"]
 		profile_id = str(d.get("atual", ""))
+		if profile_id == "convidado":
+			profile_name = "Convidado"
 		for p in profiles:
 			if str(p["id"]) == profile_id:
 				profile_name = str(p["nome"])
+		jogador2_id = _nulo(d.get("jogador2"))
+		jogador2_nome = "Convidado" if jogador2_id == "convidado" else ""
+		for p in profiles:
+			if str(p["id"]) == jogador2_id:
+				jogador2_nome = str(p["nome"])
 	if d.has("error"):
 		_toast(str(d["error"]), 3.5)
 	trophies = _sky_json("sky-trofeus", ["listar"])
@@ -1487,7 +1513,11 @@ func _build_cats() -> void:
 		c_games["items"].append(_act("Nenhum jogo", "Pastas com game.json em ~/skystation/games", "", "pad"))
 
 	c_sys["items"] = [
-		_act("Perfil: " + profile_name, "A troca para o próximo perfil. Cada um tem saves, favoritos e troféus próprios", "profile", "pad"),
+		_act("Jogadores: " + profile_name + ("  +  " + jogador2_nome if jogador2_nome != "" else ""),
+			"Quem vai jogar: Jogador 1, Jogador 2 (troféus em dupla) ou convidado. Cada perfil tem saves e troféus próprios",
+			"profile", "pad"),
+		_act("Perguntar quem vai jogar ao ligar", "Não (abre direto no último perfil)" if FileAccess.file_exists(conf_dir + "/quem.off") else "Sim",
+			"quem_toggle", "pad"),
 		_act("Wi-Fi", "Redes sem fio", "settings:0", "wifi"),
 		_act("Bluetooth", "Parear controles e fones", "settings:1", "bt"),
 		_act("SkyNetwork", "Amigos, mensagens e saves na nuvem", "settings:4", "wifi"),
@@ -1696,7 +1726,10 @@ func _activate() -> void:
 			_apply_tv_scale()
 			_toast("Interface maior na TV: " + ("desligada" if FileAccess.file_exists(conf_dir + "/tv-grande.off") else "ligada"), 2.5, "monitor")
 		"profile":
-			_next_profile()
+			_quem_abrir()
+		"quem_toggle":
+			_toggle_file(conf_dir + "/quem.off")
+			_refresh_sys_items()
 		"profile_new":
 			_load_profile(["criar"])
 			_next_profile()
@@ -1876,6 +1909,7 @@ func _open_settings(section: int = -1) -> void:
 
 func _on_settings_closed() -> void:
 	status_t = 0.0   # entrou na rede, aceitou um amigo… o menu reflete na hora
+	_load_profile()   # 13.21: o Jogador 2 pode ter entrado com o ID dele
 	cooldown = 0.35
 	hold_dir = _nav_dir()
 	_play("back")
@@ -3297,6 +3331,8 @@ func _draw() -> void:
 			_icon(toast_icon, Vector2(r.position.x + 32, r.position.y + 22), 24.0, Color(accent, ta))
 		draw_multiline_string(font, Vector2(r.position.x + 24 + icon_w, r.position.y + 29), toast_msg,
 			HORIZONTAL_ALIGNMENT_LEFT, maxw, 18, -1, Color(WHITE, ta))
+	if quem_t > 0.0:
+		_draw_quem(w, h)
 	if dim_t > 0.0:
 		_draw_dim(w, h)
 	if inst_pid != -1 and intro_t >= INTRO_LEN:
@@ -3354,7 +3390,9 @@ func _draw_header(w: float, _h: float, a: float) -> void:
 	_text_shadow("Station", Vector2(52 + sw, 58), 26, Color(accent, a), true)
 	if profile_name != "":   # perfil e troféus
 		var who := profile_name
-		if int(trophies.get("total", 0)) > 0:
+		if jogador2_nome != "":
+			who += "  +  " + jogador2_nome   # 13.21: partida em dupla
+		if int(trophies.get("total", 0)) > 0 and profile_id != "convidado":
 			who += "   %d/%d troféus" % [int(trophies.get("ganhos", 0)), int(trophies.get("total", 0))]
 		_text(who, Vector2(54, 84), 15, Color(MUTED, a))
 
@@ -4987,3 +5025,158 @@ func _icon(kind: String, c: Vector2, s: float, col: Color) -> void:
 			draw_line(c + Vector2(s * 0.08, -s * 0.06), c + Vector2(s * 0.08, s * 0.2), col, lw, true)
 		_:
 			draw_circle(c, s * 0.3, col, false, lw, true)
+
+
+# ---------------------------------------------------------------- 13.21: Quem vai jogar?
+
+func _quem_abrir() -> void:
+	_load_profile()
+	quem_open = true
+	quem_passo = 1
+	_quem_montar()
+	quem_sel = 0
+	for k in quem_opcoes.size():
+		if str(quem_opcoes[k].get("id", "")) == profile_id:
+			quem_sel = k
+	cooldown = 0.3
+	hold_dir = _nav_dir()
+
+
+func _quem_montar() -> void:
+	quem_opcoes = []
+	if quem_passo == 2:
+		quem_opcoes.append({"tipo": "sozinho", "nome": "Só eu", "sub": "Jogar sem Jogador 2", "cor": "#2d3a5c"})
+	for p in profiles:
+		var pid := str(p.get("id", ""))
+		if quem_passo == 2 and pid == profile_id:
+			continue
+		var u := _nulo(p.get("usuario"))
+		quem_opcoes.append({"tipo": "perfil", "id": pid, "nome": str(p.get("nome", pid)), "cor": str(p.get("cor", "#4fd1ff")),
+			"sub": ("@" + u) if u != "" else "Perfil deste console"})
+	if quem_passo == 2 and (net.get("online", false) or net.get("convidado", false)):
+		quem_opcoes.append({"tipo": "conta", "nome": "Entrar com ID", "sub": "Conta SkyNetwork do Jogador 2", "cor": "#3a2d6c"})
+	quem_opcoes.append({"tipo": "convidado", "id": "convidado", "nome": "Convidado",
+		"sub": "Sem login: sem troféus e sem nuvem", "cor": "#5a6378"})
+	if quem_passo == 1 and profiles.size() < 4:
+		quem_opcoes.append({"tipo": "novo", "nome": "Novo perfil", "sub": "Saves e troféus próprios", "cor": "#24304d"})
+
+
+func _quem_input(_delta: float) -> void:
+	var d := _nav_dir()
+	if d != hold_dir:
+		hold_dir = d
+		if d.x != 0 and not quem_opcoes.is_empty():
+			var n := clampi(quem_sel + d.x, 0, quem_opcoes.size() - 1)
+			if n != quem_sel:
+				quem_sel = n
+				_play("tick")
+	if Input.is_action_just_pressed("sky_back"):
+		_play("back")
+		if quem_passo == 2:
+			quem_passo = 1
+			_quem_montar()
+			quem_sel = 0
+			for k in quem_opcoes.size():
+				if str(quem_opcoes[k].get("id", "")) == profile_id:
+					quem_sel = k
+		else:
+			quem_open = false   # fica quem já estava
+		return
+	if not Input.is_action_just_pressed("sky_accept") or quem_opcoes.is_empty():
+		return
+	var o: Dictionary = quem_opcoes[quem_sel]
+	_play("accept")
+	if quem_passo == 1:
+		match str(o["tipo"]):
+			"novo":
+				_load_profile(["criar"])
+				_quem_montar()
+				quem_sel = maxi(0, profiles.size() - 1)
+				_toast("Perfil criado. Troque o nome em Configurações → SkyNetwork ou no site", 3.5, "pad")
+				return
+			_:
+				if str(o["id"]) != profile_id:
+					_load_profile(["usar", str(o["id"])])
+					_reload_games()
+				quem_passo = 2
+				_quem_montar()
+				quem_sel = 0
+				for k in quem_opcoes.size():
+					if str(quem_opcoes[k].get("id", "")) == jogador2_id:
+						quem_sel = k
+		return
+	match str(o["tipo"]):
+		"sozinho":
+			_load_profile(["dupla", "nenhum"])
+		"perfil", "convidado":
+			_load_profile(["dupla", str(o["id"])])
+		"conta":
+			# um perfil livre (nome padrão, sem conta) vira o do Jogador 2; senão cria um
+			var alvo := ""
+			for p in profiles:
+				if str(p["id"]) != profile_id and _nulo(p.get("usuario")) == "" and str(p.get("nome", "")).begins_with("Jogador "):
+					alvo = str(p["id"])
+			if alvo == "":
+				if profiles.size() >= 4:
+					_toast("Já há 4 perfis: use um deles como Jogador 2", 3.5, "pad")
+					return
+				_load_profile(["criar"])
+				alvo = str(profiles[profiles.size() - 1]["id"])
+			quem_open = false
+			_open_settings(4)
+			if settings != null:
+				settings.call("abrir_acao", "net_conta_entrar_j2:" + alvo)
+			return
+	quem_open = false
+	_reload_games()
+	var msg := "Jogador 1: " + profile_name
+	if jogador2_nome != "":
+		msg += "  ·  Jogador 2: " + jogador2_nome
+	_toast(msg, 3.0, "pad")
+	cooldown = 0.3
+
+
+func _draw_quem(w: float, h: float) -> void:
+	var e := quem_t * quem_t * (3.0 - 2.0 * quem_t)
+	draw_rect(Rect2(0, 0, w, h), Color(0.02, 0.03, 0.08, 0.86 * e))
+	var titulo := "Quem vai jogar?" if quem_passo == 1 else "E o Jogador 2?"
+	var sub := "Jogador 1 usa o primeiro controle" if quem_passo == 1 \
+		else "Ligue o segundo controle. Em dupla, os troféus contam para os dois"
+	_text(titulo, Vector2(0, h * 0.26), 44, Color(WHITE, e), true, w, HORIZONTAL_ALIGNMENT_CENTER)
+	_text(sub, Vector2(0, h * 0.26 + 40), 19, Color(MUTED, e), false, w, HORIZONTAL_ALIGNMENT_CENTER)
+	var n := quem_opcoes.size()
+	if n == 0:
+		return
+	var cw := 200.0
+	var gap := 34.0
+	var total := n * cw + (n - 1) * gap
+	var x0 := (w - total) / 2.0
+	if total > w - 120.0:   # muitos: rola para manter o escolhido na tela
+		x0 = clampf(w / 2.0 - quem_sel * (cw + gap) - cw / 2.0, w - 60.0 - total, 60.0)
+	var y := h * 0.40
+	for k in n:
+		var o: Dictionary = quem_opcoes[k]
+		var on := k == quem_sel
+		var x := x0 + k * (cw + gap)
+		var cor := Color.from_string(str(o.get("cor", "#4fd1ff")), accent)
+		var esc := 1.08 if on else 1.0
+		var r := Rect2(x + cw / 2.0 - cw * esc / 2.0, y - (esc - 1.0) * cw / 2.0, cw * esc, cw * esc)
+		if on:
+			_glow(r.get_center(), cw * 0.9, Color(cor, 0.35 * e))
+		_rrect(r, Color(cor, (0.95 if on else 0.55) * e), 28, Color(WHITE, (0.9 if on else 0.0) * e), 3 if on else 0)
+		var letra := str(o.get("nome", "?")).substr(0, 1).to_upper()
+		match str(o.get("tipo", "")):
+			"novo":
+				letra = "+"
+			"sozinho":
+				letra = "1"
+			"conta":
+				letra = "@"
+		_text(letra, Vector2(r.position.x, r.get_center().y + 30), 84, Color(WHITE, e), true, r.size.x,
+			HORIZONTAL_ALIGNMENT_CENTER)
+		_text(str(o.get("nome", "")), Vector2(x - 20, y + cw * 1.08 + 36), 21, Color(WHITE if on else MUTED, e), on,
+			cw + 40, HORIZONTAL_ALIGNMENT_CENTER)
+		_text(str(o.get("sub", "")), Vector2(x - 30, y + cw * 1.08 + 62), 14, Color(MUTED, (1.0 if on else 0.6) * e), false,
+			cw + 60, HORIZONTAL_ALIGNMENT_CENTER)
+	var dica := "Ⓐ Escolher    Ⓑ " + ("Voltar ao Jogador 1" if quem_passo == 2 else "Continuar com " + profile_name)
+	_text(dica, Vector2(0, h - 70), 17, Color(MUTED, e), false, w, HORIZONTAL_ALIGNMENT_CENTER)

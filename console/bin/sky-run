@@ -26,6 +26,17 @@ START=$(date +%s)
 rm -f "$RUN/emulador-usado"   # 13.18: o sky-emu anota de novo qual emulador abriu
 echo "$START" >"$RUN/game.start"     # Fase 8.0: troféus da partida em andamento e "NOVO" no Home
 
+# 13.21: partida em dupla. Com um Jogador 2 escolhido em "Quem vai jogar?" e dois controles ligados, o tempo
+# de jogo e os troféus também contam para o perfil dele (e vão para a conta SkyNetwork dele pelo sky-net).
+J2=""; J2NOME=""
+if [ "$(ls /dev/input/js* 2>/dev/null | wc -l)" -ge 2 ]; then
+    read -r J2 J2NOME < <(python3 -c 'import sys; sys.path.insert(0, "/opt/skystation/bin"); import skynet
+j = skynet.jogador2(); print(j, skynet.nome_perfil(j) if j else "")' 2>/dev/null) || true
+fi
+rm -f "$RUN/game.dupla"
+[ -n "$J2" ] && echo "$J2" >"$RUN/game.dupla"
+J2SAVES="$HOME/skystation/perfis/$J2/saves"
+
 export SKY_MSG_FILE="$RUN/last_msg"     # sky-emu escreve aqui mensagens para o jogador
 export SKY_PROFILE="$(/opt/skystation/bin/sky-perfil)"
 
@@ -82,6 +93,7 @@ if [ -x /opt/skystation/bin/sky-trofeus ]; then
     ( while sleep 60; do kill -0 "$child" 2>/dev/null || break
           echo "$(date +%s.%N) trofeus" >>"$RUN/eventos.log"
           /opt/skystation/bin/sky-trofeus conferir >/dev/null 2>&1
+          [ -n "$J2" ] && SKY_SAVES="$J2SAVES" SKY_JOGADOR="$J2NOME" /opt/skystation/bin/sky-trofeus conferir >/dev/null 2>&1
       done ) &
     TROF_PID=$!
 fi
@@ -128,22 +140,41 @@ fi
 
 # Tempo de jogo (Fase 5.6): soma o tempo desta partida em ~/skystation/saves/tempo.json.
 # Partidas com menos de 10 s (abriu e fechou) não contam.
-python3 - "$ID" "$TITLE" "$START" "$(date +%s)" "$HOME/skystation/saves/tempo.json" <<'PY' 2>>"$LOG"
+# 13.21: em dupla, soma também no perfil do Jogador 2 e conta a partida em dupla (dupla.json) para os dois.
+python3 - "$ID" "$TITLE" "$START" "$(date +%s)" "$HOME/skystation/saves" "${J2:+$J2SAVES}" <<'PY' 2>>"$LOG"
 import json, os, sys
-gid, title, start, end, path = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), sys.argv[5]
+gid, title, start, end = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+pastas = [p for p in sys.argv[5:] if p]
 secs = end - start
-if secs >= 10:
+
+
+def soma(path, mudar):
     try:
         data = json.load(open(path))
     except (OSError, ValueError):
         data = {}
-    g = data.get(gid, {"seconds": 0, "plays": 0})
-    g.update(seconds=g.get("seconds", 0) + secs, plays=g.get("plays", 0) + 1, last=end, title=title)
-    data[gid] = g
+    mudar(data)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path + ".tmp", "w") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
     os.replace(path + ".tmp", path)
+
+
+def tempo(data):
+    g = data.get(gid, {"seconds": 0, "plays": 0})
+    g.update(seconds=g.get("seconds", 0) + secs, plays=g.get("plays", 0) + 1, last=end, title=title)
+    data[gid] = g
+
+
+def dupla(data):
+    data.update(partidas=int(data.get("partidas", 0)) + 1, segundos=int(data.get("segundos", 0)) + secs)
+
+
+if secs >= 10:
+    for p in pastas:
+        soma(os.path.join(p, "tempo.json"), tempo)
+        if len(pastas) > 1:
+            soma(os.path.join(p, "dupla.json"), dupla)
 PY
 echo "$code" >"$RUN/last_exit"
 potencia normal
@@ -154,6 +185,9 @@ potencia normal
 
 # Fase 6.3: troféus do perfil (avisa na tela se conquistou algum nesta partida).
 [ -x /opt/skystation/bin/sky-trofeus ] && /opt/skystation/bin/sky-trofeus conferir >/dev/null 2>&1
+rm -f "$RUN/game.dupla"     # a partida já foi somada em dupla.json (senão contaria de novo abaixo)
+[ -n "$J2" ] && [ -x /opt/skystation/bin/sky-trofeus ] && \
+    SKY_SAVES="$J2SAVES" SKY_JOGADOR="$J2NOME" /opt/skystation/bin/sky-trofeus conferir >/dev/null 2>&1
 
 # Fase 9.4: envia o save para a nuvem se mudou (em segundo plano: não segura a volta ao menu).
 [ -n "$NUVEM" ] && (timeout 300 /opt/skystation/bin/sky-cloud depois "$ID" "$TITLE" "$CMD" >/dev/null 2>&1 &)

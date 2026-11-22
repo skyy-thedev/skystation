@@ -65,14 +65,16 @@ def presenca():
     return p
 
 
-def meus_trofeus():
-    """Os troféus já ganhos pelo perfil, no formato do servidor."""
-    ganhos = skynet.ler_json(os.path.join(skynet.SKY, "saves/trofeus.json"), {}) or {}
+def meus_trofeus(pasta=None):
+    """Os troféus já ganhos pelo perfil (o da pasta de saves dada), no formato do servidor."""
+    pasta = pasta or os.path.join(skynet.SKY, "saves")
+    ganhos = skynet.ler_json(os.path.join(pasta, "trofeus.json"), {}) or {}
     if not ganhos:
         return []
     try:
         out = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "sky-trofeus"),
-                              "listar"], capture_output=True, text=True, timeout=10).stdout
+                              "listar"], capture_output=True, text=True, timeout=10,
+                             env=dict(os.environ, SKY_SAVES=pasta)).stdout
         lista = json.loads(out.strip().splitlines()[-1]).get("trofeus", [])
     except (OSError, ValueError, IndexError, subprocess.SubprocessError):
         return []
@@ -95,8 +97,8 @@ class Rede:
         self.pedidos = set()
         self.mensagens = []       # as mais recentes recebidas, para as telas
         self.feed = []            # últimos troféus dos amigos
-        self.trofeus_enviados = None
-        self.trofeus_mtime = None
+        self.trofeus_enviados = {}    # 13.21: por perfil (o Jogador 2 também manda os dele)
+        self.trofeus_mtime = {}
         self.primeira = True
         self.falhas = 0
 
@@ -121,9 +123,17 @@ class Rede:
                 f.write(f"{time.time():.3f} rede\n")
         except OSError:
             pass
-        perfil, _ = skynet.perfis()
+        perfil, lista = skynet.perfis()
         if perfil != self.perfil:
             self.trocar_perfil(perfil)
+        if perfil == skynet.CONVIDADO:   # 13.21: convidado fica fora da rede (o Jogador 2 de perfil não)
+            self.gravar({"online": False, "convidado": True,
+                         "erro": "Jogando como convidado: escolha um perfil em Quem vai jogar para usar a SkyNetwork."})
+            self.perfis_em_dia(cfg)
+            self.jogador2(cfg)
+            for p in lista:
+                self.enviar_trofeus(cfg, str(p.get("id")))
+            return True, {}
         self.perfis_em_dia(cfg)
         corpo = {"presenca": presenca()}
         if self.desde:
@@ -146,8 +156,17 @@ class Rede:
                      "pedidosEnviados": r.get("pedidosEnviados", []), "naoLidas": r.get("naoLidas", 0),
                      "mensagens": self.mensagens, "trofeus": self.feed})
         self.primeira = False
-        self.enviar_trofeus(cfg, perfil)
+        for p in lista:        # 13.21: troféus de todos os perfis (o Jogador 2 ganha em dupla sem estar em uso)
+            self.enviar_trofeus(cfg, str(p.get("id")))
+        self.jogador2(cfg)
         return True, r
+
+    def jogador2(self, cfg):
+        """13.21: na partida em dupla, os amigos do Jogador 2 também o veem "jogando"."""
+        j2 = skynet.jogador2()
+        if not j2 or not jogo_aberto() or not os.path.exists(os.path.join(skynet.RUN, "game.dupla")):
+            return
+        api("POST", "/api/sync", {"presenca": presenca()}, perfil=j2, cfg=cfg)
 
     def avisar(self, r):
         quieto = self.primeira      # ao ligar o console não despeja tudo de uma vez
@@ -207,21 +226,24 @@ class Rede:
     def enviar_trofeus(self, cfg, perfil):
         # só relista (um processo Python a mais) quando o trofeus.json mudou; antes rodava a cada 30 s,
         # inclusive no meio do jogo
+        if perfil == skynet.CONVIDADO:
+            return
+        pasta = skynet.pasta_saves(perfil)
         try:
-            mt = os.path.getmtime(os.path.join(skynet.SKY, "saves/trofeus.json"))
+            mt = os.path.getmtime(os.path.join(pasta, "trofeus.json"))
         except OSError:
             return
-        if mt == self.trofeus_mtime:
+        if mt == self.trofeus_mtime.get(perfil):
             return
-        lista = meus_trofeus()
+        lista = meus_trofeus(pasta)
         chave = json.dumps(sorted(t["trofeu"] for t in lista))
-        if not lista or chave == self.trofeus_enviados:
-            self.trofeus_mtime = mt
+        if not lista or chave == self.trofeus_enviados.get(perfil):
+            self.trofeus_mtime[perfil] = mt
             return
         st, _ = api("POST", "/api/trofeus", {"trofeus": lista[:100]}, perfil=perfil, cfg=cfg)
         if st == 200:
-            self.trofeus_enviados = chave
-            self.trofeus_mtime = mt
+            self.trofeus_enviados[perfil] = chave
+            self.trofeus_mtime[perfil] = mt
 
 
 def pedido_imediato():

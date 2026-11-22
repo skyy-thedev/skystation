@@ -6,6 +6,12 @@ cópias de segurança, tempo de jogo, favoritos e troféus.
     sky-perfis usar <id>         troca de perfil (não troca com jogo aberto)
     sky-perfis criar [nome]      cria um perfil novo (até 4) e devolve a lista
     sky-perfis renomear <id> <nome>
+    sky-perfis usar convidado    (13.21) joga sem perfil: saves só neste console, sem SkyNetwork e sem troféus
+    sky-perfis dupla <id|convidado|nenhum>   (13.21) quem é o Jogador 2 (o 2º controle) até desligar o console
+
+13.21: "jogador2" fica em perfis.json e volta a "nenhum" a cada vez que o console liga (a tela "Quem vai
+jogar?" pergunta de novo). Com um Jogador 2 de perfil, o tempo de jogo e os troféus também contam para ele
+(sky-run), e os troféus dele vão para a conta SkyNetwork ligada a esse perfil (sky-net).
 
 Como funciona: ~/skystation/saves, states e backups viram atalhos (symlinks) para
 ~/skystation/perfis/<id>/…; trocar de perfil é só apontar os atalhos para outra pasta. Emuladores,
@@ -24,6 +30,7 @@ RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
 LINKS = ("saves", "states", "backups")
 CORES = ["#4fd1ff", "#ff7a9c", "#54f0b8", "#ffb347"]
 MAX = 4
+CONVIDADO = "convidado"     # 13.21: perfil fixo, fora da lista (não conta no limite e não vai para a SkyNetwork)
 
 
 def load():
@@ -84,14 +91,29 @@ def main():
     a = sys.argv[1:]
     d = ensure()
     ids = [p["id"] for p in d["perfis"]]
-    if a[:1] == ["usar"] and len(a) == 2:
-        if a[1] not in ids:
+    if a[:1] == ["inicio"]:                     # o console acabou de ligar: Jogador 2 começa vazio
+        if d.get("jogador2"):
+            d["jogador2"] = None
+            save(d)
+    elif a[:1] == ["dupla"] and len(a) == 2:
+        alvo = None if a[1] == "nenhum" else a[1]
+        if alvo is not None and alvo != CONVIDADO and alvo not in ids:
+            d["error"] = "perfil não existe"
+        elif alvo is not None and alvo == d.get("atual") and alvo != CONVIDADO:
+            d["error"] = "esse perfil já é o Jogador 1"
+        else:
+            d["jogador2"] = alvo
+            save(d)
+    elif a[:1] == ["usar"] and len(a) == 2:
+        if a[1] not in ids and a[1] != CONVIDADO:
             d["error"] = "perfil não existe"
         elif os.path.exists(os.path.join(RUN, "game.pid")):
             d["error"] = "feche o jogo antes de trocar de perfil"
         else:
             point(a[1])
             d["atual"] = a[1]
+            if d.get("jogador2") == a[1] and a[1] != CONVIDADO:
+                d["jogador2"] = None          # não dá para ser Jogador 1 e 2 ao mesmo tempo
             save(d)
     elif a[:1] == ["criar"]:
         if len(ids) >= MAX:
@@ -115,6 +137,8 @@ def main():
         print(__doc__)
         return 2
     d["ok"] = "error" not in d
+    d.setdefault("jogador2", None)
+    d["convidado"] = {"id": CONVIDADO, "nome": "Convidado", "cor": "#8a93a6"}
     print(json.dumps(d, ensure_ascii=False))
     return 0
 

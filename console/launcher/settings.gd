@@ -59,6 +59,7 @@ var grade_lista: Array = []    # [{"id", "nome", "cor"}]
 var grade_tex: Dictionary = {}
 var grade_atual: String = ""
 var acao_pendente: String = ""  # o launcher pediu para abrir direto numa ação (ex.: adicionar amigo)
+var net_perfil_alvo: String = ""  # 13.21: login do Jogador 2 (o perfil dele, não o perfil em uso)
 
 var cmd_queue: Array = []
 var joy_prev: Dictionary = {}
@@ -85,6 +86,7 @@ func open(start_section: int = -1) -> void:
 	kb_open = false
 	net_amigo = ""
 	net_msg = ""
+	net_perfil_alvo = ""
 	cmd_queue.clear()
 	joy_prev = _joy_buttons()  # o "A" que abriu esta tela não pode valer aqui
 	_load_section()
@@ -95,6 +97,11 @@ func abrir_acao(acao: String) -> void:
 	# categoria SkyNetwork do menu (adicionar amigo, criar/entrar na conta, trocar o ícone…)
 	column = 1
 	acao_pendente = ""
+	if acao.begins_with("net_conta_entrar_j2:"):   # 13.21: "Quem vai jogar?" → Jogador 2 entra com o ID dele
+		net_perfil_alvo = acao.substr(20)
+		_kb_start("Jogador 2: o seu ID SkyNetwork", "")
+		kb_mode = "net_conta_id_entrar"
+		return
 	match acao:
 		"net_add", "net_conta_criar", "net_conta_entrar", "net_entrar", "net_conta_senha", "ps3_rpcn":
 			_activate_acao({"action": acao})
@@ -617,18 +624,21 @@ func _on_net_result(data: Dictionary, sec: int) -> void:
 		status = net_msg
 
 
-func _async_net(args: Array, cb: Callable, senha: String = "", prog: String = SKY_CLOUD) -> void:
+func _async_net(args: Array, cb: Callable, senha: String = "", prog: String = SKY_CLOUD, env: Array = []) -> void:
 	var th := Thread.new()
 	threads.append(th)
-	th.start(_worker_net.bind(args, cb, th, senha, prog))
+	th.start(_worker_net.bind(args, cb, th, senha, prog, env))
 
 
-func _worker_net(args: Array, cb: Callable, th: Thread, senha: String = "", prog: String = SKY_CLOUD) -> void:
+func _worker_net(args: Array, cb: Callable, th: Thread, senha: String = "", prog: String = SKY_CLOUD, env: Array = []) -> void:
 	var output := []
 	var code: int
-	if senha != "":
+	if senha != "" or not env.is_empty():
 		# a senha vai por variável de ambiente (na linha de comando qualquer programa a veria)
-		code = OS.execute("/usr/bin/env", PackedStringArray(["SKY_SENHA=" + senha, prog] + args), output, false)
+		var pre: Array = env.duplicate()
+		if senha != "":
+			pre.append("SKY_SENHA=" + senha)
+		code = OS.execute("/usr/bin/env", PackedStringArray(pre + [prog] + args), output, false)
 	else:
 		code = OS.execute(prog, PackedStringArray(args), output, false)
 	var data = null
@@ -868,8 +878,11 @@ func _kb_ok() -> void:
 			kb_mascara = true
 		"net_conta_criar", "net_conta_entrar":
 			status = "Criando a conta…" if modo == "net_conta_criar" else "Entrando na conta…"
+			var extra: Array = []
+			if net_perfil_alvo != "" and modo == "net_conta_entrar":
+				extra = ["SKY_PERFIL=" + net_perfil_alvo, "SKY_DUPLA=1"]
 			_async_net(["conta-criar" if modo == "net_conta_criar" else "conta-entrar", net_conta_id],
-				_on_net_result.bind(section), kb_text)
+				_on_net_result.bind(section), kb_text, SKY_CLOUD, extra)
 		"rpcn_id":
 			if texto == "":
 				return

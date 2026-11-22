@@ -4,6 +4,9 @@
     sky-trofeus listar      {"ganhos": 3, "total": 17, "trofeus": [{"id","nome","desc","nivel","ganho"}]}
     sky-trofeus conferir    marca os recém-conquistados, avisa na tela e toca o som (o sky-run chama
                             a cada minuto durante a partida e de novo no fim; Fase 8.0)
+
+13.21: SKY_SAVES=<pasta> confere outro perfil (o Jogador 2 da partida em dupla) e SKY_JOGADOR=<nome> põe o
+nome dele no aviso. O convidado não ganha troféus. Partidas em dupla ficam em saves/dupla.json.
 """
 import json
 import os
@@ -13,7 +16,9 @@ import sys
 import time
 
 HOME = os.path.expanduser("~")
-SAVES = os.path.join(HOME, "skystation/saves")
+SAVES = os.environ.get("SKY_SAVES") or os.path.join(HOME, "skystation/saves")
+CONVIDADO = "/perfis/convidado/" in os.path.realpath(SAVES) + "/"
+JOGADOR = os.environ.get("SKY_JOGADOR", "")
 RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
 SISTEMAS = ("ps1", "ps2", "ps3", "snes", "n64", "psp", "x360", "gc", "wii", "nds", "3ds", "gba", "gb", "nes", "md",
             "ps4", "switch", "wiiu", "vita", "xbox", "dc", "saturn")
@@ -46,10 +51,29 @@ def stats():
             t[gid] = g
     except (OSError, ValueError):
         pass
+    # 13.21: partidas em dupla (2 jogadores com perfil); a partida em andamento conta se for em dupla
+    dupla = {}
+    try:
+        with open(os.path.join(SAVES, "dupla.json")) as f:
+            dupla = json.load(f)
+    except (OSError, ValueError):
+        pass
+    d_partidas, d_segundos = int(dupla.get("partidas", 0)), int(dupla.get("segundos", 0))
+    try:
+        with open(os.path.join(RUN, "game.pid")) as f:
+            os.kill(int(f.read().strip()), 0)
+        if os.path.exists(os.path.join(RUN, "game.dupla")):
+            with open(os.path.join(RUN, "game.start")) as f:
+                dur = int(time.time()) - int(f.read().strip())
+            if dur >= 10:
+                d_partidas, d_segundos = d_partidas + 1, d_segundos + dur
+    except (OSError, ValueError):
+        pass
     secs = [int(v.get("seconds", 0)) for v in t.values()]
     plays = [int(v.get("plays", 0)) for v in t.values()]
     return {"total": sum(secs), "maior": max(secs, default=0), "jogos": len(t), "partidas": sum(plays),
-            "maior_partidas": max(plays, default=0), "sistemas": {sistema(k) for k in t}}
+            "maior_partidas": max(plays, default=0), "sistemas": {sistema(k) for k in t},
+            "dupla_partidas": d_partidas, "dupla_segundos": d_segundos}
 
 
 H = 3600
@@ -84,6 +108,11 @@ TROFEUS = [
      lambda s: bool(s["sistemas"] & {"dc", "saturn"})),
     ("proprio", "Feito em casa", "Jogue um jogo próprio do SkyStation", "bronze", lambda s: "proprio" in s["sistemas"]),
     ("todos", "Volta ao mundo", "Jogue em 4 sistemas diferentes", "ouro", lambda s: len(s["sistemas"]) >= 4),
+    # 13.21: em dupla (os dois jogadores ganham)
+    ("dupla1", "Player 2 entrou", "Jogue uma partida em dupla, com dois controles", "bronze",
+     lambda s: s["dupla_partidas"] >= 1),
+    ("dupla5h", "Parceiros de sofá", "5 horas jogando em dupla", "prata", lambda s: s["dupla_segundos"] >= 5 * H),
+    ("dupla25", "Dupla dinâmica", "25 partidas em dupla", "ouro", lambda s: s["dupla_partidas"] >= 25),
 ]
 
 
@@ -99,10 +128,13 @@ def ganhos():
 def listar():
     g = ganhos()
     lst = [{"id": i, "nome": n, "desc": d, "nivel": lv, "ganho": int(g.get(i, 0))} for i, n, d, lv, _ in TROFEUS]
-    return {"ok": True, "ganhos": sum(1 for x in lst if x["ganho"]), "total": len(lst), "trofeus": lst}
+    return {"ok": True, "ganhos": sum(1 for x in lst if x["ganho"]), "total": len(lst), "trofeus": lst,
+            "convidado": CONVIDADO}
 
 
 def conferir():
+    if CONVIDADO:
+        return []
     s, g, novos = stats(), ganhos(), []
     for i, nome, _, nivel, cond in TROFEUS:
         if i not in g and cond(s):
@@ -118,12 +150,13 @@ def conferir():
     with open(os.path.join(RUN, "events.jsonl"), "a") as f:
         for k, (nome, nivel) in enumerate(novos):
             f.write(json.dumps({"t": time.time() + k * 0.01, "kind": "trofeu",
-                                "text": f"Troféu de {nivel}: {nome}"}, ensure_ascii=False) + "\n")
+                                "text": f"{JOGADOR + ': ' if JOGADOR else ''}Troféu de {nivel}: {nome}"},
+                               ensure_ascii=False) + "\n")
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import skyhist          # Fase 8.1: central de notificações
         for nome, nivel in reversed(novos):
-            skyhist.add("trofeu", f"Troféu de {nivel}: {nome}")
+            skyhist.add("trofeu", f"{JOGADOR + ': ' if JOGADOR else ''}Troféu de {nivel}: {nome}")
     except Exception:
         pass
     som = "/opt/skystation/sounds/trofeu.wav"

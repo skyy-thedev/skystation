@@ -74,6 +74,8 @@ def conectado(cfg=None):
 def api(metodo, caminho, corpo=None, perfil=None, cfg=None, timeout=8, token=True):
     """Chama o servidor. Devolve (status, dados). Sem rede: (0, {"erro": "sem_rede", ...})."""
     cfg = config() if cfg is None else cfg
+    if perfil == "convidado":      # 13.21: o convidado nunca fala com o servidor (não existe lá)
+        return 0, {"erro": "convidado", "mensagem": "Convidado não usa a SkyNetwork: escolha um perfil em Quem vai jogar."}
     cab = {"User-Agent": AGENTE, "Accept": "application/json"}
     dados = None
     if corpo is not None:
@@ -135,6 +137,47 @@ def perfis():
     if not lst:
         return "p1", [{"id": "p1", "nome": "Jogador 1", "cor": "#4fd1ff"}]
     return str(d.get("atual") or lst[0]["id"]), lst
+
+
+CONVIDADO = "convidado"     # 13.21: jogar sem perfil (sky-perfis): nunca conversa com a SkyNetwork
+
+
+def jogador2():
+    """13.21: id do perfil do Jogador 2 (o 2º controle) ou "" (ninguém, ou convidado)."""
+    d = ler_json(os.path.join(SKY, "perfis/perfis.json"), {})
+    if not isinstance(d, dict):
+        return ""
+    j2 = str(d.get("jogador2") or "")
+    ids = [str(p.get("id")) for p in d.get("perfis") or []]
+    return j2 if j2 in ids and j2 != str(d.get("atual") or "") else ""
+
+
+def pasta_saves(perfil):
+    """Pasta de saves de um perfil (a do perfil em uso também é ~/skystation/saves, que aponta para ela)."""
+    return os.path.join(SKY, "perfis", perfil, "saves")
+
+
+def nome_perfil(perfil):
+    _, lst = perfis()
+    return next((str(p.get("nome") or perfil) for p in lst if str(p.get("id")) == perfil), perfil)
+
+
+def guardar_usuario(perfil, usuario):
+    """13.21: anota no perfis.json qual ID SkyNetwork está ligado ao perfil (a tela "Quem vai jogar?" mostra).
+    Um perfil ainda com o nome padrão ("Jogador 2") passa a se chamar como a conta."""
+    caminho = os.path.join(SKY, "perfis/perfis.json")
+    d = ler_json(caminho, {})
+    if not isinstance(d, dict):
+        return
+    mudou = False
+    for p in d.get("perfis") or []:
+        if str(p.get("id")) == perfil and p.get("usuario") != usuario:
+            p["usuario"] = usuario
+            if usuario and str(p.get("nome", "")).startswith("Jogador "):
+                p["nome"] = usuario[:20]
+            mudou = True
+    if mudou:
+        gravar_json(caminho, d)
 
 
 def enviar_perfis(cfg=None, invisivel=None):
