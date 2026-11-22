@@ -249,6 +249,94 @@ def _ps3_id(iso):
     return _PS3[chave]
 
 
+def _iso_arvore(iso):
+    """13.15: lista os arquivos de um ISO 9660 (Joliet se houver), juntando arquivos em várias partes
+    (multi-extent: o DATAPS3_KINGDOM.FORGE do AC tem 2). Devolve [(caminho, [(lba, tamanho), ...])]."""
+    with open(iso, "rb") as f:
+        def setor(lba, n=2048):
+            f.seek(lba * 2048)
+            return f.read(n)
+        vd, joliet = None, False
+        for lba in range(16, 64):
+            d = setor(lba)
+            if d[1:6] != b"CD001" or d[0] == 255:
+                break
+            if d[0] == 1 and vd is None:
+                vd = d
+            elif d[0] == 2 and d[88:91] in (b"%/@", b"%/C", b"%/E"):
+                vd, joliet = d, True
+        if vd is None:
+            raise RuntimeError("não é um ISO de disco (sem descritor de volume)")
+        def nome(raw):
+            n = raw.decode("utf-16-be", "replace") if joliet else raw.decode("ascii", "replace")
+            return n.split(";")[0].rstrip(".") if not joliet else n.split(";")[0]
+        saida, vistos = [], set()
+        def anda(lba, tam, pasta):
+            if lba in vistos:
+                return
+            vistos.add(lba)
+            dados = setor(lba, tam)
+            i, partes, atual = 0, [], None
+            while i < len(dados):
+                ln = dados[i]
+                if ln == 0:
+                    i = (i // 2048 + 1) * 2048
+                    continue
+                r = dados[i:i + ln]
+                i += ln
+                nl = r[32]
+                raw = r[33:33 + nl]
+                if raw in (b"\x00", b"\x01"):
+                    continue
+                el, es, fl = int.from_bytes(r[2:6], "little"), int.from_bytes(r[10:14], "little"), r[25]
+                n = nome(raw)
+                if fl & 0x02:
+                    anda(el, es, os.path.join(pasta, n))
+                    continue
+                if atual is not None and atual[0] == n:
+                    atual[1].append((el, es))
+                else:
+                    atual = (n, [(el, es)])
+                    partes.append(atual)
+                if not fl & 0x80:          # última parte deste arquivo
+                    atual = None
+            saida.extend((os.path.join(pasta, n), ext) for n, ext in partes)
+            if not partes:
+                saida.append((pasta + "/", []))        # pasta vazia (ex.: ASSASSIN_ISO) também existe
+        raiz = vd[156:190]
+        anda(int.from_bytes(raiz[2:6], "little"), int.from_bytes(raiz[10:14], "little"), "")
+        return saida
+
+
+def extrair_iso(iso, destino, progresso):
+    """13.15: extrai um ISO 9660 sem o 7-Zip (que falhava no AC: 'arquivo corrompido' em 2 tentativas, com
+    o mesmo .iso que o RPCS3 abre). Lê os setores direto, inclusive arquivos em várias partes."""
+    arvore = _iso_arvore(iso)
+    total = sum(t for _, ext in arvore for _, t in ext) or 1
+    feito = 0
+    os.makedirs(destino, exist_ok=True)
+    with open(iso, "rb") as f:
+        for caminho, ext in arvore:
+            alvo = os.path.join(destino, caminho.lstrip("/"))
+            if caminho.endswith("/"):
+                os.makedirs(alvo, exist_ok=True)
+                continue
+            os.makedirs(os.path.dirname(alvo), exist_ok=True)
+            with open(alvo, "wb") as out:
+                for lba, tam in ext:
+                    f.seek(lba * 2048)
+                    falta = tam
+                    while falta:
+                        bloco = f.read(min(falta, 8 * 1024 * 1024))
+                        if not bloco:
+                            raise RuntimeError(f"o .iso acaba antes do fim de {caminho} (arquivo incompleto)")
+                        out.write(bloco)
+                        falta -= len(bloco)
+                        feito += len(bloco)
+                        progresso(min(0.99, feito / total))
+    return feito
+
+
 def iso_vira_pasta(arq, sis):
     return (sis == "ps3" and arq.lower().endswith(".iso")
             and not os.path.isdir(os.path.join(os.path.splitext(arq)[0], "PS3_GAME"))
@@ -717,7 +805,7 @@ def rodar():
                 st["atual"]["etapa"] = "Instalando"
                 _grava_estado(st)
                 t1 = time.time()
-                extrair(arq, parcial, total, progresso)
+                extrair_iso(arq, parcial, progresso)
                 if not os.path.isdir(os.path.join(parcial, "PS3_GAME")):
                     shutil.rmtree(parcial, ignore_errors=True)
                     raise RuntimeError("o .iso abriu mas não tem PS3_GAME")
