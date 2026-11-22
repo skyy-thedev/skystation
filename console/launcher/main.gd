@@ -220,7 +220,7 @@ var sel_rect: Rect2 = Rect2()   # onde a capa do item selecionado foi desenhada 
 var launch_t: float = 0.0
 var splash_dormindo: bool = false
 # SkyStore em tela cheia (vitrine estilo loja de console)
-const LOJA_ABAS := ["Destaques", "Jogos", "Apps", "Instalados"]
+const LOJA_ABAS := ["Destaques", "Jogos", "Apps", "Emuladores", "Instalados"]   # 13.18: Emuladores
 const LOJA_CORES := {"app": "2b6cb0", "jogo": "9b2c2c", "tema": "6b46c1", "emulador": "2f855a"}
 const LOJA_TIPOS := {"app": "App", "jogo": "Jogo", "tema": "Tema", "emulador": "Emulador"}
 var store_open: bool = false
@@ -2065,7 +2065,11 @@ func _toggle_panel() -> void:
 		var acao_it := str(it.get("action", ""))
 		if acao_it.begins_with("loja:"):
 			var li := _loja_item(acao_it.substr(5))
-			if not li.is_empty() and bool(li.get("instalavel", true)):
+			if not li.is_empty() and li.has("acoes"):
+				for b in li["acoes"]:
+					if str(b[1]) != "":
+						panel_items.append([str(b[0]), "loja_do:" + str(b[1])])
+			elif not li.is_empty() and bool(li.get("instalavel", true)):
 				var tem := _nulo(li.get("instalado"))
 				if tem == "":
 					panel_items.append(["Baixar e instalar", "loja_do:baixar"])
@@ -3897,7 +3901,7 @@ func _build_store_cat() -> Dictionary:
 	if itens.is_empty() and not net.get("na_rede", false):
 		return {}
 	var c := {"id": "skystore", "title": "SkyStore", "icon": "download", "items": []}
-	c["items"].append(_act("Abrir a SkyStore", "Jogos e apps para baixar  ·  L1/R1 trocam as seções", "loja_vitrine",
+	c["items"].append(_act("Abrir a SkyStore", "Jogos, apps e emuladores  ·  L1/R1 trocam as seções", "loja_vitrine",
 		"download", Color(accent)))
 	if itens.is_empty():
 		var msg := "Abrindo a loja…" if loja.is_empty() else (str(loja.get("erro", "")) if not loja.get("ok", true)
@@ -3905,6 +3909,8 @@ func _build_store_cat() -> Dictionary:
 		c["items"].append(_act("SkyStore", msg, "", "download"))
 		return c
 	for i in itens:
+		if bool(i.get("sistema", false)) and not bool(i.get("atualizar", false)):
+			continue   # 13.18: emuladores/apps do sistema ficam na vitrine; no menu só quando há atualização
 		var slug := str(i.get("slug", ""))
 		var tipo := str(i.get("tipo", "jogo"))
 		var v := _loja_versao(i)
@@ -3950,6 +3956,22 @@ func _loja_acao(slug: String, o_que: String) -> void:
 	if o_que == "":   # botão A: o que faz mais sentido agora
 		o_que = "baixar" if tem == "" or bool(i.get("atualizar", false)) else "abrir"
 	var nome := str(i.get("nome", slug))
+	if bool(i.get("sistema", false)):   # 13.18: emuladores e apps do sistema (não precisam da SkyNetwork)
+		match o_que:
+			"baixar", "reinstalar", "restaurar", "voltar":
+				var verbo: String = {"baixar": "Atualizando " if tem != "" else "Instalando ", "reinstalar": "Reinstalando ",
+					"restaurar": "Restaurando a cópia verificada de ", "voltar": "Voltando a versão anterior de "}[o_que]
+				_run_job([("instalar" if o_que == "baixar" else o_que), slug], verbo + nome + "…", "sky-store")
+				return
+			"abrir":
+				var pj := str(i.get("pasta_jogo", ""))
+				for g in games:
+					if str(g.get("dir", "")) == pj:
+						_play("accept")
+						_launch(g)
+						return
+				_toast("Não achei o app no menu. Tente Recarregar jogos.", 3.0, "download")
+				return
 	match o_que:
 		"baixar":
 			if not net.get("na_rede", false):
@@ -4014,13 +4036,16 @@ func _store_lista(tab: int) -> Array:
 				if tipo != "jogo":
 					continue
 			2:
-				if tipo == "jogo":
+				if tipo != "app":
 					continue
 			3:
+				if tipo != "emulador":
+					continue
+			4:
 				if _nulo(i.get("instalado")) == "":
 					continue
 		out.append(i)
-	if tab == 3:   # quem tem atualização vem primeiro
+	if tab == 4:   # quem tem atualização vem primeiro
 		out.sort_custom(func(a, b): return bool(a.get("atualizar", false)) and not bool(b.get("atualizar", false)))
 	return out
 
@@ -4029,6 +4054,8 @@ func _store_destaques() -> Array:
 	var out := []
 	var resto := []
 	for i in loja.get("itens", []):
+		if bool(i.get("sistema", false)) and _nulo(i.get("instalado")) != "" and not bool(i.get("atualizar", false)):
+			continue   # 13.18: emulador já instalado e em dia não precisa de destaque
 		(out if bool(i.get("oficial", false)) else resto).append(i)
 	out.append_array(resto)
 	return out.slice(0, 5)
@@ -4071,6 +4098,8 @@ func _store_selo(i: Dictionary) -> Array:
 func _store_botoes(i: Dictionary) -> Array:
 	if i.is_empty():
 		return []
+	if i.has("acoes"):   # 13.18: emuladores e apps do sistema: o sky-store diz quais botões cabem agora
+		return i["acoes"]
 	if not bool(i.get("instalavel", true)):
 		return [["Em breve no console", ""]]
 	var tem := _nulo(i.get("instalado"))
@@ -4220,6 +4249,10 @@ func _store_input_item(passo: Vector2i) -> void:
 				store_job = ""   # não começou (sem SkyNetwork etc.): o aviso já apareceu
 		"abrir":
 			_loja_acao(store_det, "abrir")   # a transição sai da capa grande desta página
+		"reinstalar", "restaurar", "voltar":
+			store_job = store_det
+			_play("accept")
+			_loja_acao(store_det, acao)
 		"remover":
 			if not store_confirm:
 				store_confirm = true
@@ -4446,6 +4479,7 @@ func _draw_store_grade(w: float, h: float, a: float, oy: float) -> void:
 	var lista := _store_lista(store_tab)
 	if lista.is_empty():
 		var msg: String = ["", "Nenhum jogo publicado ainda.", "Nenhum app publicado ainda.",
+			"Os emuladores aparecem depois da próxima atualização do SkyStation.",
 			"Nada da SkyStore instalado ainda. Baixe em Destaques, Jogos ou Apps."][store_tab]
 		_text(msg, Vector2(0, h * 0.48 + oy), 19, Color(MUTED, a), false, w, HORIZONTAL_ALIGNMENT_CENTER)
 		return

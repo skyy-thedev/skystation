@@ -56,7 +56,8 @@ for pair in skystation-atualizar.sh:skystation-atualizar expandir.sh:skystation-
             diag.sh:skystation-diag marca.sh:skystation-marca diag-controle.sh:skystation-diag-controle \
             energia.sh:skystation-energia som-ligar.sh:skystation-som-ligar \
             atualizar-menu.sh:skystation-atualizar-menu diag-ps2.sh:skystation-diag-ps2 verificar.sh:skystation-verificar \
-            potencia.sh:skystation-potencia skyroms-hd.sh:skystation-skyroms-hd nuvem.sh:skystation-nuvem; do  # (o sky-backup vai junto com console/bin)
+            potencia.sh:skystation-potencia skyroms-hd.sh:skystation-skyroms-hd nuvem.sh:skystation-nuvem \
+            emuladores.py:skystation-emuladores; do  # (o sky-backup vai junto com console/bin)
     f="$SRC/setup/${pair%%:*}"; [ -f "$f" ] || continue
     sed 's/\r$//' "$f" > "/usr/local/bin/${pair##*:}.new"
     chmod 755 "/usr/local/bin/${pair##*:}.new"
@@ -135,6 +136,33 @@ Unit=skystation-nuvem.service
 [Install]
 WantedBy=paths.target
 UNIT
+# 13.18: emuladores e apps pela SkyStore. O menu (sky-store) grava pedidos/emuladores-<id> e o systemd roda
+# o skystation-emuladores como root: baixa do site oficial, troca a versão e guarda a anterior.
+install -d -m 755 /var/lib/skystation/emuladores
+cat >/etc/systemd/system/skystation-emuladores.service <<'UNIT'
+[Unit]
+Description=SkyStation: instalar e atualizar emuladores e apps (pedidos da SkyStore)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/usr/local/bin/skystation-emuladores pedidos
+TimeoutStartSec=90min
+UNIT
+cat >/etc/systemd/system/skystation-emuladores.path <<'UNIT'
+[Unit]
+Description=SkyStation: pedido de emulador/app vindo da SkyStore
+
+[Path]
+PathExistsGlob=/var/lib/skystation/pedidos/emuladores-*
+Unit=skystation-emuladores.service
+
+[Install]
+WantedBy=paths.target
+UNIT
 # Bluetooth em qualquer notebook (Fase 8.0.1): adaptador sempre ligado no boot, destravado no rfkill
 # (muitos notebooks Ryzen ligam com o Bluetooth "bloqueado") e controles reconectando sozinhos.
 if [ -f /etc/bluetooth/main.conf ]; then
@@ -198,6 +226,8 @@ if [ -d /run/systemd/system ]; then
     systemctl restart skystation-atualizar.path >/dev/null 2>&1 || true
     systemctl enable skystation-nuvem.path >/dev/null 2>&1 || true
     systemctl restart skystation-nuvem.path >/dev/null 2>&1 || true
+    systemctl enable skystation-emuladores.path >/dev/null 2>&1 || true
+    systemctl restart skystation-emuladores.path >/dev/null 2>&1 || true
 fi
 
 # 13.4: relógio em dual boot. O Linux grava o relógio da placa-mãe em UTC; o Windows lê o mesmo relógio
@@ -244,9 +274,14 @@ if [ ! -x /opt/cemu/AppRun ] && [ -f /opt/skystation/emu/cores/cemu_libretro.so 
     timeout 900 bash "$SRC/setup/fase13.sh" --so-cemu || echo "    AVISO: não consegui instalar o Cemu agora; tenta de novo na próxima atualização."
 fi
 
-# 13.10: RPCS3 mais novo a cada 7 dias (o fase7-0 só instalava uma vez).
-if [ -x /opt/rpcs3/AppRun ] && [ -z "$(find /opt/rpcs3/.skystation-url -mtime -7 2>/dev/null)" ]; then
-    timeout 900 bash "$SRC/setup/fase7-0.sh" --atualizar-rpcs3 || echo "    AVISO: RPCS3 não atualizado agora."
+# 13.18: todos os emuladores na versão mais nova (antes só o RPCS3, 13.10). Cada um é conferido no site oficial
+# no máximo uma vez por semana; o serviço skystation-emuladores faz em segundo plano (são centenas de MB, não
+# cabem nos 20 min desta atualização). A versão anterior de cada um fica em /opt/<emulador>.anterior e a
+# última que rodou jogo sem travar fica como cópia verificada (SkyStore → Emuladores → Restaurar).
+if [ -d /var/lib/skystation/pedidos ]; then
+    echo "semanal $(date +%s)" >/var/lib/skystation/pedidos/emuladores-todos
+    chown "$USER_NAME:$USER_NAME" /var/lib/skystation/pedidos/emuladores-todos 2>/dev/null || true
+    echo "    emuladores: conferindo versões novas em segundo plano (SkyStore → Emuladores mostra o andamento)"
 fi
 
 # 13.8: extrator de .pkg de PS4 (o sky-instalar usa para transformar o .pkg na pasta que o shadPS4 abre).

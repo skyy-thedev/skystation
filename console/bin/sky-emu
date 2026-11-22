@@ -17,6 +17,8 @@ fail() { echo "$1" >"$MSG"; echo "sky-emu: $1" >&2; rm -f "$ABRINDO"; exit "${2:
 # 13.16: o que está acontecendo enquanto o jogo abre, para a tela de abertura do menu mostrar com barra.
 # abrindo "Texto" [pct 0..1, ou -1 = sem porcentagem] [dica]. O menu ignora se ficar 20 s sem atualizar.
 ABRINDO="${XDG_RUNTIME_DIR:-/tmp}/skystation/abrindo.json"
+# 13.18: anota qual emulador abriu o jogo; se o jogo rodar bem, o sky-run guarda a cópia verificada dele.
+usou() { echo "$1" >"${XDG_RUNTIME_DIR:-/tmp}/skystation/emulador-usado" 2>/dev/null || true; }
 abrindo() {
     mkdir -p "${ABRINDO%/*}" 2>/dev/null
     printf '{"t": %s, "etapa": "%s", "pct": %s, "dica": "%s"}\n' "$(date +%s)" "$1" "${2:--1}" "${3:-}" \
@@ -236,6 +238,7 @@ EOF
     FIFO="${XDG_RUNTIME_DIR:-/tmp}/skystation/retroarch.cmd"
     mkdir -p "$(dirname "$FIFO")"
     rm -f "$FIFO" && mkfifo -m 600 "$FIFO" && exec 3<>"$FIFO"
+    usou nucleos
     exec retroarch --fullscreen --config "$CFG" "${NP_ARGS[@]}" -L "$CORE" "$ROM" <&3
     ;;
 ps2)
@@ -259,8 +262,10 @@ ps2)
     python3 /opt/skystation/bin/sky-pcsx2-ini "$PROFILE" "$SKY" "$(basename "$BIOS")" "$GAME_ID" \
         || fail "Não consegui preparar a configuração do PCSX2."
     if [ -n "$DISCO" ]; then
+        usou pcsx2
         exec "$PCSX2" -fullscreen -nogui -disc "$DEV"
     fi
+    usou pcsx2
     exec "$PCSX2" -fullscreen -nogui -- "$ROM"
     ;;
 x360)
@@ -304,6 +309,7 @@ x360)
             fi
         done
     fi
+    case "$XENIA" in *edge*) usou xenia-edge ;; *) usou xenia ;; esac
     exec "$XENIA" --fullscreen=true --gpu=vulkan --content_root="$X360" "$ROM"
     ;;
 ps3)
@@ -328,6 +334,7 @@ ps3)
     USR="$(printf '%s' "$PREP" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("user","00000001"))')"
     ulimit -n 65536 2>/dev/null || ulimit -n "$(ulimit -Hn)" 2>/dev/null   # o RPCS3 reclama com menos de 4096 arquivos abertos
     export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland;xcb}"
+    usou rpcs3
     exec /opt/rpcs3/AppRun --no-gui --fullscreen --input-config SkyStation --user-id "$USR" "$ROM"
     ;;
 # ---------------- Fase 13: programas separados (quando não há core do RetroArch) ----------------
@@ -361,6 +368,7 @@ wiiu-solo)
         echo "Wii U: configure o controle no Cemu (Opções → Configurações de entrada), feche e abra o jogo de novo." >"$MSG"
         exec /opt/cemu/AppRun
     fi
+    usou cemu
     exec /opt/cemu/AppRun -f -g "$ROM"
     ;;
 vita-solo)
@@ -408,6 +416,7 @@ vita-solo)
         rm -f "$APP/.skystation-instalado" "$VPREF/.skystation-instalados/$TID"
         if [ -f "$MARCA" ] && [ -f "$APP/eboot.bin" ]; then
             echo "sky-emu: PS Vita $TID já instalado: abre direto" >&2
+            usou vita3k
             exec /opt/vita3k/AppRun -r "$TID"
         fi
         if [ -d "$APP" ]; then
@@ -446,6 +455,7 @@ vita-solo)
                 fi
             done ) &
     fi
+    usou vita3k
     exec /opt/vita3k/AppRun "$ROM"
     ;;
 xbox-solo)
@@ -468,6 +478,7 @@ flashrom_path = '$X/Complex_4627v1.03.bin'
 hdd_path = '$SKY/saves/xbox/xbox_hdd.qcow2'
 eeprom_path = '$SKY/saves/xbox/eeprom.bin'
 EOF
+    usou xemu
     exec /opt/xemu/AppRun -config_path "$TOML" -full-screen -dvd_path "$ROM"
     ;;
 ps4)
@@ -486,6 +497,7 @@ ps4)
         mkdir -p "$SHAD/$d"
         cp -rn "/mnt/skyroms/bios/ps4/$d/." "$SHAD/$d/" 2>/dev/null || true
     done
+    usou shadps4
     exec /opt/shadps4/AppRun --fullscreen true -g "$EBOOT"
     ;;
 switch)
@@ -507,6 +519,7 @@ switch)
     done
     ls "$SKY/bios/switch"/prod.keys >/dev/null 2>&1 \
         || fail "Switch: falta o prod.keys (do seu Switch) em SKYROMS/bios/switch."
+    usou switch
     exec /opt/switch/AppRun -f -g "$ROM"
     ;;
 *)

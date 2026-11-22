@@ -5,6 +5,12 @@
   sky-store instalar <slug>      -> baixa, confere sha256 e assinatura, instala (também atualiza)
   sky-store remover <slug>       -> tira do console
   sky-store atualizacoes         -> só os itens instalados que têm versão nova
+  sky-store reinstalar|restaurar|voltar sistema-<id>   (13.18) emuladores e apps do sistema
+
+13.18: além do que vem do servidor, a loja mostra os emuladores e apps do próprio sistema (RPCS3, PCSX2, Cemu,
+Vita3K, shadPS4, xemu, Xenia, núcleos do RetroArch, Moonlight, YouTube, Xbox Cloud Gaming, GeForce NOW). Esses
+vêm dos sites oficiais de cada projeto e são instalados pelo serviço root skystation-emuladores (o menu não
+tem sudo): o sky-store só faz o pedido e acompanha o progresso. Aparecem mesmo sem internet ou SkyNetwork.
 
 Segurança (a loja não confia nem no próprio servidor):
   1. O servidor devolve uma URL temporária + sha256 + assinatura Ed25519.
@@ -40,6 +46,17 @@ CAPAS = os.path.join(HOME, ".cache/skystation/loja")
 CHAVE = os.environ.get("SKY_LOJA_CHAVE") or "/opt/skystation/loja/chave-publica.txt"
 RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "skystation")
 TIPOS_INSTALAVEIS = {"jogo", "app"}
+EMULADORES = "/usr/local/bin/skystation-emuladores"
+TAREFAS = "/var/lib/skystation/emuladores"
+SISTEMA = "sistema-"                 # prefixo do slug dos itens do sistema (não colide com os do servidor)
+JOGOS_SISTEMA = "/opt/skystation/games"
+DESCRICOES = {
+    "emulador": "Baixado do site oficial do projeto. Atualizar troca pela versão mais nova e guarda a atual; "
+                "Reinstalar baixa de novo do zero. Depois que um jogo roda 2 minutos sem travar, o SkyStation "
+                "guarda uma cópia verificada desta versão no HD: se uma atualização der problema, "
+                "Restaurar cópia verificada volta para ela.",
+    "app": "App do sistema. Reinstalar baixa de novo as partes que ele usa (útil se ele parou de abrir).",
+}
 PREFIXO_SPKI = bytes.fromhex("302a300506032b6570032100")   # cabeçalho DER de uma chave pública Ed25519
 
 
@@ -88,7 +105,106 @@ def _capa(item):
     return dest if os.path.exists(dest) else ""
 
 
+def _data(ts):
+    return time.strftime("%d/%m/%Y", time.localtime(ts)) if ts else ""
+
+
+def itens_sistema():
+    """13.18: emuladores e apps do sistema, no mesmo formato dos itens do servidor."""
+    if not os.access(EMULADORES, os.X_OK):
+        return []
+    try:
+        r = subprocess.run([EMULADORES, "estado"], capture_output=True, text=True, timeout=90)
+        d = json.loads(r.stdout or "{}")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+    itens = []
+    for e in d.get("itens", []):
+        tem, nova, ver = e.get("instalado") or None, e.get("nova") or "", e.get("verificado") or ""
+        tipo, jeito = e.get("tipo", "emulador"), e.get("jeito", "")
+        acoes = []
+        if not tem:
+            if jeito != "manual":
+                acoes.append(["Instalar", "baixar"])
+        else:
+            if e.get("atualizar"):
+                acoes.append([f"Atualizar para a {nova}", "baixar"])
+            elif jeito in ("appimage", "xenia", "nucleos", "flatpak"):
+                acoes.append(["Procurar atualização", "baixar"])
+            if e.get("jogo"):
+                acoes.append(["Abrir", "abrir"])
+            if jeito != "manual":
+                acoes.append(["Reinstalar", "reinstalar"])
+        if ver and jeito not in ("pacman", "flatpak"):
+            acoes.append([f"Restaurar cópia verificada ({ver})", "restaurar"])
+        if e.get("anterior") and e.get("anterior") != ver:
+            acoes.append([f"Voltar à versão anterior ({e['anterior']})", "voltar"])
+        if not acoes:
+            acoes.append(["Baixe no site oficial", ""])
+        desc = DESCRICOES.get(tipo, "")
+        if e.get("sistema"):
+            desc = f"Usado para: {e['sistema']}.\n\n" + desc
+        if ver:
+            desc += f"\n\nCópia verificada: versão {ver}, de {_data(e.get('verificado_em'))} " \
+                    f"({e.get('verificado_tam', 0) / 1e6:.0f} MB em SKYROMS/emuladores/verificados)."
+        t = e.get("tarefa") or {}
+        if t.get("fim") and t.get("ok") is False and time.time() - t.get("t", 0) < 86400:
+            desc += f"\n\nÚltima tentativa: {t.get('message', '')}"
+        itens.append({
+            "slug": SISTEMA + e["id"], "nome": e["nome"], "tipo": tipo, "resumo": e.get("resumo", ""),
+            "descricao": desc, "autor": "Projeto oficial" if tipo == "emulador" else "SkyStation",
+            "oficial": True, "sistema": True, "instalavel": True, "instalado": tem,
+            "atualizar": bool(e.get("atualizar")), "versao": {"versao": nova or tem or "", "tamanho": 0},
+            "verificado": ver, "capa_local": "", "acoes": acoes,
+            "pasta_jogo": os.path.join(JOGOS_SISTEMA, e["jogo"]) if e.get("jogo") else "",
+        })
+    return itens
+
+
+def tarefa_sistema(acao, slug):
+    """Pede ao serviço root e acompanha o progresso (o arquivo de tarefa é de todos para leitura)."""
+    ident = slug[len(SISTEMA):]
+    if not os.access(EMULADORES, os.X_OK):
+        return {"ok": False, "error": "Atualize o SkyStation para instalar emuladores pela loja."}
+    if acao == "instalar":
+        acao = "atualizar"            # instala se não tem; atualiza se tem (e não faz nada se já está na nova)
+    caminho = os.path.join(TAREFAS, f"tarefa-{ident}.json")
+    antes = skynet.ler_json(caminho, {}).get("t", 0)
+    r = subprocess.run([EMULADORES, "pedir", acao, ident], capture_output=True, text=True)
+    try:
+        if not json.loads(r.stdout or "{}").get("ok"):
+            return {"ok": False, "error": "Não consegui fazer o pedido."}
+    except ValueError:
+        return {"ok": False, "error": "Não consegui fazer o pedido."}
+    out({"etapa": "Na fila"})
+    inicio, ultimo = time.monotonic(), ""
+    while time.monotonic() - inicio < 3600:
+        time.sleep(0.7)
+        d = skynet.ler_json(caminho, {})
+        if d.get("t", 0) <= antes:
+            if time.monotonic() - inicio > 90:
+                return {"ok": False, "error": "O serviço de instalação não respondeu. Atualize o SkyStation."}
+            continue
+        linha = {"etapa": d.get("etapa", "")}
+        if d.get("p", -1) >= 0:
+            linha["p"] = d["p"]
+        if json.dumps(linha) != ultimo:
+            ultimo = json.dumps(linha)
+            out(linha)
+        if d.get("fim"):
+            _avisar_menu()
+            return {"ok": bool(d.get("ok")), ("message" if d.get("ok") else "error"): d.get("message", "")}
+    return {"ok": False, "error": "Demorou demais. Veja em Configurações → Diagnóstico."}
+
+
 def listar():
+    sistema = itens_sistema()
+    r = listar_servidor()
+    r["itens"] = r.get("itens", []) + sistema
+    return r
+
+
+def listar_servidor():
     st, d = skynet.api("GET", "/api/loja", token=False, timeout=8)
     inst = instalados()
     if st != 200:
@@ -294,6 +410,9 @@ def main():
         r = listar()
         r["itens"] = [i for i in r["itens"] if i.get("atualizar")]
         out(r)
+    elif cmd in ("instalar", "reinstalar", "restaurar", "voltar") and len(a) > 1 and a[1].startswith(SISTEMA) and valido(a[1]):
+        out(tarefa_sistema(cmd, a[1]))
+        out({"evento": "fim"})
     elif cmd in ("instalar", "remover") and len(a) > 1 and valido(a[1]):
         out(instalar(a[1]) if cmd == "instalar" else remover(a[1]))
         out({"evento": "fim"})          # para o menu recolher a tarefa (como o sky-jogos)
