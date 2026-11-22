@@ -652,6 +652,9 @@ class Home:
             jogo += [("save", {"t": "Salvar estado"}), ("load", {"t": "Carregar estado"})]
         if shot:
             jogo.append(("shot", {"t": "Salvar captura de tela"}))
+            # 13.26: direto para os amigos (Atividade da SkyNetwork) e para o perfil no site
+            if os.path.exists(os.path.expanduser("~/.config/skystation/rede.json")):
+                jogo.append(("shot_post", {"t": "Publicar captura na SkyNetwork", "sub": "Os amigos veem na Atividade"}))
         if pid:
             jogo.append(("close", {"t": "Fechar jogo", "sub": "O que não foi salvo no jogo será perdido"}))
         ganhos, total, trof = trophies()
@@ -919,6 +922,18 @@ class Home:
         elif action == "trofeu":
             it = self.items[self.sel][1]
             self.send("msg " + (it["sub"] if it.get("ganho") else "Ainda não conquistado: " + it["sub"]))
+        elif action == "shot_post":
+            os.makedirs(CAPTURAS, exist_ok=True)
+            gid = read(os.path.join(RUN, "game.id"), "jogo")
+            dest = os.path.join(CAPTURAS, f"{gid}_{time.strftime('%Y%m%d-%H%M%S')}.png")
+            try:
+                shutil.copyfile(SHOT, dest)
+                play("captura")
+                subprocess.Popen([sys.executable, os.path.join(SKY_BIN, "sky-cloud"), "postar", dest],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                self.send("msg Publicando a captura na SkyNetwork…")
+            except OSError:
+                self.send("msg Não consegui salvar a captura")
         elif action == "shot":
             os.makedirs(CAPTURAS, exist_ok=True)
             gid = read(os.path.join(RUN, "game.id"), "jogo")

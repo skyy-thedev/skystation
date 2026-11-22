@@ -13,6 +13,17 @@ Rede:
                                         ou, sem jogo, um "bora jogar?")
     sky-cloud apelido <nome>            (13.25) troca o nome que os amigos veem (e o nome do usuário no console)
     sky-cloud bio <texto>               (13.25) o "sobre mim" do perfil (até 140 letras)
+
+Social (13.26):
+    sky-cloud feed [antes]              atividade: capturas suas e dos amigos, o que jogaram e ganharam
+    sky-cloud jogador <perfilId|eu>     página de um jogador: jogos jogados, troféus e capturas
+    sky-cloud capturas                  as capturas deste console (para escolher qual publicar)
+    sky-cloud postar <arquivo> [legenda]   publica uma captura (vira JPEG antes de enviar, se der)
+    sky-cloud curtir <postId> on|off    curtir / descurtir
+    sky-cloud comentar <postId> <texto> comentar
+    sky-cloud comentarios <postId>      os comentários de uma captura
+    sky-cloud apagar-post <postId>      apaga uma captura sua
+    sky-cloud jogos-enviar              manda o tempo de jogo do perfil (o sky-net chama sozinho)
     sky-cloud lidas <perfilId>          marca como lidas as mensagens desse amigo
     sky-cloud conversa <perfilId>       as últimas mensagens trocadas com esse amigo (as duas direções)
     sky-cloud conta                     a conta do perfil em uso (ID, ícone, visibilidade)
@@ -261,6 +272,112 @@ def http(metodo, url, dados=None, timeout=60):
         return e.code, e.read()
     except (urllib.error.URLError, OSError) as e:
         return 0, str(e).encode()
+
+
+# ---------------------------------------------------------------- 13.26: social
+
+CACHE_POSTS = os.path.join(os.path.expanduser("~"), ".cache/skystation/posts")
+CAPTURAS = os.path.join(skynet.SKY, "capturas")
+
+
+def imagens_no_cache(posts):
+    """Baixa as imagens que ainda não estão no console (em paralelo) e põe "arquivo" em cada post."""
+    import concurrent.futures
+    os.makedirs(CACHE_POSTS, exist_ok=True)
+
+    def uma(p):
+        dest = os.path.join(CACHE_POSTS, re.sub(r"[^A-Za-z0-9_-]", "", p.get("id", "")) + ".img")
+        if not os.path.exists(dest) and p.get("url"):
+            st, dados = http("GET", p["url"], timeout=30)
+            if st == 200 and dados[:2] in (b"\xff\xd8", b"\x89P"):
+                with open(dest + ".tmp", "wb") as f:
+                    f.write(dados)
+                os.replace(dest + ".tmp", dest)
+        p.pop("url", None)
+        p["arquivo"] = dest if os.path.exists(dest) else ""
+    with concurrent.futures.ThreadPoolExecutor(4) as ex:
+        list(ex.map(uma, posts))
+    # o cache não cresce para sempre: fica com as 300 mais recentes
+    try:
+        arqs = sorted((os.path.getmtime(os.path.join(CACHE_POSTS, n)), n) for n in os.listdir(CACHE_POSTS))
+        for _, n in arqs[:-300]:
+            os.remove(os.path.join(CACHE_POSTS, n))
+    except OSError:
+        pass
+    return posts
+
+
+def tempo_json(perfil):
+    t = skynet.ler_json(os.path.join(skynet.pasta_saves(perfil), "tempo.json"), {}) or {}
+    return {k: v for k, v in t.items() if isinstance(v, dict) and k != "terminal"}
+
+
+def jogo_da_captura(nome, tempo):
+    """capturas/<id do jogo>_<data>.png -> (id, título, sistema)."""
+    gid = re.sub(r"_\d{8}-\d{6}$", "", os.path.splitext(nome)[0])
+    titulo = str((tempo.get(gid) or {}).get("title") or "")
+    sis = gid.split("-", 1)[0] if "-" in gid else ""
+    return gid, titulo, sis if re.fullmatch(r"[a-z0-9]{1,12}", sis) else ""
+
+
+def cmd_jogos_enviar(cfg, perfil):
+    lst = []
+    for gid, v in tempo_json(perfil).items():
+        titulo = str(v.get("title") or gid)[:200]
+        sis = gid.split("-", 1)[0]
+        item = {"jogoId": gid[:200], "titulo": titulo, "segundos": int(v.get("seconds", 0)),
+                "partidas": int(v.get("plays", 0)), "ultimaVez": int(v.get("last") or time.time())}
+        if re.fullmatch(r"[a-z0-9]{1,12}", sis) and sis != gid:
+            item["sistema"] = sis
+        if item["segundos"] > 0:
+            lst.append(item)
+    lst.sort(key=lambda x: -x["ultimaVez"])
+    st, r = api("POST", "/api/jogos/tempo", {"jogos": lst[:500]}, perfil=perfil, cfg=cfg, timeout=15)
+    return saida({"ok": st == 200, "enviados": len(lst), "error": "" if st == 200 else skynet.mensagem(r)})
+
+
+def cmd_postar(cfg, perfil, arquivo, legenda):
+    if not os.path.isfile(arquivo):
+        return saida({"ok": False, "error": "Captura não encontrada."})
+    dados, tipo = open(arquivo, "rb").read(), "image/png"
+    # JPEG fica ~5x menor que o PNG da captura: sobe rápido e gasta menos do armazenamento
+    if shutil_which("ffmpeg"):
+        tmp = os.path.join(skynet.RUN, "post.jpg")
+        try:
+            r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", arquivo, "-vf",
+                                "scale='min(1920,iw)':-2", "-q:v", "4", tmp], timeout=30)
+            if r.returncode == 0 and os.path.getsize(tmp) > 1000:
+                dados, tipo = open(tmp, "rb").read(), "image/jpeg"
+        except (OSError, subprocess.SubprocessError):
+            pass
+    gid, titulo, sis = jogo_da_captura(os.path.basename(arquivo), tempo_json(perfil))
+    corpo = {"legenda": legenda[:280], "tipo": tipo, "tamanho": len(dados)}
+    if titulo:
+        corpo.update(jogo=titulo[:200], jogoId=gid[:200])
+        if sis:
+            corpo["sistema"] = sis
+    st, r = api("POST", "/api/posts", corpo, perfil=perfil, cfg=cfg, timeout=15)
+    if st != 201:
+        return saida({"ok": False, "error": skynet.mensagem(r, "Não consegui publicar.")})
+    cab = {"User-Agent": skynet.AGENTE, "Content-Type": tipo}
+    req = urllib.request.Request(r["url"], data=dados, method="PUT", headers=cab)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            ok = 200 <= resp.status < 300
+    except (urllib.error.URLError, OSError):
+        ok = False
+    if not ok:
+        return saida({"ok": False, "error": "A imagem não subiu (internet?). Tente de novo."})
+    st, c = api("POST", f"/api/posts/{r['id']}/confirmar", perfil=perfil, cfg=cfg, timeout=15)
+    if st != 200:
+        return saida({"ok": False, "error": skynet.mensagem(c, "A imagem não chegou inteira.")})
+    sincronizar_ja()
+    return saida({"ok": True, "id": r["id"], "message": "Captura publicada! Os amigos já podem ver"})
+
+
+def shutil_which(prog):
+    import shutil
+    return shutil.which(prog)
 
 
 def nuvem_ligada(cfg):
@@ -723,6 +840,57 @@ def main():
         if st != 200:
             return saida({"ok": False, "error": skynet.mensagem(r)})
         return saida({"ok": True, "mensagens": list(reversed(r.get("mensagens", [])))[-20:]})
+    if c == "feed":
+        cfg, perfil = exigir_rede()
+        from urllib.parse import quote
+        st, r = api("GET", "/api/feed" + (("?antes=" + quote(a[1])) if len(a) > 1 else ""), perfil=perfil, cfg=cfg, timeout=15)
+        if st != 200:
+            return saida({"ok": False, "error": skynet.mensagem(r)})
+        return saida({"ok": True, "posts": imagens_no_cache(r.get("posts", [])), "jogos": r.get("jogos", []),
+                      "trofeus": r.get("trofeus", [])})
+    if c == "jogador" and len(a) == 2:
+        cfg, perfil = exigir_rede()
+        from urllib.parse import quote
+        st, r = api("GET", "/api/jogadores/" + quote(a[1]), perfil=perfil, cfg=cfg, timeout=15)
+        if st != 200:
+            return saida({"ok": False, "error": skynet.mensagem(r)})
+        r["posts"] = imagens_no_cache(r.get("posts", []))
+        return saida({"ok": True, **r})
+    if c == "capturas":
+        perfil, _ = skynet.perfis()
+        tempo = tempo_json(perfil) if perfil != skynet.CONVIDADO else {}
+        lst = []
+        try:
+            nomes = sorted((n for n in os.listdir(CAPTURAS) if n.lower().endswith(".png")), reverse=True)
+        except OSError:
+            nomes = []
+        for n in nomes[:60]:
+            gid, titulo, sis = jogo_da_captura(n, tempo)
+            lst.append({"arquivo": os.path.join(CAPTURAS, n), "jogo": titulo, "sistema": sis,
+                        "quando": int(os.path.getmtime(os.path.join(CAPTURAS, n)))})
+        return saida({"ok": True, "capturas": lst})
+    if c == "postar" and len(a) >= 2:
+        cfg, perfil = exigir_rede()
+        return cmd_postar(cfg, perfil, a[1], " ".join(a[2:]).strip())
+    if c == "curtir" and len(a) == 3 and a[2] in ("on", "off"):
+        cfg, perfil = exigir_rede()
+        st, r = api("POST" if a[2] == "on" else "DELETE", f"/api/posts/{a[1]}/curtir", perfil=perfil, cfg=cfg)
+        return saida({"ok": st == 200, "curtidas": r.get("curtidas", 0), "error": "" if st == 200 else skynet.mensagem(r)})
+    if c == "comentar" and len(a) >= 3:
+        cfg, perfil = exigir_rede()
+        st, r = api("POST", f"/api/posts/{a[1]}/comentarios", {"texto": " ".join(a[2:])[:280]}, perfil=perfil, cfg=cfg)
+        return simples(st, r, "Comentário enviado")
+    if c == "comentarios" and len(a) == 2:
+        cfg, perfil = exigir_rede()
+        st, r = api("GET", f"/api/posts/{a[1]}/comentarios", perfil=perfil, cfg=cfg)
+        return saida({"ok": st == 200, "comentarios": r.get("comentarios", []), "error": "" if st == 200 else skynet.mensagem(r)})
+    if c == "apagar-post" and len(a) == 2:
+        cfg, perfil = exigir_rede()
+        st, r = api("DELETE", f"/api/posts/{a[1]}", perfil=perfil, cfg=cfg)
+        return simples(st, r, "Captura apagada", esperado=(200,))
+    if c == "jogos-enviar":
+        cfg, perfil = exigir_rede()
+        return cmd_jogos_enviar(cfg, perfil)
     if c == "lidas" and len(a) == 2:
         cfg, perfil = exigir_rede()
         st, r = api("POST", "/api/mensagens/lidas", {"deId": a[1]}, perfil=perfil, cfg=cfg)

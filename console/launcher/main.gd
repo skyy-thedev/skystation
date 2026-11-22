@@ -1353,7 +1353,7 @@ func _build_net_cat() -> Dictionary:
 	if not net.get("online", false):
 		resumo = "Sem conexão agora: os amigos voltam quando a internet voltar"
 	c_net["items"].append(_act(_nulo(eu.get("apelido")) if _nulo(eu.get("apelido")) != "" else profile_name,
-		resumo + "  ·  A: abrir a SkyNetwork", "hub:0", glifo_eu))
+		resumo + "  ·  A: atividade dos amigos, capturas e troféus", "hub:0", glifo_eu))
 	# Fase 11.4: salas de "jogar junto" abertas pelos amigos (vale por 30 min depois do convite)
 	var agora_utc := Time.get_unix_time_from_system()
 	for m in net.get("mensagens", []):
@@ -1366,9 +1366,9 @@ func _build_net_cat() -> Dictionary:
 			"%s abriu a sala  ·  A para entrar como jogador 2 (precisa ter o mesmo jogo)" % _nulo(m.get("de", {}).get("apelido")),
 			"netplay:" + _nulo(m.get("id")), "pad", accent))
 	c_net["items"].append(_act("Mensagens" + (" (%d novas)" % novas if novas > 0 else ""),
-		"Conversas com os amigos, respostas rápidas e convites para jogar", "hub:1", "bell", accent if novas > 0 else Color(0, 0, 0, 0)))
+		"Conversas com os amigos, respostas rápidas e convites para jogar", "hub:2", "bell", accent if novas > 0 else Color(0, 0, 0, 0)))
 	if pedidos > 0:
-		c_net["items"].append(_act("Pedidos de amizade (%d)" % pedidos, "Aceite ou recuse", "hub:2", "friends", accent))
+		c_net["items"].append(_act("Pedidos de amizade (%d)" % pedidos, "Aceite ou recuse", "hub:3", "friends", accent))
 	var ordem := {"jogando": 0, "online": 1, "ausente": 2}
 	var on_lst: Array = []
 	for a in amigos:
@@ -1381,8 +1381,8 @@ func _build_net_cat() -> Dictionary:
 		var glifo: String = "avatar:" + _nulo(a.get("avatar")) if _nulo(a.get("avatar")) != "" else "friends"
 		c_net["items"].append(_act(_nulo(a.get("apelido")), sub, "friend:" + _nulo(a.get("id")), glifo,
 			Color.from_string(_nulo(a.get("cor")), Color("4fd1ff"))))
-	c_net["items"].append(_act("Amigos", "Todos os amigos, adicionar amigo pelo ID ou código", "hub:0", "friends"))
-	c_net["items"].append(_act("Meu perfil", "Ícone, nome, sobre mim, aparecer como invisível", "hub:3", glifo_eu))
+	c_net["items"].append(_act("Amigos", "Todos os amigos, adicionar amigo pelo ID ou código", "hub:1", "friends"))
+	c_net["items"].append(_act("Meu perfil", "Publicar capturas, seus jogos e troféus, ícone, nome, sobre mim", "hub:4", glifo_eu))
 	if conta == "":
 		c_net["items"].append(_act("Criar ID SkyNetwork", "Um nome único (ex.: sky) e senha: os amigos acham você pelo ID e você entra em qualquer console ou no site", "net:net_conta_criar", "friends", accent))
 		c_net["items"].append(_act("Já tenho ID: entrar", "Este usuário passa a ser a sua conta (amigos, troféus e saves vêm junto)", "net:net_conta_entrar", "search"))
@@ -1677,7 +1677,7 @@ func _activate() -> void:
 		return
 	_play("accept")
 	if action.begins_with("friend:"):
-		_open_hub(0, action.substr(7))
+		_open_hub(1, action.substr(7))
 		return
 	if action.begins_with("hub:"):
 		_open_hub(int(action.substr(4)))

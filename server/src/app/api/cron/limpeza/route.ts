@@ -37,5 +37,16 @@ export const GET = rota(async (req: NextRequest) => {
     await db.saveVersao.deleteMany({ where: { id: { in: pendentes.map((v) => v.id) } } });
   }
 
-  return json({ ok: true, mensagensApagadas: mensagens.count, sessoesVencidas: sessoes.count, enviosPendentesApagados: pendentes.length, arquivos });
+  // 13.26: capturas que começaram a ser publicadas e nunca chegaram
+  const postsPendentes = await db.post.findMany({
+    where: { confirmado: false, criadoEm: { lt: new Date(agora - DIA) } },
+    select: { id: true, chave: true },
+    take: 500,
+  });
+  if (postsPendentes.length) {
+    if (process.env.S3_ENDPOINT) await apagar(postsPendentes.map((p) => p.chave));
+    await db.post.deleteMany({ where: { id: { in: postsPendentes.map((p) => p.id) } } });
+  }
+
+  return json({ ok: true, postsPendentesApagados: postsPendentes.length, mensagensApagadas: mensagens.count, sessoesVencidas: sessoes.count, enviosPendentesApagados: pendentes.length, arquivos });
 });

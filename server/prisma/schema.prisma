@@ -60,6 +60,11 @@ model Perfil {
   trofeus   TrofeuGanho[]
   vinculos  Vinculo[]
   sessoes   Sessao[]
+  // 13.26: social (jogos jogados, capturas publicadas, curtidas e comentários)
+  jogos       JogoJogado[]
+  posts       Post[]
+  curtidas    Curtida[]
+  comentarios Comentario[]
 
   @@unique([consoleId, localId])
 }
@@ -228,4 +233,63 @@ model LojaVersao {
 
   @@unique([itemId, versao])
   @@index([itemId, criadaEm])
+}
+
+/// 13.26: os jogos que o perfil já jogou (o console manda o tempo.json): amigos veem "jogou recentemente".
+model JogoJogado {
+  id        String   @id @default(cuid())
+  perfilId  String
+  perfil    Perfil   @relation(fields: [perfilId], references: [id], onDelete: Cascade)
+  jogoId    String   // o mesmo id que o sky-run usa (ps2-SLUS21447…)
+  titulo    String
+  sistema   String?
+  segundos  Int      @default(0)
+  partidas  Int      @default(0)
+  ultimaVez DateTime
+
+  @@unique([perfilId, jogoId])
+  @@index([perfilId, ultimaVez])
+}
+
+/// 13.26: captura de tela publicada (a imagem fica no armazenamento, como os saves).
+model Post {
+  id          String       @id @default(cuid())
+  perfilId    String
+  perfil      Perfil       @relation(fields: [perfilId], references: [id], onDelete: Cascade)
+  legenda     String       @default("")
+  jogoId      String?
+  jogo        String?
+  sistema     String?
+  chave       String       // caminho da imagem no armazenamento
+  tipo        String       @default("image/jpeg")
+  tamanho     Int
+  confirmado  Boolean      @default(false) // vira true quando a imagem chegou inteira
+  criadoEm    DateTime     @default(now())
+  curtidas    Curtida[]
+  comentarios Comentario[]
+
+  @@index([perfilId, criadoEm])
+  @@index([criadoEm])
+}
+
+model Curtida {
+  postId   String
+  post     Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  perfilId String
+  perfil   Perfil   @relation(fields: [perfilId], references: [id], onDelete: Cascade)
+  criadaEm DateTime @default(now())
+
+  @@id([postId, perfilId])
+}
+
+model Comentario {
+  id       String   @id @default(cuid())
+  postId   String
+  post     Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  perfilId String
+  perfil   Perfil   @relation(fields: [perfilId], references: [id], onDelete: Cascade)
+  texto    String   // até 280 caracteres
+  criadoEm DateTime @default(now())
+
+  @@index([postId, criadoEm])
 }

@@ -415,6 +415,35 @@ try {
   ok(!(await anonimo("GET", "/api/loja")).dados.itens.some((i) => i.slug === slugL), "loja: sem versões sai da vitrine");
   ok((await nAdm("DELETE", "/api/admin/loja", { slug: slugL })).status === 200 && (await anonimo("GET", `/api/loja/${slugL}`)).status === 404, "loja: item apagado");
 
+  // ---------------------------------------------------------------- social (13.26)
+  const agoraS = Math.floor(Date.now() / 1000);
+  const gh3 = { jogoId: "ps2-SLUS21447", titulo: "Guitar Hero III", sistema: "ps2", segundos: 3600, partidas: 2, ultimaVez: agoraS };
+  const jtS = await api("POST", "/api/jogos/tempo", { ...A, corpo: { jogos: [gh3] } });
+  ok(jtS.status === 200 && jtS.dados.atualizados === 1, "social: tempo de jogo enviado");
+  ok((await api("POST", "/api/jogos/tempo", { ...A, corpo: { jogos: [{ ...gh3, segundos: 10, partidas: 1 }] } })).dados.atualizados === 0,
+    "social: um tempo menor não apaga o que já está lá");
+  const imgS = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), randomBytes(2000)]);
+  const postS = await api("POST", "/api/posts", { ...A, corpo: { legenda: "Meu recorde!", jogo: "Guitar Hero III", jogoId: gh3.jogoId, sistema: "ps2", tamanho: imgS.length } });
+  ok(postS.status === 201 && postS.dados.url, "social: publicar captura começa");
+  ok((await api("POST", `/api/posts/${postS.dados.id}/confirmar`, { ...A })).status === 409, "social: sem a imagem não confirma");
+  ok((await fetch(postS.dados.url, { method: "PUT", body: imgS })).ok, "social: imagem enviada direto ao armazenamento");
+  ok((await api("POST", `/api/posts/${postS.dados.id}/confirmar`, { ...A })).status === 200, "social: captura confirmada");
+  const fbS = await api("GET", "/api/feed", { ...B });
+  ok(fbS.status === 200 && fbS.dados.posts.some((p) => p.id === postS.dados.id && p.url) && fbS.dados.jogos.some((j) => j.titulo === "Guitar Hero III"),
+    "social: B vê a captura e o jogo de A na atividade");
+  const vistoS = Buffer.from(await (await fetch(fbS.dados.posts.find((p) => p.id === postS.dados.id).url)).arrayBuffer());
+  ok(vistoS.equals(imgS), "social: a imagem baixa igual");
+  ok((await api("POST", `/api/posts/${postS.dados.id}/curtir`, { ...B })).dados.curtidas === 1, "social: B curte");
+  ok((await api("POST", `/api/posts/${postS.dados.id}/curtir`, { ...B })).dados.curtidas === 1, "social: curtir de novo não duplica");
+  ok((await api("POST", `/api/posts/${postS.dados.id}/comentarios`, { ...B, corpo: { texto: "Que pontuação!" } })).status === 201, "social: B comenta");
+  const idAs = (await api("POST", "/api/sync", { ...A, corpo: {} })).dados.eu.id;
+  const jgS = await api("GET", `/api/jogadores/${idAs}`, { ...B });
+  ok(jgS.status === 200 && jgS.dados.posts[0].curtidas === 1 && jgS.dados.posts[0].curti && jgS.dados.posts[0].comentarios === 1
+    && jgS.dados.jogos.length === 1 && jgS.dados.trofeus.length >= 1, "social: página do jogador (jogos, troféus, capturas)");
+  ok((await api("GET", `/api/posts/${postS.dados.id}/comentarios`, { ...A })).dados.comentarios[0].texto === "Que pontuação!", "social: A lê o comentário");
+  ok((await api("DELETE", `/api/posts/${postS.dados.id}`, { ...B })).status === 404, "social: só o dono apaga a captura");
+  ok((await api("DELETE", `/api/posts/${postS.dados.id}`, { ...A })).status === 200, "social: dono apaga a captura");
+
   // ---------------------------------------------------------------- desfazer amizade
   ok((await api("DELETE", `/api/amigos/${ped.dados.amizadeId}`, { ...B })).status === 200, "B desfaz a amizade");
   sa = await api("POST", "/api/sync", { ...A, corpo: {} });

@@ -99,6 +99,7 @@ class Rede:
         self.feed = []            # últimos troféus dos amigos
         self.trofeus_enviados = {}    # 13.21: por perfil (o Jogador 2 também manda os dele)
         self.trofeus_mtime = {}
+        self.jogos_mtime = {}         # 13.26: tempo.json já enviado, por perfil
         self.primeira = True
         self.falhas = 0
 
@@ -162,6 +163,7 @@ class Rede:
         self.primeira = False
         for p in lista:        # 13.21: troféus de todos os perfis (o Jogador 2 ganha em dupla sem estar em uso)
             self.enviar_trofeus(cfg, str(p.get("id")))
+            self.enviar_jogos(str(p.get("id")))     # 13.26: "jogou recentemente" para os amigos
         self.jogador2(cfg)
         return True, r
 
@@ -225,6 +227,25 @@ class Rede:
         try:
             skynet.gravar_json(skynet.NET_JSON, dados)
         except OSError:
+            pass
+
+    def enviar_jogos(self, perfil):
+        """13.26: quando o tempo.json do perfil muda (fim de partida), manda o tempo de cada jogo ao servidor."""
+        if perfil == skynet.CONVIDADO:
+            return
+        try:
+            mt = os.path.getmtime(os.path.join(skynet.pasta_saves(perfil), "tempo.json"))
+        except OSError:
+            return
+        if mt == self.jogos_mtime.get(perfil):
+            return
+        try:
+            out = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "sky-cloud"),
+                                  "jogos-enviar"], capture_output=True, text=True, timeout=30,
+                                 env=dict(os.environ, SKY_PERFIL=perfil)).stdout
+            if json.loads(out.strip().splitlines()[-1]).get("ok"):
+                self.jogos_mtime[perfil] = mt
+        except (OSError, ValueError, IndexError, subprocess.SubprocessError):
             pass
 
     def enviar_trofeus(self, cfg, perfil):

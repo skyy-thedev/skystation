@@ -186,6 +186,7 @@ export async function perfilVisto(usuario: string, quemVe: { id: string } | null
   return {
     ...base,
     completo: true as const,
+    id: p.id,
     bio: p.bio,
     membroDesde: p.criadoEm,
     status: online ? pr!.status : "offline",

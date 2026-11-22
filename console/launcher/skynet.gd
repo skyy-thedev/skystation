@@ -21,7 +21,15 @@ const MUTED := Color("a9b6d8")
 const DIM := Color("6b7799")
 const VERDE := Color("54f0b8")
 const AMARELO := Color("ffcc66")
-const ABAS := ["Amigos", "Mensagens", "Pedidos", "Perfil"]
+const ABAS := ["Atividade", "Amigos", "Mensagens", "Pedidos", "Perfil"]   # 13.26: Atividade
+const ABA_ATIVIDADE := 0
+const ABA_AMIGOS := 1
+const ABA_MENSAGENS := 2
+const ABA_PEDIDOS := 3
+const ABA_PERFIL := 4
+const SECOES_JOGADOR := ["Jogos", "Troféus", "Capturas"]
+const CORES_TROFEU := {"bronze": Color("cd7f32"), "prata": Color("c0c8d8"), "ouro": Color("ffcc33"), "platina": Color("9fe8ff")}
+const SKY_TROFEUS := "/opt/skystation/bin/sky-trofeus"
 const RAPIDAS := ["Bora jogar?", "Entra aí!", "GG!", "Já volto", "Agora não dá"]
 const KB_LETRAS := ["1234567890", "qwertyuiop", "asdfghjkl@", "zxcvbnm.-_"]
 const KB_SIMBOLOS := ["1234567890", "!?#$%&*()+", "=[]{}<>/\\|", ";:'\",.~^-_"]
@@ -51,6 +59,24 @@ var hold_t: float = 0.0
 var threads: Array = []
 var tex_cache: Dictionary = {}
 var avatares: Array = []
+
+# 13.26: social
+var tela_ant: String = ""       # para onde o Ⓑ volta (a página de uma captura abre do feed ou de um jogador)
+var feed: Dictionary = {}       # posts, jogos e trofeus (sky-cloud feed)
+var feed_t: float = 0.0
+var feed_carregando: bool = false
+var rolagem: float = 0.0        # rolagem suave da aba Atividade
+var jogador: Dictionary = {}    # página do jogador aberta (sky-cloud jogador)
+var jogador_id: String = ""
+var secao: int = 0              # Jogos / Troféus / Capturas
+var foco: int = 0               # 0 = botões, 1 = conteúdo da seção
+var csel: int = 0               # item escolhido no conteúdo da seção
+var post: Dictionary = {}       # captura aberta
+var comentarios: Array = []
+var capturas: Array = []        # capturas do console (publicar)
+var publicar_arq: String = ""
+var meus_trofeus: Array = []    # todos os troféus (com os ainda não ganhos), só para "eu"
+var img_cache: Dictionary = {}
 
 var kb_open: bool = false
 var kb_texto: String = ""
@@ -90,8 +116,10 @@ func abrir(qual_aba: int = 0, amigo: String = "", cor: Color = Color("4fd1ff")) 
 	kb_open = false
 	grade_open = false
 	hold_dir = _dir()
+	tela_ant = ""
 	_ler_net()
 	_carregar_conta()
+	_carregar_feed()
 	if amigo != "":
 		_abrir_amigo(amigo)
 
@@ -259,6 +287,120 @@ func _abrir_amigo(id: String) -> void:
 	tela = "amigo"
 	bsel = 0
 	confirmar = ""
+	secao = 0
+	foco = 0
+	csel = 0
+	_carregar_jogador(id)
+
+
+# ---------------------------------------------------------------- 13.26: social
+
+func _carregar_feed() -> void:
+	if feed_carregando:
+		return
+	feed_carregando = true
+	feed_t = 60.0
+	_cloud(["feed"], func(d: Dictionary):
+		feed_carregando = false
+		if d.get("ok", false):
+			feed = d)
+
+
+func _carregar_jogador(id: String) -> void:
+	jogador_id = id
+	jogador = {}
+	if id == "eu":
+		var out := []
+		OS.execute(SKY_TROFEUS, PackedStringArray(["listar"]), out)
+		var d = JSON.parse_string(str(out[0]).strip_edges()) if not out.is_empty() and str(out[0]).begins_with("{") else null
+		meus_trofeus = d.get("trofeus", []) if typeof(d) == TYPE_DICTIONARY else []
+	_cloud(["jogador", id], func(d: Dictionary):
+		if jogador_id == id:
+			jogador = d if d.get("ok", false) else {"erro": str(d.get("error", "Não consegui abrir este perfil"))})
+
+
+func _abrir_post(p: Dictionary) -> void:
+	tela_ant = tela
+	post = p
+	tela = "post"
+	bsel = 0
+	confirmar = ""
+	comentarios = []
+	var id := _n(p.get("id"))
+	_cloud(["comentarios", id], func(d: Dictionary):
+		if tela == "post" and _n(post.get("id")) == id:
+			comentarios = d.get("comentarios", []))
+
+
+func _abrir_publicar() -> void:
+	tela_ant = tela
+	tela = "publicar"
+	csel = 0
+	capturas = []
+	_cloud(["capturas"], func(d: Dictionary):
+		capturas = d.get("capturas", [])
+		if capturas.is_empty():
+			_avisar("Nenhuma captura ainda: no jogo, aperte Home → Salvar captura de tela"))
+
+
+func _img(caminho: String, larg: int) -> Texture2D:
+	# imagens das capturas: carregadas uma vez e reduzidas (uma captura 1080p em PNG pesa na memória)
+	var k := "%s@%d" % [caminho, larg]
+	if img_cache.has(k):
+		return img_cache[k]
+	var tx: Texture2D = null
+	if caminho != "" and FileAccess.file_exists(caminho):
+		var im := Image.load_from_file(caminho)
+		if im != null and not im.is_empty():
+			if im.get_width() > larg:
+				im.resize(larg, int(im.get_height() * float(larg) / im.get_width()), Image.INTERPOLATE_BILINEAR)
+			tx = ImageTexture.create_from_image(im)
+	if img_cache.size() > 80:
+		img_cache.clear()
+	img_cache[k] = tx
+	return tx
+
+
+func _desenha_img(caminho: String, r: Rect2, larg: int, raio: int = 14) -> void:
+	_rr(r, Color("0b1020"), raio)
+	var tx := _img(caminho, larg)
+	if tx == null:
+		_tx("carregando…" if caminho == "" else "sem imagem", Vector2(r.position.x, r.get_center().y + 6), 16, DIM, false,
+			r.size.x, HORIZONTAL_ALIGNMENT_CENTER)
+		return
+	# preenche o quadro mantendo a proporção (corta as sobras), como as fotos do feed
+	var ts := tx.get_size()
+	var esc := maxf(r.size.x / ts.x, r.size.y / ts.y)
+	var vis := r.size / esc
+	draw_texture_rect_region(tx, r, Rect2((ts - vis) / 2.0, vis))
+
+
+func _eventos_feed() -> Array:
+	# a aba Atividade: capturas, jogos e troféus dos amigos, do mais novo para o mais antigo
+	var ev: Array = [{"tipo": "publicar", "t": "9999"}]
+	for p in feed.get("posts", []):
+		ev.append({"tipo": "post", "p": p, "t": _n(p.get("criadoEm"))})
+	for j in feed.get("jogos", []):
+		ev.append({"tipo": "jogo", "p": j, "t": _n(j.get("ultimaVez"))})
+	for tr in feed.get("trofeus", []):
+		ev.append({"tipo": "trofeu", "p": tr, "t": _n(tr.get("ganhoEm"))})
+	ev.sort_custom(func(x, y): return str(x["t"]) > str(y["t"]))
+	return ev.slice(0, 60)
+
+
+func _altura_evento(e: Dictionary) -> float:
+	match str(e["tipo"]):
+		"post":
+			return 640.0
+		"publicar":
+			return 96.0
+	return 92.0
+
+
+func _horas(seg: int) -> String:
+	if seg < 3600:
+		return "%d min" % maxi(1, seg / 60)
+	return ("%.1f h" % (seg / 3600.0)).replace(".", ",")
 
 
 func _abrir_conversa(id: String) -> void:
@@ -335,6 +477,9 @@ func _process(delta: float) -> void:
 	if net_t <= 0.0:
 		_ler_net()
 		net_t = 1.0
+	feed_t -= delta
+	if feed_t <= 0.0 and tela == "" and aba == ABA_ATIVIDADE:
+		_carregar_feed()
 	if tela == "conversa":
 		conversa_t -= delta
 		if conversa_t <= 0.0:
@@ -389,7 +534,8 @@ func _entrada(passo: Vector2i) -> void:
 		if confirmar != "":
 			confirmar = ""
 		elif tela != "":
-			tela = ""
+			tela = tela_ant if tela in ["post", "publicar"] else ""
+			tela_ant = ""
 			bsel = 0
 		else:
 			_fechar()
@@ -406,18 +552,24 @@ func _entrada(passo: Vector2i) -> void:
 			_entrada_amigo(passo)
 		"conversa":
 			_entrada_conversa(passo)
+		"post":
+			_entrada_post(passo)
+		"publicar":
+			_entrada_publicar(passo)
 		_:
 			match aba:
-				0:
+				ABA_ATIVIDADE:
+					_entrada_atividade(passo)
+				ABA_AMIGOS:
 					_entrada_amigos(passo)
-				1:
+				ABA_MENSAGENS:
 					_entrada_lista(passo, _conversas().size())
 					if Input.is_action_just_pressed("sky_accept") and not _conversas().is_empty():
 						_som("accept")
 						_abrir_conversa(_n(_conversas()[sel].get("id")))
-				2:
+				ABA_PEDIDOS:
 					_entrada_pedidos(passo)
-				3:
+				ABA_PERFIL:
 					_entrada_perfil(passo)
 
 
@@ -459,7 +611,51 @@ func _botoes_amigo() -> Array:
 	return b
 
 
+func _itens_secao() -> Array:
+	if jogador.is_empty() or jogador.has("erro"):
+		return []
+	match secao:
+		0:
+			return jogador.get("jogos", [])
+		1:
+			return meus_trofeus if jogador_id == "eu" and not meus_trofeus.is_empty() else jogador.get("trofeus", [])
+	return jogador.get("posts", [])
+
+
 func _entrada_amigo(passo: Vector2i) -> void:
+	if Input.is_action_just_pressed("sky_l1") or Input.is_action_just_pressed("sky_r1"):
+		secao = wrapi(secao + (1 if Input.is_action_just_pressed("sky_r1") else -1), 0, SECOES_JOGADOR.size())
+		csel = 0
+		_som("swoosh")
+		return
+	if passo.y != 0:
+		var n := _itens_secao().size()
+		if foco == 0 and passo.y > 0 and n > 0:
+			foco = 1
+			_som("tick")
+			return
+		if foco == 1:
+			var cols := 4 if secao == 2 else (3 if secao == 1 else 1)
+			var novo := csel + passo.y * cols
+			if novo < 0:
+				foco = 0
+			else:
+				csel = clampi(novo, 0, maxi(0, n - 1))
+			_som("tick")
+			return
+	if foco == 1:
+		if passo.x != 0 and secao != 0:
+			csel = clampi(csel + passo.x, 0, maxi(0, _itens_secao().size() - 1))
+			_som("tick")
+		if Input.is_action_just_pressed("sky_accept") and secao == 2 and csel < _itens_secao().size():
+			_som("accept")
+			_abrir_post(_itens_secao()[csel])
+		return
+	if jogador_id == "eu":
+		if Input.is_action_just_pressed("sky_accept"):
+			_som("accept")
+			_abrir_publicar()
+		return
 	var b := _botoes_amigo()
 	if passo.x != 0:
 		var novo := clampi(bsel + passo.x, 0, b.size() - 1)
@@ -490,6 +686,80 @@ func _entrada_amigo(passo: Vector2i) -> void:
 			_cloud(["recusar", _n(a.get("amizadeId"))], _resultado)
 			tela = ""
 			sel = 0
+
+
+func _entrada_atividade(passo: Vector2i) -> void:
+	var ev := _eventos_feed()
+	_entrada_lista(passo, ev.size())
+	if not Input.is_action_just_pressed("sky_accept") or ev.is_empty():
+		return
+	_som("accept")
+	var e: Dictionary = ev[clampi(sel, 0, ev.size() - 1)]
+	match str(e["tipo"]):
+		"publicar":
+			_abrir_publicar()
+		"post":
+			_abrir_post(e["p"])
+		"jogo", "trofeu":
+			var autor: Dictionary = e["p"].get("autor", {})
+			if _n(autor.get("id")) != "":
+				_abrir_amigo(_n(autor.get("id")))
+
+
+func _botoes_post() -> Array:
+	var b: Array = [["Descurtir" if post.get("curti", false) else "Curtir", "curtir"], ["Comentar", "comentar"]]
+	var meu: bool = _n(post.get("autor", {}).get("id")) == _n(_eu().get("id"))
+	if meu:
+		b.append(["Confirmar: apagar?" if confirmar == "apagar" else "Apagar captura", "apagar"])
+	else:
+		b.append(["Ver perfil", "perfil"])
+	return b
+
+
+func _entrada_post(passo: Vector2i) -> void:
+	var b := _botoes_post()
+	if passo.x != 0:
+		bsel = clampi(bsel + passo.x, 0, b.size() - 1)
+		confirmar = ""
+		_som("tick")
+	if not Input.is_action_just_pressed("sky_accept"):
+		return
+	_som("accept")
+	var id := _n(post.get("id"))
+	match str(b[bsel][1]):
+		"curtir":
+			var on: bool = not post.get("curti", false)
+			post["curti"] = on
+			post["curtidas"] = int(post.get("curtidas", 0)) + (1 if on else -1)
+			_cloud(["curtir", id, "on" if on else "off"], func(d: Dictionary):
+				if d.get("ok", false) and _n(post.get("id")) == id:
+					post["curtidas"] = int(d.get("curtidas", 0)))
+		"comentar":
+			_kb("Comentário para a captura de " + _n(post.get("autor", {}).get("apelido")), "comentario", 280)
+		"apagar":
+			if confirmar != "apagar":
+				confirmar = "apagar"
+				return
+			confirmar = ""
+			_cloud(["apagar-post", id], func(d: Dictionary):
+				_resultado(d)
+				_carregar_feed()
+				if jogador_id != "":
+					_carregar_jogador(jogador_id))
+			tela = tela_ant if tela_ant != "post" else ""
+		"perfil":
+			_abrir_amigo(_n(post.get("autor", {}).get("id")))
+
+
+func _entrada_publicar(passo: Vector2i) -> void:
+	var n := capturas.size()
+	if passo != Vector2i.ZERO and n > 0:
+		csel = clampi(csel + passo.x + passo.y * 4, 0, n - 1)
+		_som("tick")
+	if Input.is_action_just_pressed("sky_accept") and csel < n:
+		_som("accept")
+		publicar_arq = _n(capturas[csel].get("arquivo"))
+		_kb("Legenda da captura (opcional; Start publica)", "legenda", 280)
 
 
 func _chips_conversa() -> Array:
@@ -551,7 +821,8 @@ func _entrada_pedidos(passo: Vector2i) -> void:
 
 func _linhas_perfil() -> Array:
 	var eu := _eu()
-	var l: Array = [["Trocar ícone", "icone"], ["Nome que os amigos veem: " + _n(eu.get("apelido")), "apelido"],
+	var l: Array = [["Publicar uma captura", "publicar"], ["Minhas capturas, jogos e troféus", "meu"],
+		["Trocar ícone", "icone"], ["Nome que os amigos veem: " + _n(eu.get("apelido")), "apelido"],
 		["Sobre mim: " + (_n(conta.get("bio")) if _n(conta.get("bio")) != "" else "(vazio)"), "bio"],
 		["Aparecer como: " + ("Invisível" if eu.get("invisivel", false) else "Online"), "invisivel"]]
 	if _n(eu.get("usuario")) == "":
@@ -567,6 +838,10 @@ func _entrada_perfil(passo: Vector2i) -> void:
 		return
 	_som("accept")
 	match str(l[sel][1]):
+		"publicar":
+			_abrir_publicar()
+		"meu":
+			_abrir_amigo("eu")
 		"icone":
 			grade_sel = 0
 			for i in avatares.size():
@@ -643,6 +918,18 @@ func _kb_entrada(passo: Vector2i) -> void:
 func _kb_ok() -> void:
 	kb_open = false
 	var txt := kb_texto.strip_edges()
+	if kb_modo == "legenda":   # 13.26: legenda é opcional
+		_avisar("Publicando a captura…")
+		var args: Array = ["postar", publicar_arq]
+		if txt != "":
+			args.append(txt)
+		_cloud(args, func(d: Dictionary):
+			_resultado(d)
+			_carregar_feed())
+		tela = ""
+		aba = ABA_ATIVIDADE
+		sel = 0
+		return
 	if txt == "":
 		return
 	match kb_modo:
@@ -653,6 +940,16 @@ func _kb_ok() -> void:
 			_cloud(["amigo", txt], _resultado)
 		"apelido":
 			_cloud(["apelido", txt], _resultado)
+		"comentario":
+			var id := _n(post.get("id"))
+			comentarios.append({"autor": _eu(), "texto": txt, "enviando": true})
+			post["comentarios"] = int(post.get("comentarios", 0)) + 1
+			_cloud(["comentar", id, txt], func(d: Dictionary):
+				if not d.get("ok", false):
+					_avisar(str(d.get("error", "Não consegui comentar")))
+				_cloud(["comentarios", id], func(c: Dictionary):
+					if tela == "post" and _n(post.get("id")) == id:
+						comentarios = c.get("comentarios", [])))
 		"bio":
 			_cloud(["bio", txt], func(d: Dictionary):
 				_resultado(d)
@@ -740,16 +1037,22 @@ func _draw() -> void:
 			_desenha_amigo(w, h)
 		"conversa":
 			_desenha_conversa(w, h)
+		"post":
+			_desenha_post(w, h)
+		"publicar":
+			_desenha_publicar(w, h)
 		_:
 			_desenha_abas(w)
 			match aba:
-				0:
+				ABA_ATIVIDADE:
+					_desenha_atividade(w, h)
+				ABA_AMIGOS:
 					_desenha_amigos(w, h)
-				1:
+				ABA_MENSAGENS:
 					_desenha_conversas(w, h)
-				2:
+				ABA_PEDIDOS:
 					_desenha_pedidos(w, h)
-				3:
+				ABA_PERFIL:
 					_desenha_perfil(w, h)
 	if grade_open:
 		_desenha_grade(w, h)
@@ -793,9 +1096,9 @@ func _desenha_abas(w: float) -> void:
 		var tw := font_bold.get_string_size(nome, HORIZONTAL_ALIGNMENT_LEFT, -1, tam).x
 		_tx(nome, Vector2(x, y), tam, WHITE if on else Color(MUTED, 0.8), on)
 		var n := 0
-		if k == 1:
+		if k == ABA_MENSAGENS:
 			n = _nao_lidas()
-		elif k == 2:
+		elif k == ABA_PEDIDOS:
 			n = _pedidos().size()
 		if n > 0:
 			var bc := Vector2(x + tw + 16, y - 8)
@@ -988,52 +1291,294 @@ func _desenha_perfil(w: float, h: float) -> void:
 
 
 func _desenha_amigo(w: float, h: float) -> void:
-	var a := _amigo(alvo)
+	# 13.26: página do jogador como no PS4: cabeçalho com ícone, nome e botões; embaixo Jogos / Troféus / Capturas
+	var eu_mesmo := jogador_id == "eu"
+	var a := _amigo(alvo) if not eu_mesmo else _eu()
+	var pj: Dictionary = jogador.get("perfil", {}) if typeof(jogador.get("perfil")) == TYPE_DICTIONARY else {}
 	if a.is_empty():
-		_tx("Este amigo não está mais na lista.", Vector2(0, h * 0.45), 22, MUTED, false, w, HORIZONTAL_ALIGNMENT_CENTER)
+		a = pj
+	if a.is_empty() and jogador.is_empty():
+		_tx("Carregando…", Vector2(0, h * 0.45), 22, MUTED, false, w, HORIZONTAL_ALIGNMENT_CENTER)
 		return
-	var c := Vector2(w * 0.5, h * 0.33)
-	_avatar(c, 100, _n(a.get("avatar")), _n(a.get("apelido")), _n(a.get("cor")), _cor_status(a),
-		_n(a.get("status")) == "offline")
-	_tx(_n(a.get("apelido")), Vector2(0, c.y + 150), 34, WHITE, true, w, HORIZONTAL_ALIGNMENT_CENTER)
+	var c := Vector2(150, 220)
+	var st := _cor_status(a) if not eu_mesmo else (VERDE if net.get("online", false) else DIM)
+	_avatar(c, 78, _n(a.get("avatar")), _n(a.get("apelido")), _n(a.get("cor")), st, _n(a.get("status")) == "offline")
+	_tx(_n(a.get("apelido")), Vector2(258, 196), 34, WHITE, true)
 	var u := _n(a.get("usuario"))
-	_tx(("@" + u + "   ·   ") if u != "" else "", Vector2(0, c.y + 184), 18, MUTED, false, w * 0.5, HORIZONTAL_ALIGNMENT_RIGHT)
-	_tx(_situacao(a), Vector2(w * 0.5, c.y + 184), 18, accent if _n(a.get("status")) == "jogando" else MUTED, false,
-		w * 0.5, HORIZONTAL_ALIGNMENT_LEFT)
-	var conv := _convite_de(alvo)
+	var linha := (("@" + u + "   ·   ") if u != "" else "") + (_situacao(a) if not eu_mesmo else "Você")
+	_tx(linha, Vector2(258, 228), 18, accent if _n(a.get("status")) == "jogando" else MUTED)
+	var bio := _n(pj.get("bio"))
+	if bio != "":
+		_tx(bio, Vector2(258, 256), 16, MUTED, false, w - 600)
+	var conv := _convite_de(alvo) if not eu_mesmo else {}
 	if not conv.is_empty():
 		_tx("Convidou você: " + (_n(conv.get("jogo")) if _n(conv.get("jogo")) != "" else "jogar junto") + "  ·  " +
-			_ha(_n(conv.get("enviadaEm"))), Vector2(0, c.y + 214), 17, AMARELO, false, w, HORIZONTAL_ALIGNMENT_CENTER)
-	# botões, como na página de jogador do PS4
-	var b := _botoes_amigo()
-	var larg := 0.0
-	for x in b:
-		larg += font_bold.get_string_size(str(x[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x + 64.0 + 16.0
-	var bx := (w - larg + 16.0) / 2.0
-	var by := c.y + 250
+			_ha(_n(conv.get("enviadaEm"))), Vector2(258, 282), 16, AMARELO)
+	# botões
+	var b: Array = [["Publicar uma captura", "publicar"]] if eu_mesmo else _botoes_amigo()
+	var bx := 258.0
+	var by := 300.0
 	for i in b.size():
 		var rot := str(b[i][0])
-		var bw := font_bold.get_string_size(rot, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x + 64.0
-		var r := Rect2(bx, by, bw, 54)
+		var bw := font_bold.get_string_size(rot, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x + 52.0
+		var r := Rect2(bx, by, bw, 48)
+		var on := foco == 0 and i == bsel
+		var perigo := rot.begins_with("Confirmar")
+		_rr(r, (Color("e05260") if perigo else WHITE) if on else Color(1, 1, 1, 0.10), 24)
+		_tx(rot, r.position + Vector2(0, 31), 17, Color("0a0f1c") if on and not perigo else WHITE, true, bw,
+			HORIZONTAL_ALIGNMENT_CENTER)
+		bx += bw + 14.0
+	# seções
+	var y := 400.0
+	var x := 56.0
+	for k in SECOES_JOGADOR.size():
+		var nome: String = SECOES_JOGADOR[k]
+		var on := k == secao
+		var tw := font_bold.get_string_size(nome, HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x
+		_tx(nome, Vector2(x, y), 20, WHITE if on else Color(MUTED, 0.8), on)
+		if on:
+			_rr(Rect2(x, y + 10, tw, 4), accent, 2)
+		x += tw + 40.0
+	_tx("L1 / R1", Vector2(w - 136, y), 15, DIM, false, 80, HORIZONTAL_ALIGNMENT_RIGHT)
+	draw_line(Vector2(56, y + 24), Vector2(w - 56, y + 24), Color(1, 1, 1, 0.10), 1.0)
+	var area := Rect2(56, y + 44, w - 112, h - y - 44 - 70)
+	if jogador.is_empty():
+		_tx("Carregando…", Vector2(0, area.position.y + 60), 20, MUTED, false, w, HORIZONTAL_ALIGNMENT_CENTER)
+		return
+	if jogador.has("erro"):
+		_tx(str(jogador["erro"]), Vector2(0, area.position.y + 60), 20, MUTED, false, w, HORIZONTAL_ALIGNMENT_CENTER)
+		return
+	var itens := _itens_secao()
+	if itens.is_empty():
+		var vazio: String = ["Nenhum jogo ainda.", "Nenhum troféu ainda.", "Nenhuma captura publicada ainda."][secao]
+		_tx(vazio, Vector2(0, area.position.y + 60), 20, MUTED, false, w, HORIZONTAL_ALIGNMENT_CENTER)
+		return
+	match secao:
+		0:
+			var rh := 64.0
+			var cabe := maxi(1, int(area.size.y / rh))
+			var primeira := clampi(csel - cabe + 1, 0, maxi(0, itens.size() - cabe))
+			for k in range(primeira, mini(itens.size(), primeira + cabe)):
+				var j: Dictionary = itens[k]
+				var r := Rect2(area.position.x, area.position.y + (k - primeira) * rh, area.size.x, rh - 8)
+				if foco == 1 and k == csel:
+					_desenha_linha(r, true)
+				_tx(_n(j.get("titulo")), Vector2(r.position.x + 24, r.position.y + 36), 20, WHITE, true, r.size.x * 0.5)
+				var sis := _n(j.get("sistema")).to_upper()
+				_tx(sis, Vector2(r.position.x + r.size.x * 0.52, r.position.y + 36), 16, accent)
+				_tx(_horas(int(j.get("segundos", 0))) + " jogadas  ·  " + _ha(_n(j.get("ultimaVez"))),
+					Vector2(r.end.x - 420, r.position.y + 36), 16, MUTED, false, 396, HORIZONTAL_ALIGNMENT_RIGHT)
+		1:
+			var cont := {"platina": 0, "ouro": 0, "prata": 0, "bronze": 0}
+			var ganhos := 0
+			for t in itens:
+				if int(t.get("ganho", 1)) != 0:
+					var nv := _n(t.get("nivel")) if t.has("nivel") else _n(t.get("tipo"))
+					cont[nv] = int(cont.get(nv, 0)) + 1
+					ganhos += 1
+			var cx := area.position.x
+			for nv in ["platina", "ouro", "prata", "bronze"]:
+				draw_circle(Vector2(cx + 14, area.position.y + 4), 12, CORES_TROFEU[nv])
+				_tx("%d %s" % [cont[nv], nv], Vector2(cx + 34, area.position.y + 11), 17, WHITE)
+				cx += 170
+			if eu_mesmo and not meus_trofeus.is_empty():
+				_tx("%d de %d" % [ganhos, itens.size()], Vector2(area.end.x - 200, area.position.y + 11), 17, MUTED, false, 200,
+					HORIZONTAL_ALIGNMENT_RIGHT)
+			var cols := 3
+			var gw := (area.size.x - 2 * 16.0) / cols
+			var gh := 74.0
+			var y0 := area.position.y + 40
+			var linhas := maxi(1, int((area.end.y - y0) / (gh + 12)))
+			var lin_sel := int(csel / cols)
+			var prim := maxi(0, lin_sel - linhas + 1)
+			for k in itens.size():
+				var lin := int(k / cols) - prim
+				if lin < 0 or lin >= linhas:
+					continue
+				var t: Dictionary = itens[k]
+				var nv := _n(t.get("nivel")) if t.has("nivel") else _n(t.get("tipo"))
+				var ganho := int(t.get("ganho", 1)) != 0
+				var r := Rect2(area.position.x + (k % cols) * (gw + 16), y0 + lin * (gh + 12), gw, gh)
+				_desenha_linha(r, foco == 1 and k == csel)
+				draw_circle(Vector2(r.position.x + 38, r.get_center().y), 20, Color(CORES_TROFEU.get(nv, DIM), 1.0 if ganho else 0.25))
+				_tx(_n(t.get("nome")) if _n(t.get("nome")) != "" else _n(t.get("trofeu")), Vector2(r.position.x + 72, r.position.y + 32),
+					18, WHITE if ganho else DIM, ganho, r.size.x - 90)
+				var sub := _n(t.get("desc")) if t.has("desc") else (nv + "  ·  " + _ha(_n(t.get("ganhoEm"))))
+				_tx(sub, Vector2(r.position.x + 72, r.position.y + 56), 14, MUTED if ganho else DIM, false, r.size.x - 90)
+		2:
+			var cols := 4
+			var gw := (area.size.x - 3 * 18.0) / cols
+			var gh := gw * 9.0 / 16.0
+			var linhas := maxi(1, int(area.size.y / (gh + 46)))
+			var prim := maxi(0, int(csel / cols) - linhas + 1)
+			for k in itens.size():
+				var lin := int(k / cols) - prim
+				if lin < 0 or lin >= linhas:
+					continue
+				var pst: Dictionary = itens[k]
+				var r := Rect2(area.position.x + (k % cols) * (gw + 18), area.position.y + lin * (gh + 46), gw, gh)
+				_desenha_img(_n(pst.get("arquivo")), r, 480)
+				if foco == 1 and k == csel:
+					_rr(r.grow(4), Color(0, 0, 0, 0), 18, accent, 3)
+				var leg := _n(pst.get("legenda")) if _n(pst.get("legenda")) != "" else _n(pst.get("jogo"))
+				_tx(leg, Vector2(r.position.x, r.end.y + 24), 15, WHITE, false, gw - 70)
+				_tx("♥ %d" % int(pst.get("curtidas", 0)), Vector2(r.end.x - 64, r.end.y + 24), 15, MUTED, false, 64,
+					HORIZONTAL_ALIGNMENT_RIGHT)
+
+
+func _desenha_atividade(w: float, h: float) -> void:
+	if _sem_rede(w, h):
+		return
+	var ev := _eventos_feed()
+	var col := minf(980.0, w - 160.0)
+	var x0 := (w - col) / 2.0
+	var topo := 176.0
+	# rolagem: o escolhido fica perto do topo
+	var alvo_y := 0.0
+	for k in mini(sel, ev.size()):
+		alvo_y += _altura_evento(ev[k]) + 18.0
+	rolagem = lerpf(rolagem, maxf(0.0, alvo_y - 40.0), 0.25)
+	var y := topo - rolagem
+	if feed.is_empty() and feed_carregando:
+		_tx("Carregando a atividade…", Vector2(0, h * 0.5), 20, MUTED, false, w, HORIZONTAL_ALIGNMENT_CENTER)
+	for k in ev.size():
+		var e: Dictionary = ev[k]
+		var hh := _altura_evento(e)
+		if y > h - 60:
+			break
+		if y + hh < topo - 20:
+			y += hh + 18.0
+			continue
+		var r := Rect2(x0, y, col, hh)
+		var on := k == sel
+		_desenha_linha(r, on)
+		match str(e["tipo"]):
+			"publicar":
+				draw_circle(Vector2(r.position.x + 48, r.get_center().y), 26, Color(accent, 0.25))
+				_tx("+", Vector2(r.position.x + 22, r.get_center().y + 12), 34, WHITE, true, 52, HORIZONTAL_ALIGNMENT_CENTER)
+				_tx("Publicar uma captura", Vector2(r.position.x + 94, r.position.y + 42), 20, WHITE, true)
+				_tx("Mostre aos amigos (e no seu perfil do site) um momento dos seus jogos",
+					Vector2(r.position.x + 94, r.position.y + 68), 15, MUTED)
+			"jogo", "trofeu":
+				var p: Dictionary = e["p"]
+				var autor: Dictionary = p.get("autor", {})
+				_avatar(Vector2(r.position.x + 48, r.get_center().y), 28, _n(autor.get("avatar")), _n(autor.get("apelido")),
+					_n(autor.get("cor")))
+				var txt := ""
+				var sub := ""
+				if e["tipo"] == "jogo":
+					txt = "%s jogou %s" % [_n(autor.get("apelido")), _n(p.get("titulo"))]
+					sub = _horas(int(p.get("segundos", 0))) + " no total  ·  " + _ha(_n(p.get("ultimaVez")))
+					if _n(p.get("sistema")) != "":
+						sub = _n(p.get("sistema")).to_upper() + "  ·  " + sub
+				else:
+					txt = "%s ganhou o troféu %s" % [_n(autor.get("apelido")), _n(p.get("nome"))]
+					sub = _n(p.get("tipo")) + "  ·  " + _ha(_n(p.get("ganhoEm")))
+					draw_circle(Vector2(r.end.x - 44, r.get_center().y), 16, CORES_TROFEU.get(_n(p.get("tipo")), DIM))
+				_tx(txt, Vector2(r.position.x + 94, r.position.y + 40), 19, WHITE, true, r.size.x - 170)
+				_tx(sub, Vector2(r.position.x + 94, r.position.y + 66), 15, MUTED, false, r.size.x - 170)
+			"post":
+				var p: Dictionary = e["p"]
+				var autor: Dictionary = p.get("autor", {})
+				_avatar(Vector2(r.position.x + 44, r.position.y + 44), 26, _n(autor.get("avatar")), _n(autor.get("apelido")),
+					_n(autor.get("cor")))
+				_tx(_n(autor.get("apelido")), Vector2(r.position.x + 84, r.position.y + 40), 19, WHITE, true)
+				var sub := "publicou uma captura" + ((" de " + _n(p.get("jogo"))) if _n(p.get("jogo")) != "" else "")
+				_tx(sub + "  ·  " + _ha(_n(p.get("criadoEm"))), Vector2(r.position.x + 84, r.position.y + 64), 15, MUTED, false,
+					r.size.x - 120)
+				var ir := Rect2(r.position.x + 20, r.position.y + 86, r.size.x - 40, (r.size.x - 40) * 9.0 / 16.0)
+				ir.size.y = minf(ir.size.y, hh - 86 - 70)
+				_desenha_img(_n(p.get("arquivo")), ir, 960)
+				var leg := _n(p.get("legenda"))
+				_tx(leg, Vector2(r.position.x + 24, ir.end.y + 34), 18, WHITE, false, r.size.x - 300)
+				var cont := "%s %d    Comentários %d" % ["♥" if p.get("curti", false) else "♡", int(p.get("curtidas", 0)),
+					int(p.get("comentarios", 0))]
+				_tx(cont, Vector2(r.end.x - 300, ir.end.y + 34), 16, accent if p.get("curti", false) else MUTED, false, 276,
+					HORIZONTAL_ALIGNMENT_RIGHT)
+				if on:
+					_tx("Ⓐ abrir, curtir e comentar", Vector2(r.position.x + 24, ir.end.y + 58), 14, DIM)
+		y += hh + 18.0
+	if ev.size() <= 1 and not feed_carregando:
+		_tx("Quando os amigos jogarem, ganharem troféus ou publicarem capturas, aparece aqui.", Vector2(0, topo + 180), 18,
+			MUTED, false, w, HORIZONTAL_ALIGNMENT_CENTER)
+
+
+func _desenha_post(w: float, h: float) -> void:
+	var autor: Dictionary = post.get("autor", {})
+	var ir := Rect2(56, 120, w * 0.62, w * 0.62 * 9.0 / 16.0)
+	_desenha_img(_n(post.get("arquivo")), ir, 1280, 18)
+	var x := ir.end.x + 36
+	var cw := w - x - 56
+	_avatar(Vector2(x + 30, 150), 30, _n(autor.get("avatar")), _n(autor.get("apelido")), _n(autor.get("cor")))
+	_tx(_n(autor.get("apelido")), Vector2(x + 74, 146), 21, WHITE, true, cw - 80)
+	_tx(_ha(_n(post.get("criadoEm"))) + ((" · " + _n(post.get("jogo"))) if _n(post.get("jogo")) != "" else ""),
+		Vector2(x + 74, 172), 15, MUTED, false, cw - 80)
+	var y := 214.0
+	var leg := _n(post.get("legenda"))
+	if leg != "":
+		draw_multiline_string(font, Vector2(x, y + 10), leg, HORIZONTAL_ALIGNMENT_LEFT, cw, 18, 4, WHITE)
+		y += font.get_multiline_string_size(leg, HORIZONTAL_ALIGNMENT_LEFT, cw, 18).y + 16
+	_tx("%s %d curtida%s    ·    %d comentário%s" % ["♥" if post.get("curti", false) else "♡", int(post.get("curtidas", 0)),
+		"" if int(post.get("curtidas", 0)) == 1 else "s", int(post.get("comentarios", 0)),
+		"" if int(post.get("comentarios", 0)) == 1 else "s"], Vector2(x, y + 14), 16, accent if post.get("curti", false) else MUTED)
+	y += 40
+	draw_line(Vector2(x, y), Vector2(x + cw, y), Color(1, 1, 1, 0.10), 1.0)
+	y += 14
+	var base := ir.end.y - 10
+	for c in comentarios.slice(maxi(0, comentarios.size() - 8)):
+		var ca: Dictionary = c.get("autor", {})
+		if y > base - 40:
+			break
+		_avatar(Vector2(x + 16, y + 16), 16, _n(ca.get("avatar")), _n(ca.get("apelido")), _n(ca.get("cor")))
+		_tx(_n(ca.get("apelido")), Vector2(x + 42, y + 14), 15, WHITE, true, cw - 50)
+		var t := _n(c.get("texto"))
+		draw_multiline_string(font, Vector2(x + 42, y + 36), t, HORIZONTAL_ALIGNMENT_LEFT, cw - 50, 15, 3,
+			Color(MUTED, 0.6 if c.get("enviando", false) else 1.0))
+		y += 44 + font.get_multiline_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, cw - 50, 15).y
+	if comentarios.is_empty():
+		_tx("Ninguém comentou ainda.", Vector2(x, y + 14), 15, DIM)
+	# botões embaixo da imagem
+	var b := _botoes_post()
+	var bx := 56.0
+	for i in b.size():
+		var rot := str(b[i][0])
+		var bw := font_bold.get_string_size(rot, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x + 60.0
+		var r := Rect2(bx, ir.end.y + 26, bw, 52)
 		var on := i == bsel
 		var perigo := rot.begins_with("Confirmar")
-		_rr(r, (Color("e05260") if perigo else WHITE) if on else Color(1, 1, 1, 0.10), 27)
-		_tx(rot, r.position + Vector2(0, 35), 18, Color("0a0f1c") if on and not perigo else WHITE, true, bw,
+		_rr(r, (Color("e05260") if perigo else WHITE) if on else Color(1, 1, 1, 0.10), 26)
+		_tx(rot, r.position + Vector2(0, 34), 18, Color("0a0f1c") if on and not perigo else WHITE, true, bw,
 			HORIZONTAL_ALIGNMENT_CENTER)
-		bx += bw + 16.0
-	# troféus recentes dele (do feed)
-	var y := by + 100
-	var tem := false
-	for tr in net.get("trofeus", []):
-		if typeof(tr) != TYPE_DICTIONARY or _n(tr.get("de", {}).get("id")) != alvo:
+		bx += bw + 14.0
+
+
+func _desenha_publicar(w: float, h: float) -> void:
+	_tx("Publicar uma captura", Vector2(56, 160), 30, WHITE, true)
+	_tx("Escolha a imagem; depois escreva uma legenda (se quiser). Amigos e o seu perfil no site vão ver.",
+		Vector2(56, 192), 16, MUTED)
+	if capturas.is_empty():
+		_tx("Carregando as capturas…" if threads.size() > 0 else "Nenhuma captura ainda: no jogo, aperte Home → Salvar captura de tela.",
+			Vector2(0, h * 0.5), 20, MUTED, false, w, HORIZONTAL_ALIGNMENT_CENTER)
+		return
+	var cols := 4
+	var gw := (w - 112.0 - 3 * 18.0) / cols
+	var gh := gw * 9.0 / 16.0
+	var y0 := 230.0
+	var linhas := maxi(1, int((h - y0 - 80) / (gh + 50)))
+	var prim := maxi(0, int(csel / cols) - linhas + 1)
+	for k in capturas.size():
+		var lin := int(k / cols) - prim
+		if lin < 0 or lin >= linhas:
 			continue
-		if not tem:
-			_tx("Troféus recentes", Vector2(w * 0.3, y), 18, MUTED, true)
-			tem = true
-		y += 30
-		_tx("Troféu: " + _n(tr.get("nome")) + "  ·  " + _n(tr.get("tipo")), Vector2(w * 0.3, y), 17, WHITE)
-		if y > h - 120:
-			break
+		var c: Dictionary = capturas[k]
+		var r := Rect2(56 + (k % cols) * (gw + 18), y0 + lin * (gh + 50), gw, gh)
+		_desenha_img(_n(c.get("arquivo")), r, 480)
+		if k == csel:
+			_rr(r.grow(4), Color(0, 0, 0, 0), 18, accent, 3)
+		var fuso := int(Time.get_time_zone_from_system().get("bias", -180)) * 60
+		var q := Time.get_datetime_string_from_unix_time(int(c.get("quando", 0)) + fuso, true).substr(0, 16)
+		_tx((_n(c.get("jogo")) + "  ·  " if _n(c.get("jogo")) != "" else "") + q.replace("T", " "), Vector2(r.position.x, r.end.y + 26),
+			14, WHITE if k == csel else MUTED, false, gw)
 
 
 func _desenha_conversa(w: float, h: float) -> void:
@@ -1098,8 +1643,15 @@ func _desenha_rodape(w: float, h: float) -> void:
 	var dicas := "Ⓐ Escolher    Ⓑ " + ("Voltar" if tela != "" else "Fechar") + ("    L1/R1 Trocar de aba" if tela == "" else "")
 	if tela == "conversa":
 		dicas = "◀ ▶ Escolher    Ⓐ Enviar    Ⓑ Voltar"
+	elif tela == "amigo":
+		dicas = "Ⓐ Escolher    ▲ ▼ Botões / lista    L1/R1 Jogos, Troféus, Capturas    Ⓑ Voltar"
+	elif tela == "post":
+		dicas = "◀ ▶ Escolher    Ⓐ Confirmar    Ⓑ Voltar"
+	elif tela == "publicar":
+		dicas = "Ⓐ Escolher esta captura    Ⓑ Voltar"
 	if kb_open:
 		dicas = "Ⓐ Digitar    □ Apagar    L1 Maiúsculas    R1 Espaço    Start Concluir    Ⓑ Cancelar"
+	draw_rect(Rect2(0, h - 76, w, 76), Color(0.02, 0.03, 0.08, 0.95))   # faixa: o feed rola por baixo das dicas
 	_tx(dicas, Vector2(0, h - 40), 16, DIM, false, w, HORIZONTAL_ALIGNMENT_CENTER)
 
 

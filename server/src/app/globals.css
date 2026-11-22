@@ -253,6 +253,11 @@ textarea { resize: vertical; min-height: 70px; }
 .contagem div { text-align: center; padding: 10px 4px; border-radius: 14px; background: rgba(0, 0, 0, 0.2); }
 .contagem b { display: block; font-size: 22px; }
 .lista { list-style: none; margin: 0; padding: 0; }
+/* 13.26: capturas publicadas no perfil */
+.capturas { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.captura { margin: 0; background: rgba(255, 255, 255, 0.04); border-radius: 16px; overflow: hidden; }
+.captura img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #0b1020; }
+.captura figcaption { padding: 10px 14px 14px; display: grid; gap: 4px; font-size: 14px; }
 .lista li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid rgba(255, 255, 255, 0.06); }
 .lista li:first-child { border-top: 0; }
 .trofeu { width: 12px; height: 12px; border-radius: 4px; flex: none; transform: rotate(45deg); }

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Avatar } from "@/components/Avatar";
 import { perfilVisto } from "@/lib/conta";
+import { atividadeDoPerfil } from "@/lib/social";
 import { quemEstaLogado } from "@/lib/sessao-pagina";
 
 type Props = { params: Promise<{ usuario: string }> };
@@ -21,6 +22,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 function curta(d: Date | string) {
   return new Date(d).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit", timeZone: "America/Sao_Paulo" });
+}
+
+function horas(seg: number) {
+  if (seg < 3600) return `${Math.max(1, Math.round(seg / 60))} min`;
+  return `${Math.round(seg / 360) / 10} h`.replace(".", ",");
 }
 
 function data(d: Date | string) {
@@ -68,6 +74,8 @@ export default async function Perfil({ params }: Props) {
     );
   }
 
+  const atividade = await atividadeDoPerfil(p.id, eu?.id ?? null);
+
   return (
     <>
       <div className="cartao">
@@ -104,6 +112,24 @@ export default async function Perfil({ params }: Props) {
           )}
         </section>
         <section className="cartao">
+          <h2>Jogou recentemente</h2>
+          {atividade.jogos.length ? (
+            <ul className="lista">
+              {atividade.jogos.slice(0, 8).map((j) => (
+                <li key={j.jogoId}>
+                  <span style={{ flex: 1 }}>
+                    {j.titulo}
+                    {j.sistema && <span className="apagado"> · {SISTEMAS[j.sistema] ?? j.sistema.toUpperCase()}</span>}
+                  </span>
+                  <span className="apagado">{horas(j.segundos)} · {curta(j.ultimaVez)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="apagado">Nenhum jogo ainda.</p>
+          )}
+        </section>
+        <section className="cartao">
           <h2>Amigos · {p.amigos.length}</h2>
           {p.amigos.length ? (
             <ul className="lista">
@@ -119,6 +145,29 @@ export default async function Perfil({ params }: Props) {
           )}
         </section>
       </div>
+      <section className="cartao" style={{ marginTop: 18 }}>
+        <h2>Capturas · {atividade.posts.length}</h2>
+        {atividade.posts.length ? (
+          <div className="capturas">
+            {atividade.posts.map((c) => (
+              <figure key={c.id} className="captura">
+                {/* a imagem vem do armazenamento por um endereço temporário (a rota confere quem pode ver) */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={c.imagem} alt={c.legenda || c.jogo || "Captura"} loading="lazy" />
+                <figcaption>
+                  {c.legenda && <div>{c.legenda}</div>}
+                  <div className="apagado">
+                    {c.jogo ? `${c.jogo} · ` : ""}{curta(c.criadoEm)} · {c.curtidas} curtida{c.curtidas === 1 ? "" : "s"}
+                    {c.comentarios ? ` · ${c.comentarios} comentário${c.comentarios === 1 ? "" : "s"}` : ""}
+                  </div>
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        ) : (
+          <p className="apagado">Nenhuma captura publicada ainda. Publique pelo console: SkyNetwork → Perfil.</p>
+        )}
+      </section>
     </>
   );
 }
