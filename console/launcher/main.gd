@@ -528,6 +528,8 @@ func _process(delta: float) -> void:
 
 	if settings != null and settings.visible:
 		return
+	if hub != null and hub.visible:
+		return   # 13.25: a SkyNetwork em tela cheia cuida dos próprios botões
 	cooldown = max(0.0, cooldown - delta)
 	quem_t = move_toward(quem_t, 1.0 if quem_open else 0.0, delta * 6.0)
 	if quem_pendente and intro_t >= INTRO_LEN:
@@ -1336,15 +1338,22 @@ func _build_net_cat() -> Dictionary:
 	var eu: Dictionary = net.get("eu", {}) if typeof(net.get("eu")) == TYPE_DICTIONARY else {}
 	var conta: String = _nulo(eu.get("usuario"))
 	var glifo_eu: String = ("avatar:" + _nulo(eu.get("avatar"))) if _nulo(eu.get("avatar")) != "" else "friends"
-	if conta != "":
-		c_net["items"].append(_act(_nulo(eu.get("apelido")) if _nulo(eu.get("apelido")) != "" else profile_name,
-			"ID SkyNetwork: " + conta + "  ·  A: conta e opções", "settings:4", glifo_eu))
-	else:
-		c_net["items"].append(_act(profile_name, "Sem ID SkyNetwork ainda  ·  Código de amigo: " + _nulo(eu.get("codigo")), "settings:4", glifo_eu))
-		c_net["items"].append(_act("Criar ID SkyNetwork", "Um nome único (ex.: sky) e senha: os amigos acham você pelo ID e você entra em qualquer console ou no site", "net:net_conta_criar", "friends", accent))
-		c_net["items"].append(_act("Já tenho ID: entrar", "Este perfil passa a ser a sua conta (amigos, troféus e saves vêm junto)", "net:net_conta_entrar", "search"))
+	# 13.25: a categoria virou um atalho para a tela da SkyNetwork (como a área de amigos do PS4)
+	var amigos: Array = net.get("amigos", []) if typeof(net.get("amigos")) == TYPE_ARRAY else []
+	var online := 0
+	for a in amigos:
+		if typeof(a) == TYPE_DICTIONARY and _nulo(a.get("status")) in ["online", "jogando", "ausente"]:
+			online += 1
+	var novas := 0
+	for m in net.get("mensagens", []):
+		if typeof(m) == TYPE_DICTIONARY and not m.get("lida", false):
+			novas += 1
+	var pedidos: int = net.get("pedidosRecebidos", []).size() if typeof(net.get("pedidosRecebidos")) == TYPE_ARRAY else 0
+	var resumo := "%d de %d amigos online" % [online, amigos.size()]
 	if not net.get("online", false):
-		c_net["items"].append(_act("Sem conexão com a SkyNetwork", "Os amigos voltam a aparecer quando a internet voltar", "settings:4", "wifi"))
+		resumo = "Sem conexão agora: os amigos voltam quando a internet voltar"
+	c_net["items"].append(_act(_nulo(eu.get("apelido")) if _nulo(eu.get("apelido")) != "" else profile_name,
+		resumo + "  ·  A: abrir a SkyNetwork", "hub:0", glifo_eu))
 	# Fase 11.4: salas de "jogar junto" abertas pelos amigos (vale por 30 min depois do convite)
 	var agora_utc := Time.get_unix_time_from_system()
 	for m in net.get("mensagens", []):
@@ -1356,44 +1365,29 @@ func _build_net_cat() -> Dictionary:
 		c_net["items"].append(_act("Jogar junto: " + _nulo(m.get("jogo")),
 			"%s abriu a sala  ·  A para entrar como jogador 2 (precisa ter o mesmo jogo)" % _nulo(m.get("de", {}).get("apelido")),
 			"netplay:" + _nulo(m.get("id")), "pad", accent))
-	for p in net.get("pedidosRecebidos", []):
-		if typeof(p) == TYPE_DICTIONARY:
-			c_net["items"].append(_act("Pedido de amizade: " + _nulo(p.get("de", {}).get("apelido")), "Aperte A para aceitar ou recusar", "settings:4", "bell", accent))
-	var novas := {}
-	for m in net.get("mensagens", []):
-		if typeof(m) == TYPE_DICTIONARY and not m.get("lida", false):
-			var de: String = _nulo(m.get("de", {}).get("id"))
-			novas[de] = int(novas.get(de, 0)) + 1
-	var ordem := {"jogando": 0, "online": 1, "ausente": 2, "offline": 3}
-	var amigos: Array = net.get("amigos", []).duplicate()
-	amigos.sort_custom(func(x, y): return int(ordem.get(_nulo(x.get("status")), 9)) < int(ordem.get(_nulo(y.get("status")), 9)))
+	c_net["items"].append(_act("Mensagens" + (" (%d novas)" % novas if novas > 0 else ""),
+		"Conversas com os amigos, respostas rápidas e convites para jogar", "hub:1", "bell", accent if novas > 0 else Color(0, 0, 0, 0)))
+	if pedidos > 0:
+		c_net["items"].append(_act("Pedidos de amizade (%d)" % pedidos, "Aceite ou recuse", "hub:2", "friends", accent))
+	var ordem := {"jogando": 0, "online": 1, "ausente": 2}
+	var on_lst: Array = []
 	for a in amigos:
-		if typeof(a) != TYPE_DICTIONARY:
-			continue
+		if typeof(a) == TYPE_DICTIONARY and ordem.has(_nulo(a.get("status"))):
+			on_lst.append(a)
+	on_lst.sort_custom(func(x, y): return int(ordem[_nulo(x.get("status"))]) < int(ordem[_nulo(y.get("status"))]))
+	for a in on_lst.slice(0, 6):
 		var sit: String = _nulo(a.get("status"))
-		var sub: String = "Offline"
-		if sit == "jogando":
-			sub = "Jogando " + _nulo(a.get("jogo"))
-			if _nulo(a.get("sistema")) != "":
-				sub += "  ·  " + _nulo(a.get("sistema")).to_upper()
-		elif sit == "online":
-			sub = "Online"
-		elif sit == "ausente":
-			sub = "Ausente"
-		var n: int = int(novas.get(_nulo(a.get("id")), 0))
-		if n > 0:
-			sub += "  ·  %d mensagem(ns) nova(s)" % n
-		var cor: Color = Color(1, 1, 1, 0.25)
-		if sit != "offline" and sit != "":
-			cor = Color.from_string(_nulo(a.get("cor")), Color("4fd1ff"))
+		var sub: String = "Online" if sit == "online" else ("Ausente" if sit == "ausente" else "Jogando " + _nulo(a.get("jogo")))
 		var glifo: String = "avatar:" + _nulo(a.get("avatar")) if _nulo(a.get("avatar")) != "" else "friends"
-		if sit == "offline" or sit == "":
-			cor = Color(1, 1, 1, 0.45)   # o ícone do amigo offline fica apagado
-		c_net["items"].append(_act(_nulo(a.get("apelido")), sub, "friend:" + _nulo(a.get("id")), glifo, cor))
-	c_net["items"].append(_act("Adicionar amigo", "Pelo ID SkyNetwork dele (ou o código de amigo)", "net:net_add", "search"))
-	c_net["items"].append(_act("Ícone do perfil", "Escolha numa grade, como no site", "net:net_icones", glifo_eu))
+		c_net["items"].append(_act(_nulo(a.get("apelido")), sub, "friend:" + _nulo(a.get("id")), glifo,
+			Color.from_string(_nulo(a.get("cor")), Color("4fd1ff"))))
+	c_net["items"].append(_act("Amigos", "Todos os amigos, adicionar amigo pelo ID ou código", "hub:0", "friends"))
+	c_net["items"].append(_act("Meu perfil", "Ícone, nome, sobre mim, aparecer como invisível", "hub:3", glifo_eu))
+	if conta == "":
+		c_net["items"].append(_act("Criar ID SkyNetwork", "Um nome único (ex.: sky) e senha: os amigos acham você pelo ID e você entra em qualquer console ou no site", "net:net_conta_criar", "friends", accent))
+		c_net["items"].append(_act("Já tenho ID: entrar", "Este usuário passa a ser a sua conta (amigos, troféus e saves vêm junto)", "net:net_conta_entrar", "search"))
 	_rpcn_item(c_net)
-	c_net["items"].append(_act("Opções da SkyNetwork", "Saves na nuvem, invisível, senha, usar o perfil em outro console, sair", "settings:4", "gear"))
+	c_net["items"].append(_act("Opções da SkyNetwork", "Saves na nuvem, senha, usar o perfil em outro console, sair", "settings:4", "gear"))
 	return c_net
 
 
@@ -1683,9 +1677,10 @@ func _activate() -> void:
 		return
 	_play("accept")
 	if action.begins_with("friend:"):
-		_open_settings(4)
-		if settings != null:
-			settings.call("abrir_amigo", action.substr(7))
+		_open_hub(0, action.substr(7))
+		return
+	if action.begins_with("hub:"):
+		_open_hub(int(action.substr(4)))
 		return
 	if action == "loja_vitrine":
 		_store_abrir("")
@@ -1905,6 +1900,49 @@ func _open_settings(section: int = -1) -> void:
 		settings.closed.connect(_on_settings_closed)
 	settings.set("CYAN", accent)  # Configurações na mesma cor de destaque do tema
 	settings.open(section)
+
+
+# ---------------------------------------------------------------- 13.25: SkyNetwork em tela cheia (skynet.gd)
+
+var hub: Control = null
+
+
+func _open_hub(aba: int = 0, amigo: String = "") -> void:
+	if hub == null:
+		var script = load("res://skynet.gd")
+		if script == null or not script.can_instantiate():
+			_open_settings(4)   # sem a tela nova: a lista antiga das Configurações
+			return
+		hub = script.new()
+		hub.set_anchors_preset(Control.PRESET_FULL_RECT)
+		add_child(hub)
+		hub.closed.connect(_on_hub_closed)
+		hub.abrir_jogo.connect(_hub_jogo)
+		hub.abrir_netplay.connect(func(id: String):
+			hub.visible = false
+			_on_hub_closed()
+			_entrar_netplay(id))
+		hub.abrir_config.connect(func(secao: int):
+			hub.visible = false
+			_open_settings(secao))
+	hub.call("abrir", aba, amigo, accent)
+
+
+func _on_hub_closed() -> void:
+	status_t = 0.0
+	cooldown = 0.35
+	hold_dir = _nav_dir()
+	_net_load()
+
+
+func _hub_jogo(jogo_id: String) -> void:
+	for g in games:
+		if str(g.get("id", "")) == jogo_id:
+			hub.visible = false
+			_on_hub_closed()
+			_launch(g)
+			return
+	_toast("Você não tem esse jogo neste console", 3.5, "disc")
 
 
 func _on_settings_closed() -> void:
@@ -3294,8 +3332,8 @@ func _draw() -> void:
 	_draw_intro(w, h)
 	if ui_alpha <= 0.0:
 		return
-	if settings != null and settings.visible:
-		return  # Configurações abertas: só o fundo de ondas fica atrás delas
+	if (settings != null and settings.visible) or (hub != null and hub.visible):
+		return  # Configurações / SkyNetwork abertas: só o fundo de ondas fica atrás delas
 	var a := ui_alpha
 	if viewer_open:
 		_draw_viewer(w, h)

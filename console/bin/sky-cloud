@@ -9,7 +9,10 @@ Rede:
     sky-cloud amigo <ID ou código>      pede amizade pelo ID SkyNetwork ou pelo código de 6 letras
     sky-cloud aceitar|recusar <id>      responde a um pedido (ou desfaz uma amizade)
     sky-cloud mensagem <perfilId> <texto>     manda uma mensagem a um amigo
-    sky-cloud convidar <perfilId>       chama o amigo para o jogo aberto agora
+    sky-cloud convidar <perfilId> [jogoId título sistema]   chama o amigo para jogar (o jogo aberto, o jogo dado
+                                        ou, sem jogo, um "bora jogar?")
+    sky-cloud apelido <nome>            (13.25) troca o nome que os amigos veem (e o nome do usuário no console)
+    sky-cloud bio <texto>               (13.25) o "sobre mim" do perfil (até 140 letras)
     sky-cloud lidas <perfilId>          marca como lidas as mensagens desse amigo
     sky-cloud conversa <perfilId>       as últimas mensagens trocadas com esse amigo (as duas direções)
     sky-cloud conta                     a conta do perfil em uso (ID, ícone, visibilidade)
@@ -595,17 +598,39 @@ def main():
         cfg, perfil = exigir_rede()
         st, r = api("POST", "/api/mensagens", {"paraId": a[1], "texto": " ".join(a[2:])[:280]}, perfil=perfil, cfg=cfg)
         return simples(st, r, "Mensagem enviada")
-    if c == "convidar" and len(a) == 2:
+    if c == "convidar" and len(a) in (2, 5):
         cfg, perfil = exigir_rede()
         ler = lambda n: (open(os.path.join(skynet.RUN, n)).read().strip() if os.path.exists(os.path.join(skynet.RUN, n)) else "")  # noqa: E731
-        if not os.path.exists(os.path.join(skynet.RUN, "game.pid")):
-            return saida({"ok": False, "error": "Abra um jogo para convidar."})
-        corpo = {"paraId": a[1], "tipo": "convite", "texto": "Bora jogar " + (ler("game.title") or "comigo") + "?",
-                 "jogoId": ler("game.id")[:200], "jogo": ler("game.title")[:200]}
-        if re.fullmatch(r"[a-z0-9]{1,12}", ler("game.sys")):
-            corpo["sistema"] = ler("game.sys")
+        # 13.25: como no PS4, dá para chamar do menu: com um jogo aberto (ou escolhido), o convite leva o jogo
+        aberto = os.path.exists(os.path.join(skynet.RUN, "game.pid"))
+        gid, titulo, sis = (ler("game.id"), ler("game.title"), ler("game.sys")) if aberto else \
+            ((a[2:3] or [""])[0], (a[3:4] or [""])[0], (a[4:5] or [""])[0])
+        corpo = {"paraId": a[1], "tipo": "convite",
+                 "texto": ("Bora jogar " + titulo + "?") if titulo else "Bora jogar? Entra no SkyStation!"}
+        if gid:
+            corpo["jogoId"] = gid[:200]
+        if titulo:
+            corpo["jogo"] = titulo[:200]
+        if re.fullmatch(r"[a-z0-9]{1,12}", sis or ""):
+            corpo["sistema"] = sis
         st, r = api("POST", "/api/mensagens", corpo, perfil=perfil, cfg=cfg)
         return simples(st, r, "Convite enviado")
+    if c == "apelido" and len(a) >= 2:
+        cfg, perfil = exigir_rede()
+        nome = " ".join(a[1:]).strip()[:24]
+        if not nome:
+            return saida({"ok": False, "error": "Digite um nome."})
+        st, r = api("PATCH", "/api/conta", {"apelido": nome}, perfil=perfil, cfg=cfg)
+        if st != 200:
+            return saida({"ok": False, "error": skynet.mensagem(r)})
+        subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "sky-perfis"),
+                        "renomear", perfil, nome[:20]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        sincronizar_ja()
+        return saida({"ok": True, "message": f"Agora os amigos veem você como {nome}"})
+    if c == "bio":
+        cfg, perfil = exigir_rede()
+        st, r = api("PATCH", "/api/conta", {"bio": " ".join(a[1:]).strip()[:140]}, perfil=perfil, cfg=cfg)
+        return simples(st, r, "Sobre mim atualizado", esperado=(200,))
     if c == "conta":
         cfg, perfil = exigir_rede()
         st, r = api("GET", "/api/conta", perfil=perfil, cfg=cfg)
