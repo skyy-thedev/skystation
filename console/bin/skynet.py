@@ -153,7 +153,10 @@ def jogador2():
 
 
 def pasta_saves(perfil):
-    """Pasta de saves de um perfil (a do perfil em uso também é ~/skystation/saves, que aponta para ela)."""
+    """Pasta de saves de um perfil. A do perfil em uso é ~/skystation/saves (no console é um atalho para
+    perfis/<id>/saves; num console antigo ou no teste, é a própria pasta)."""
+    if perfil == perfis()[0]:
+        return os.path.join(SKY, "saves")
     return os.path.join(SKY, "perfis", perfil, "saves")
 
 

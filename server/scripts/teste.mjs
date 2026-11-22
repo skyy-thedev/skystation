@@ -433,7 +433,8 @@ try {
     "social: B vê a captura e o jogo de A na atividade");
   const vistoS = Buffer.from(await (await fetch(fbS.dados.posts.find((p) => p.id === postS.dados.id).url)).arrayBuffer());
   ok(vistoS.equals(imgS), "social: a imagem baixa igual");
-  ok((await api("POST", `/api/posts/${postS.dados.id}/curtir`, { ...B })).dados.curtidas === 1, "social: B curte");
+  const cur = await api("POST", `/api/posts/${postS.dados.id}/curtir`, { ...B });
+  ok(cur.dados?.curtidas === 1, "social: B curte" + (cur.dados?.curtidas === 1 ? "" : ` (${cur.status} ${JSON.stringify(cur.dados)})`));
   ok((await api("POST", `/api/posts/${postS.dados.id}/curtir`, { ...B })).dados.curtidas === 1, "social: curtir de novo não duplica");
   ok((await api("POST", `/api/posts/${postS.dados.id}/comentarios`, { ...B, corpo: { texto: "Que pontuação!" } })).status === 201, "social: B comenta");
   const idAs = (await api("POST", "/api/sync", { ...A, corpo: {} })).dados.eu.id;

@@ -36,13 +36,16 @@ export async function idsAmigos(perfilId: string) {
   return amizades.map((a) => (a.aId === perfilId ? a.bId : a.aId));
 }
 
-/** O que `quemVe` pode ver do perfil `donoId`: tudo (dono, amigo ou perfil público) ou nada. */
+/**
+ * O que `quemVe` pode ver do perfil `donoId` (capturas, jogos, troféus): o dono e os amigos sempre veem (como no
+ * console, onde amigo vê o que o outro joga); quem não é amigo só vê se o perfil for público.
+ */
 export async function podeVer(donoId: string, quemVeId: string | null) {
   if (quemVeId === donoId) return true;
   const dono = await db.perfil.findUnique({ where: { id: donoId }, select: { visibilidade: true } });
   if (!dono) return false;
   if (dono.visibilidade === "publico") return true;
-  if (!quemVeId || dono.visibilidade === "privado") return false;
+  if (!quemVeId) return false;
   const amizade = await db.amizade.findFirst({
     where: { status: "aceita", OR: [{ aId: donoId, bId: quemVeId }, { aId: quemVeId, bId: donoId }] },
     select: { id: true },
