@@ -405,7 +405,8 @@ func _ready() -> void:
 	_make_music()
 	_load_state()
 	_sky_json("sky-perfis", ["inicio"])   # 13.21: o Jogador 2 é escolhido de novo a cada vez que liga
-	quem_pendente = not FileAccess.file_exists(conf_dir + "/quem.off")
+	quem_pendente = true
+	Input.joy_connection_changed.connect(_on_joy_mudou)   # 13.24: 2º controle ligado → "quem está usando?"
 	_reload_games()
 	_refresh_status()
 	version_txt = _read_text("/opt/skystation/VERSION", "")
@@ -531,7 +532,7 @@ func _process(delta: float) -> void:
 	quem_t = move_toward(quem_t, 1.0 if quem_open else 0.0, delta * 6.0)
 	if quem_pendente and intro_t >= INTRO_LEN:
 		quem_pendente = false
-		_quem_abrir()
+		_quem_ao_ligar()
 	if intro_t < INTRO_LEN:
 		if Input.is_action_just_pressed("sky_accept") or Input.is_action_just_pressed("sky_back") \
 				or Input.is_action_just_pressed("sky_menu"):
@@ -739,6 +740,8 @@ var quem_passo: int = 1            # 1 = Jogador 1, 2 = Jogador 2
 var quem_sel: int = 0
 var quem_t: float = 0.0
 var quem_opcoes: Array = []
+var profile_auto: String = ""      # 13.24: usuário que entra sozinho ao ligar (Configurações → Usuários)
+var quem_j2_perguntado: bool = false   # 13.24: o 2º controle já foi perguntado (volta a perguntar se ele sair)
 var trophies: Dictionary = {}
 
 
@@ -762,6 +765,7 @@ func _load_profile(args: Array = ["listar"]) -> void:
 			if str(p["id"]) == profile_id:
 				profile_name = str(p["nome"])
 		jogador2_id = _nulo(d.get("jogador2"))
+		profile_auto = _nulo(d.get("auto"))
 		jogador2_nome = "Convidado" if jogador2_id == "convidado" else ""
 		for p in profiles:
 			if str(p["id"]) == jogador2_id:
@@ -1513,11 +1517,9 @@ func _build_cats() -> void:
 		c_games["items"].append(_act("Nenhum jogo", "Pastas com game.json em ~/skystation/games", "", "pad"))
 
 	c_sys["items"] = [
-		_act("Jogadores: " + profile_name + ("  +  " + jogador2_nome if jogador2_nome != "" else ""),
-			"Quem vai jogar: Jogador 1, Jogador 2 (troféus em dupla) ou convidado. Cada perfil tem saves e troféus próprios",
-			"profile", "pad"),
-		_act("Perguntar quem vai jogar ao ligar", "Não (abre direto no último perfil)" if FileAccess.file_exists(conf_dir + "/quem.off") else "Sim",
-			"quem_toggle", "pad"),
+		_act("Trocar de usuário", "Agora: " + profile_name + ("  +  " + jogador2_nome if jogador2_nome != "" else "") +
+			"  ·  escolha quem está usando cada controle", "profile", "pad"),
+		_act("Usuários", "Criar, renomear, trocar o ícone, excluir e entrar automaticamente ao ligar", "settings:5", "friends"),
 		_act("Wi-Fi", "Redes sem fio", "settings:0", "wifi"),
 		_act("Bluetooth", "Parear controles e fones", "settings:1", "bt"),
 		_act("SkyNetwork", "Amigos, mensagens e saves na nuvem", "settings:4", "wifi"),
@@ -1727,9 +1729,7 @@ func _activate() -> void:
 			_toast("Interface maior na TV: " + ("desligada" if FileAccess.file_exists(conf_dir + "/tv-grande.off") else "ligada"), 2.5, "monitor")
 		"profile":
 			_quem_abrir()
-		"quem_toggle":
-			_toggle_file(conf_dir + "/quem.off")
-			_refresh_sys_items()
+
 		"profile_new":
 			_load_profile(["criar"])
 			_next_profile()
@@ -5029,10 +5029,45 @@ func _icon(kind: String, c: Vector2, s: float, col: Color) -> void:
 
 # ---------------------------------------------------------------- 13.21: Quem vai jogar?
 
-func _quem_abrir() -> void:
+func _controles_ligados() -> int:
+	return Input.get_connected_joypads().size()
+
+
+func _quem_ao_ligar() -> void:
+	# como no PS4: com "entrar automaticamente" o Jogador 1 já está escolhido; o 2º controle ainda pergunta
+	_load_profile()
+	var auto_ok := false
+	for p in profiles:
+		if str(p["id"]) == profile_auto:
+			auto_ok = true
+	if auto_ok or FileAccess.file_exists(conf_dir + "/quem.off"):
+		if auto_ok and profile_auto != profile_id:
+			_load_profile(["usar", profile_auto])
+			_reload_games()
+		if _controles_ligados() >= 2:
+			_quem_abrir(2)
+		return
+	_quem_abrir()
+
+
+func _on_joy_mudou(_dev: int, conectado: bool) -> void:
+	if not conectado:
+		if _controles_ligados() < 2:
+			quem_j2_perguntado = false   # o 2º controle saiu: quando voltar, pergunta de novo
+		return
+	if _controles_ligados() < 2 or quem_j2_perguntado or jogador2_id != "" or quem_open or quem_pendente:
+		return
+	if running_pid != -1 or intro_t < INTRO_LEN or (settings != null and settings.visible) or store_open:
+		return
+	_quem_abrir(2)
+
+
+func _quem_abrir(passo: int = 1) -> void:
 	_load_profile()
 	quem_open = true
-	quem_passo = 1
+	quem_passo = passo
+	if passo == 2:
+		quem_j2_perguntado = true
 	_quem_montar()
 	quem_sel = 0
 	for k in quem_opcoes.size():
@@ -5044,21 +5079,21 @@ func _quem_abrir() -> void:
 
 func _quem_montar() -> void:
 	quem_opcoes = []
-	if quem_passo == 2:
-		quem_opcoes.append({"tipo": "sozinho", "nome": "Só eu", "sub": "Jogar sem Jogador 2", "cor": "#2d3a5c"})
 	for p in profiles:
 		var pid := str(p.get("id", ""))
 		if quem_passo == 2 and pid == profile_id:
 			continue
 		var u := _nulo(p.get("usuario"))
 		quem_opcoes.append({"tipo": "perfil", "id": pid, "nome": str(p.get("nome", pid)), "cor": str(p.get("cor", "#4fd1ff")),
-			"sub": ("@" + u) if u != "" else "Perfil deste console"})
+			"avatar": _nulo(p.get("avatar")), "sub": ("@" + u) if u != "" else ""})
 	if quem_passo == 2 and (net.get("online", false) or net.get("convidado", false)):
-		quem_opcoes.append({"tipo": "conta", "nome": "Entrar com ID", "sub": "Conta SkyNetwork do Jogador 2", "cor": "#3a2d6c"})
+		quem_opcoes.append({"tipo": "conta", "nome": "Entrar com ID", "sub": "Conta SkyNetwork", "cor": "#3a2d6c"})
+	if profiles.size() < 4 and quem_passo == 1:
+		quem_opcoes.append({"tipo": "novo", "nome": "Novo usuário", "sub": "", "cor": "#24304d"})
 	quem_opcoes.append({"tipo": "convidado", "id": "convidado", "nome": "Convidado",
-		"sub": "Sem login: sem troféus e sem nuvem", "cor": "#5a6378"})
-	if quem_passo == 1 and profiles.size() < 4:
-		quem_opcoes.append({"tipo": "novo", "nome": "Novo perfil", "sub": "Saves e troféus próprios", "cor": "#24304d"})
+		"sub": "Sem troféus e sem nuvem", "cor": "#5a6378"})
+	if quem_passo == 2:
+		quem_opcoes.append({"tipo": "sozinho", "nome": "Ninguém", "sub": "Controle sem usuário", "cor": "#2d3a5c"})
 
 
 func _quem_input(_delta: float) -> void:
@@ -5072,15 +5107,8 @@ func _quem_input(_delta: float) -> void:
 				_play("tick")
 	if Input.is_action_just_pressed("sky_back"):
 		_play("back")
-		if quem_passo == 2:
-			quem_passo = 1
-			_quem_montar()
-			quem_sel = 0
-			for k in quem_opcoes.size():
-				if str(quem_opcoes[k].get("id", "")) == profile_id:
-					quem_sel = k
-		else:
-			quem_open = false   # fica quem já estava
+		quem_open = false   # passo 1: fica quem já estava; passo 2: o 2º controle fica sem usuário
+		cooldown = 0.3
 		return
 	if not Input.is_action_just_pressed("sky_accept") or quem_opcoes.is_empty():
 		return
@@ -5089,16 +5117,28 @@ func _quem_input(_delta: float) -> void:
 	if quem_passo == 1:
 		match str(o["tipo"]):
 			"novo":
+				# como no PS4: cria, já entra com ele e pede o nome
 				_load_profile(["criar"])
-				_quem_montar()
-				quem_sel = maxi(0, profiles.size() - 1)
-				_toast("Perfil criado. Troque o nome em Configurações → SkyNetwork ou no site", 3.5, "pad")
+				var novo := str(profiles[profiles.size() - 1]["id"])
+				_load_profile(["usar", novo])
+				_reload_games()
+				quem_open = false
+				_open_settings(5)
+				if settings != null:
+					settings.call("abrir_acao", "usr_abrir:" + novo)
 				return
 			_:
 				if str(o["id"]) != profile_id:
 					_load_profile(["usar", str(o["id"])])
 					_reload_games()
+				if _controles_ligados() < 2:   # um controle só: não há Jogador 2 para perguntar
+					_load_profile(["dupla", "nenhum"])
+					quem_open = false
+					_toast("Olá, " + profile_name + "!", 2.5, "pad")
+					cooldown = 0.3
+					return
 				quem_passo = 2
+				quem_j2_perguntado = true
 				_quem_montar()
 				quem_sel = 0
 				for k in quem_opcoes.size():
@@ -5139,9 +5179,8 @@ func _quem_input(_delta: float) -> void:
 func _draw_quem(w: float, h: float) -> void:
 	var e := quem_t * quem_t * (3.0 - 2.0 * quem_t)
 	draw_rect(Rect2(0, 0, w, h), Color(0.02, 0.03, 0.08, 0.86 * e))
-	var titulo := "Quem vai jogar?" if quem_passo == 1 else "E o Jogador 2?"
-	var sub := "Jogador 1 usa o primeiro controle" if quem_passo == 1 \
-		else "Ligue o segundo controle. Em dupla, os troféus contam para os dois"
+	var titulo := "Quem está usando este controle?" if quem_passo == 1 else "Quem está usando o controle 2?"
+	var sub := "Jogador 1" if quem_passo == 1 else "Jogador 2  ·  em dupla, os troféus contam para os dois"
 	_text(titulo, Vector2(0, h * 0.26), 44, Color(WHITE, e), true, w, HORIZONTAL_ALIGNMENT_CENTER)
 	_text(sub, Vector2(0, h * 0.26 + 40), 19, Color(MUTED, e), false, w, HORIZONTAL_ALIGNMENT_CENTER)
 	var n := quem_opcoes.size()
@@ -5164,6 +5203,14 @@ func _draw_quem(w: float, h: float) -> void:
 		if on:
 			_glow(r.get_center(), cw * 0.9, Color(cor, 0.35 * e))
 		_rrect(r, Color(cor, (0.95 if on else 0.55) * e), 28, Color(WHITE, (0.9 if on else 0.0) * e), 3 if on else 0)
+		var tex: Texture2D = _avatar_tex(str(o.get("avatar", ""))) if str(o.get("avatar", "")) != "" else null
+		if tex != null:   # ícone do usuário (os mesmos da SkyNetwork), como a foto de perfil do PS4
+			draw_texture_rect(tex, r.grow(-6), false, Color(1, 1, 1, e))
+			_text(str(o.get("nome", "")), Vector2(x - 20, y + cw * 1.08 + 36), 21, Color(WHITE if on else MUTED, e), on,
+				cw + 40, HORIZONTAL_ALIGNMENT_CENTER)
+			_text(str(o.get("sub", "")), Vector2(x - 30, y + cw * 1.08 + 62), 14, Color(MUTED, (1.0 if on else 0.6) * e), false,
+				cw + 60, HORIZONTAL_ALIGNMENT_CENTER)
+			continue
 		var letra := str(o.get("nome", "?")).substr(0, 1).to_upper()
 		match str(o.get("tipo", "")):
 			"novo":
@@ -5178,5 +5225,5 @@ func _draw_quem(w: float, h: float) -> void:
 			cw + 40, HORIZONTAL_ALIGNMENT_CENTER)
 		_text(str(o.get("sub", "")), Vector2(x - 30, y + cw * 1.08 + 62), 14, Color(MUTED, (1.0 if on else 0.6) * e), false,
 			cw + 60, HORIZONTAL_ALIGNMENT_CENTER)
-	var dica := "Ⓐ Escolher    Ⓑ " + ("Voltar ao Jogador 1" if quem_passo == 2 else "Continuar com " + profile_name)
+	var dica := "Ⓐ Escolher    Ⓑ " + ("Sem usuário neste controle" if quem_passo == 2 else "Continuar com " + profile_name)
 	_text(dica, Vector2(0, h - 70), 17, Color(MUTED, e), false, w, HORIZONTAL_ALIGNMENT_CENTER)

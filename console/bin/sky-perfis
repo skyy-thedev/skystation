@@ -8,6 +8,9 @@ cópias de segurança, tempo de jogo, favoritos e troféus.
     sky-perfis renomear <id> <nome>
     sky-perfis usar convidado    (13.21) joga sem perfil: saves só neste console, sem SkyNetwork e sem troféus
     sky-perfis dupla <id|convidado|nenhum>   (13.21) quem é o Jogador 2 (o 2º controle) até desligar o console
+    sky-perfis icone <id> <ícone>            (13.24) ícone do usuário (os mesmos da SkyNetwork)
+    sky-perfis auto <id|nenhum>              (13.24) entrar automaticamente com esse usuário ao ligar
+    sky-perfis excluir <id>                  (13.24) apaga o usuário (os saves vão para perfis/.excluidos)
 
 13.21: "jogador2" fica em perfis.json e volta a "nenhum" a cada vez que o console liga (a tela "Quem vai
 jogar?" pergunta de novo). Com um Jogador 2 de perfil, o tempo de jogo e os troféus também contam para ele
@@ -120,12 +123,51 @@ def main():
             d["error"] = f"limite de {MAX} perfis"
         else:
             n = 1
-            while f"p{n}" in ids:
+            # 13.24: o id de um usuário excluído não volta (no servidor ele ainda aponta para a conta antiga)
+            while f"p{n}" in ids or f"p{n}" in d.get("excluidos", []):
                 n += 1
             nome = " ".join(a[1:]).strip()[:20] or f"Jogador {n}"
             d["perfis"].append({"id": f"p{n}", "nome": nome, "cor": CORES[(n - 1) % len(CORES)]})
             for name in LINKS:
                 os.makedirs(os.path.join(PERF, f"p{n}", name), exist_ok=True)
+            save(d)
+    elif a[:1] == ["icone"] and len(a) == 3:
+        if a[1] not in ids:
+            d["error"] = "perfil não existe"
+        elif not a[2].replace("-", "").replace("_", "").isalnum():
+            d["error"] = "ícone inválido"
+        else:
+            for p in d["perfis"]:
+                if p["id"] == a[1]:
+                    p["avatar"] = a[2]
+            save(d)
+    elif a[:1] == ["auto"] and len(a) == 2:
+        if a[1] != "nenhum" and a[1] not in ids:
+            d["error"] = "perfil não existe"
+        else:
+            d["auto"] = None if a[1] == "nenhum" else a[1]
+            save(d)
+    elif a[:1] == ["excluir"] and len(a) == 2:
+        if a[1] not in ids:
+            d["error"] = "perfil não existe"
+        elif a[1] == d.get("atual"):
+            d["error"] = "troque de usuário antes de excluir este"
+        elif os.path.exists(os.path.join(RUN, "game.pid")):
+            d["error"] = "feche o jogo antes de excluir um usuário"
+        else:
+            # não apaga de verdade: guarda os saves numa pasta escondida (dá para recuperar pelo terminal)
+            lixo = os.path.join(PERF, ".excluidos")
+            os.makedirs(lixo, exist_ok=True)
+            pasta = os.path.join(PERF, a[1])
+            if os.path.isdir(pasta):
+                import time
+                shutil.move(pasta, os.path.join(lixo, "%s-%d" % (a[1], int(time.time()))))
+            d["perfis"] = [p for p in d["perfis"] if p["id"] != a[1]]
+            d["excluidos"] = sorted(set(d.get("excluidos", [])) | {a[1]})
+            if d.get("jogador2") == a[1]:
+                d["jogador2"] = None
+            if d.get("auto") == a[1]:
+                d["auto"] = None
             save(d)
     elif a[:1] == ["renomear"] and len(a) >= 3:
         nome = " ".join(a[2:]).strip()[:20]
@@ -138,6 +180,7 @@ def main():
         return 2
     d["ok"] = "error" not in d
     d.setdefault("jogador2", None)
+    d.setdefault("auto", None)
     d["convidado"] = {"id": CONVIDADO, "nome": "Convidado", "cor": "#8a93a6"}
     print(json.dumps(d, ensure_ascii=False))
     return 0

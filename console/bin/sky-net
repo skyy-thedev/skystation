@@ -150,6 +150,10 @@ class Rede:
             return False, r
         self.falhas = 0
         self.desde = r.get("agora")
+        eu = r.get("eu") or {}
+        if eu.get("usuario"):              # 13.24: tela de usuários mostra o ID e o ícone da conta
+            skynet.guardar_usuario(perfil, eu["usuario"])
+        skynet.guardar_avatar(perfil, eu.get("avatar"))
         self.avisar(r)
         self.gravar({"online": True, "eu": r.get("eu", {}), "amigos": r.get("amigos", []),
                      "pedidosRecebidos": r.get("pedidosRecebidos", []),

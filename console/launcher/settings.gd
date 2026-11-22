@@ -15,9 +15,12 @@ const MUTED := Color("94a3c8")
 const DIM := Color("5a6891")
 const PANEL := Color("121a3a")
 const INK := Color("06091a")
-const SECTIONS := ["Wi-Fi", "Bluetooth", "Som", "Sistema", "SkyNetwork"]
+const SECTIONS := ["Wi-Fi", "Bluetooth", "Som", "Sistema", "SkyNetwork", "Usuários"]
 const SECTION_DESC := ["Redes sem fio e conexão com a internet", "Parear controles, fones e outros aparelhos",
-	"Volume do sistema", "Hardware, versão e armazenamento", "Conta, amigos, mensagens, saves na nuvem e online"]
+	"Volume do sistema", "Hardware, versão e armazenamento", "Conta, amigos, mensagens, saves na nuvem e online",
+	"Criar, trocar, renomear e excluir usuários; entrar automaticamente; ID SkyNetwork de cada um"]
+const SECAO_USUARIOS := 5
+const SKY_PERFIS := "/opt/skystation/bin/sky-perfis"
 const SKY_CLOUD := "/opt/skystation/bin/sky-cloud"
 const SKY_PS3 := "/opt/skystation/bin/sky-ps3"
 const NET_RAPIDAS := ["Bora jogar?", "Entra aí!", "GG!", "Já volto", "Agora não dá"]
@@ -60,6 +63,10 @@ var grade_tex: Dictionary = {}
 var grade_atual: String = ""
 var acao_pendente: String = ""  # o launcher pediu para abrir direto numa ação (ex.: adicionar amigo)
 var net_perfil_alvo: String = ""  # 13.21: login do Jogador 2 (o perfil dele, não o perfil em uso)
+var net_alvo_dupla: bool = true    # 13.24: false = só ligar a conta ao usuário (tela Usuários)
+var usr_sel: String = ""           # 13.24: usuário aberto na tela Usuários ("" = a lista)
+var grade_usr: String = ""         # 13.24: a grade de ícones está escolhendo o ícone deste usuário
+var usr_sel_nome: String = ""
 
 var cmd_queue: Array = []
 var joy_prev: Dictionary = {}
@@ -87,6 +94,9 @@ func open(start_section: int = -1) -> void:
 	net_amigo = ""
 	net_msg = ""
 	net_perfil_alvo = ""
+	net_alvo_dupla = true
+	usr_sel = ""
+	grade_usr = ""
 	cmd_queue.clear()
 	joy_prev = _joy_buttons()  # o "A" que abriu esta tela não pode valer aqui
 	_load_section()
@@ -97,8 +107,17 @@ func abrir_acao(acao: String) -> void:
 	# categoria SkyNetwork do menu (adicionar amigo, criar/entrar na conta, trocar o ícone…)
 	column = 1
 	acao_pendente = ""
+	if acao.begins_with("usr_abrir:"):   # 13.24: o launcher abre direto num usuário (ex.: recém-criado)
+		usr_sel = acao.substr(10)
+		_load_section()
+		column = 1
+		if acao_pendente == "" and usr_sel != "":
+			_kb_start("Nome do usuário", "")
+			kb_mode = "usr_nome"
+		return
 	if acao.begins_with("net_conta_entrar_j2:"):   # 13.21: "Quem vai jogar?" → Jogador 2 entra com o ID dele
 		net_perfil_alvo = acao.substr(20)
+		net_alvo_dupla = true
 		_kb_start("Jogador 2: o seu ID SkyNetwork", "")
 		kb_mode = "net_conta_id_entrar"
 		return
@@ -236,7 +255,10 @@ func _command(c: String) -> void:
 		items[item] = opts
 		_activate()
 	elif c == "b":
-		if column == 1 and net_amigo != "":
+		if column == 1 and section == SECAO_USUARIOS and usr_sel != "":
+			usr_sel = ""
+			_load_section()
+		elif column == 1 and net_amigo != "":
 			_activate_acao({"action": "net_voltar"})
 		elif column == 1 and not items.is_empty() and items[0]["action"] == "bt_back":
 			_load_section()   # sub-tela (opções do aparelho, online do PS3): volta à lista da seção
@@ -269,6 +291,8 @@ func _load_section() -> void:
 		4:
 			status = "Consultando a SkyNetwork…"
 			_async_net(["estado"], _on_net.bind(4))
+		SECAO_USUARIOS:
+			_usr_itens()
 
 
 func _activate() -> void:
@@ -278,6 +302,8 @@ func _activate() -> void:
 
 
 func _activate_acao(it: Dictionary) -> void:
+	if str(it["action"]).begins_with("usr_") and _usr_acao(it):
+		return
 	match it["action"]:
 		"wifi_scan":
 			status = "Procurando redes…"
@@ -735,12 +761,22 @@ func _grade_command(c: String) -> void:
 		"a", "start":
 			var id := str(grade_lista[grade_sel].get("id", ""))
 			grade_open = false
+			if grade_usr != "":   # 13.24: ícone de um usuário (e da conta SkyNetwork dele, se tiver)
+				var alvo := grade_usr
+				grade_usr = ""
+				if id != "":
+					var d := _usr_cmd(["icone", alvo, id], "Ícone trocado")
+					for p in d.get("perfis", []):
+						if str(p.get("id", "")) == alvo and _nulo(p.get("usuario")) != "":
+							_async_net(["icone", id], _on_usr_result.bind(section), "", SKY_CLOUD, ["SKY_PERFIL=" + alvo])
+				return
 			if id != "" and id != grade_atual:
 				grade_atual = id
 				status = "Trocando o ícone…"
 				_async_net(["icone", id], _on_net_result.bind(section))
 		"b", "y":
 			grade_open = false
+			grade_usr = ""
 
 
 func _draw_grade() -> void:
@@ -880,7 +916,9 @@ func _kb_ok() -> void:
 			status = "Criando a conta…" if modo == "net_conta_criar" else "Entrando na conta…"
 			var extra: Array = []
 			if net_perfil_alvo != "" and modo == "net_conta_entrar":
-				extra = ["SKY_PERFIL=" + net_perfil_alvo, "SKY_DUPLA=1"]
+				extra = ["SKY_PERFIL=" + net_perfil_alvo]
+				if net_alvo_dupla:
+					extra.append("SKY_DUPLA=1")
 			_async_net(["conta-criar" if modo == "net_conta_criar" else "conta-entrar", net_conta_id],
 				_on_net_result.bind(section), kb_text, SKY_CLOUD, extra)
 		"rpcn_id":
@@ -904,6 +942,15 @@ func _kb_ok() -> void:
 		"net_conta_senha":
 			status = "Trocando a senha…"
 			_async_net(["conta-senha"], _on_net_result.bind(section), kb_text)
+		"usr_nome":
+			if texto != "" and usr_sel != "":
+				_usr_cmd(["renomear", usr_sel, texto.substr(0, 20)], "Nome trocado")
+		"usr_criar":
+			var d := _usr_cmd(["criar", texto.substr(0, 20)], "Usuário criado")
+			var lst: Array = d.get("perfis", [])
+			if d.get("ok", false) and not lst.is_empty():
+				usr_sel = str(lst[lst.size() - 1].get("id", ""))
+				_usr_itens()
 		_:
 			_wifi_connect(kb_ssid, kb_text)
 
@@ -926,6 +973,8 @@ func _draw() -> void:
 		titulo = SECTIONS[section]
 		if section == 4 and net_amigo != "" and not items.is_empty():
 			titulo = "SkyNetwork  ›  " + str(items[0].get("titulo", "Amigo"))
+		if section == SECAO_USUARIOS and usr_sel != "":
+			titulo = "Usuários  ›  " + usr_sel_nome
 	var dicas := [["cruz", "Confirmar"], ["bola", "Voltar"]]
 	if column == 1 and not items.is_empty() and items[item]["action"] == "bt_dev":
 		dicas = [["cruz", "Conectar / desconectar"], ["triangulo", "Opções"], ["bola", "Voltar"]]
@@ -1113,3 +1162,129 @@ func _tecla(r: Rect2, on: bool) -> void:
 	else:
 		draw_rect(r, Color(WHITE, 0.08))
 		draw_rect(r, Color(WHITE, 0.28), false, 1.0)
+
+
+# ---------------------------------------------------------------- 13.24: Usuários (como no PS4)
+
+func _usr_cmd(args: Array, ok_msg: String = "") -> Dictionary:
+	var out := []
+	OS.execute(SKY_PERFIS, PackedStringArray(args), out)
+	var d = JSON.parse_string(str(out[0]).strip_edges()) if not out.is_empty() and str(out[0]).begins_with("{") else null
+	if typeof(d) != TYPE_DICTIONARY:
+		status = "Não consegui ler os usuários"
+		return {}
+	if d.has("error"):
+		status = str(d["error"])
+	elif ok_msg != "":
+		status = ok_msg
+	if section == SECAO_USUARIOS and column == 1:
+		var onde := item
+		_usr_itens(d)
+		item = clampi(onde, 0, maxi(0, items.size() - 1))
+	return d
+
+
+func _on_usr_result(data: Dictionary, sec: int) -> void:
+	status = str(data.get("message", "Pronto")) if data.get("ok", false) else str(data.get("error", "Falhou"))
+	if sec == SECAO_USUARIOS and section == SECAO_USUARIOS:
+		var onde := item
+		_usr_itens()
+		item = clampi(onde, 0, maxi(0, items.size() - 1))
+
+
+func _usr_itens(d: Dictionary = {}) -> void:
+	if d.is_empty() or not d.has("perfis"):
+		var out := []
+		OS.execute(SKY_PERFIS, PackedStringArray(["listar"]), out)
+		var lido = JSON.parse_string(str(out[0]).strip_edges()) if not out.is_empty() and str(out[0]).begins_with("{") else null
+		d = lido if typeof(lido) == TYPE_DICTIONARY else {}
+	items = []
+	var atual := _nulo(d.get("atual"))
+	var auto := _nulo(d.get("auto"))
+	var lst: Array = d.get("perfis", [])
+	var p: Dictionary = {}
+	for x in lst:
+		if str(x.get("id", "")) == usr_sel:
+			p = x
+	if usr_sel == "" or p.is_empty():
+		usr_sel = ""
+		for x in lst:
+			var u := _nulo(x.get("usuario"))
+			var desc := "jogando agora" if str(x["id"]) == atual else ("@" + u if u != "" else "usuário deste console")
+			if u != "" and str(x["id"]) == atual:
+				desc = "@" + u + "  ·  jogando agora"
+			items.append({"text": "%s: %s" % [str(x.get("nome", "")), desc], "action": "usr_abrir", "arg": str(x["id"])})
+		if lst.size() < 4:
+			items.append({"text": "Criar usuário", "action": "usr_criar"})
+		items.append({"text": "Entrar automaticamente ao ligar: " + _usr_nome(lst, auto, "Não (perguntar quem vai jogar)"),
+			"action": "info"})
+		if atual == "convidado":
+			items.append({"text": "Jogando como convidado agora", "action": "info"})
+		status = "Escolha um usuário para ver as opções. Até 4 usuários, cada um com saves e troféus próprios."
+		return
+	var u := _nulo(p.get("usuario"))
+	var eu := str(p["id"]) == atual
+	usr_sel_nome = str(p.get("nome", ""))
+	if not eu:
+		items.append({"text": "Usar como Jogador 1", "action": "usr_usar", "arg": usr_sel})
+	items.append({"text": "Nome: " + str(p.get("nome", "")), "action": "usr_renomear"})
+	items.append({"text": "Ícone: " + (_nome_avatar(_nulo(p.get("avatar"))) if _nulo(p.get("avatar")) != "" else "inicial do nome"),
+		"action": "usr_icone"})
+	if u == "":
+		items.append({"text": "ID SkyNetwork: entrar com ID e senha", "action": "usr_conta"})
+	else:
+		items.append({"text": "ID SkyNetwork: @" + u, "action": "info"})
+	items.append({"text": "Entrar automaticamente ao ligar: " + ("Sim" if auto == usr_sel else "Não"), "action": "usr_auto"})
+	if not eu:
+		items.append({"text": "Excluir usuário", "action": "usr_excluir"})
+	status = ("Em uso agora como Jogador 1" if eu else "Usuário deste console") + \
+		("  ·  conta @" + u if u != "" else "")
+
+
+func _usr_nome(lst: Array, id: String, padrao: String) -> String:
+	for x in lst:
+		if str(x.get("id", "")) == id:
+			return str(x.get("nome", id))
+	return padrao
+
+
+func _usr_acao(it: Dictionary) -> bool:
+	match str(it["action"]):
+		"usr_abrir":
+			usr_sel = str(it["arg"])
+			item = 0
+			_usr_itens()
+		"usr_criar":
+			_kb_start("Nome do novo usuário", "")
+			kb_mode = "usr_criar"
+			kb_shift = true
+		"usr_usar":
+			_usr_cmd(["usar", str(it["arg"])], "Agora o Jogador 1 é este usuário")
+		"usr_renomear":
+			_kb_start("Nome do usuário", "")
+			kb_mode = "usr_nome"
+			kb_shift = true
+		"usr_icone":
+			grade_usr = usr_sel
+			_grade_abrir()
+		"usr_conta":
+			net_perfil_alvo = usr_sel
+			net_alvo_dupla = false
+			_kb_start("ID SkyNetwork deste usuário", "")
+			kb_mode = "net_conta_id_entrar"
+		"usr_auto":
+			var d := _usr_cmd(["listar"])
+			var ligar: bool = _nulo(d.get("auto")) != usr_sel
+			_usr_cmd(["auto", usr_sel if ligar else "nenhum"],
+				"Ao ligar, entra direto com este usuário" if ligar else "Ao ligar, o console pergunta quem vai jogar")
+		"usr_excluir":
+			if it.get("confirm", false):
+				var alvo := usr_sel
+				usr_sel = ""
+				_usr_cmd(["excluir", alvo], "Usuário excluído (os saves ficaram guardados em perfis/.excluidos)")
+			else:
+				it["confirm"] = true
+				it["text"] = "Confirmar: excluir este usuário?  (confirme de novo)"
+		_:
+			return false
+	return true

@@ -162,6 +162,21 @@ def nome_perfil(perfil):
     return next((str(p.get("nome") or perfil) for p in lst if str(p.get("id")) == perfil), perfil)
 
 
+def guardar_avatar(perfil, avatar):
+    """13.24: o ícone escolhido no site ou em outro console aparece também na tela de usuários."""
+    if not avatar:
+        return
+    caminho = os.path.join(SKY, "perfis/perfis.json")
+    d = ler_json(caminho, {})
+    if not isinstance(d, dict):
+        return
+    for p in d.get("perfis") or []:
+        if str(p.get("id")) == perfil and p.get("avatar") != avatar:
+            p["avatar"] = avatar
+            gravar_json(caminho, d)
+            return
+
+
 def guardar_usuario(perfil, usuario):
     """13.21: anota no perfis.json qual ID SkyNetwork está ligado ao perfil (a tela "Quem vai jogar?" mostra).
     Um perfil ainda com o nome padrão ("Jogador 2") passa a se chamar como a conta."""
