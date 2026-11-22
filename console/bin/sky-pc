@@ -213,6 +213,8 @@ def sincronizar():
     epic = est.get("epic", [])
     if heroic_ok and epic:
         ajustar_heroic(epic)
+    if heroic_ok:
+        controle_xinput_todos()
     inst = epic_instalados()
     for jg in epic:
         app = re.sub(r"[^A-Za-z0-9_-]", "", jg.get("appName", ""))
@@ -517,9 +519,7 @@ def jogar_gog(app):
     if not flatpak_tem(HEROIC_ID):
         return falha("Instale o Heroic pela SkyStore (aba Apps).")
     g = next((x for x in biblioteca_heroic("gog") if str(x.get("app_name")) == app), {})
-    if not rodando("wineserver"):
-        for reg in prefixos_epic(app, g.get("title", "")):
-            controle_xinput(reg)
+    controle_xinput_todos()
     os.execvp("flatpak", ["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", HEROIC_ID, "--no-gui",
                           f"heroic://launch?appName={app}&runner=gog&gui=false"])
 
@@ -543,9 +543,7 @@ def jogar_epic(app):
         jg = next((j for j in bibliotecas().get("epic", []) if j.get("appName") == app), None)
         if jg and not importar_epic(app, jg["ponto"]):
             return falha("Não consegui importar o jogo do HD no Heroic. Abra o Heroic (Apps) e confira a conta Epic.")
-    if not rodando("wineserver"):
-        for reg in prefixos_epic(app):
-            controle_xinput(reg)
+    controle_xinput_todos()
     os.execvp("flatpak", ["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", HEROIC_ID, "--no-gui", f"heroic://launch?appName={app}&runner=legendary"])
 
 
@@ -614,6 +612,54 @@ def prefixos_epic(app, titulo=""):
             if os.path.isfile(reg) and reg not in out:
                 out.append(reg)
     return out
+
+
+def prefixos_heroic():
+    """13.33: todos os prefixos do Heroic (Epic e GOG), sem depender do nome do jogo. O Heroic dá à pasta o
+    título da loja dele ("Death Stranding (Boga)", com ou sem a subpasta default/), que não bate com o do
+    legendary. Junta: o winePrefix de cada GamesConfig/*.json, a pasta padrão da config global e
+    ~/Games/Heroic/Prefixes, procurando system.reg (Wine) ou pfx/system.reg (Proton) até 3 níveis abaixo."""
+    bases = {os.path.join(HOME, "Games/Heroic/Prefixes")}
+    diretos = set()
+    try:
+        ds = json.load(open(os.path.join(HEROIC_CFG, "heroic/config.json"))).get("defaultSettings", {})
+        for k in ("defaultWinePrefix", "winePrefix"):
+            if ds.get(k):
+                bases.add(str(ds[k]).replace("~", HOME, 1))
+    except (OSError, ValueError, AttributeError):
+        pass
+    for f in glob.glob(os.path.join(HEROIC_CFG, "heroic/GamesConfig/*.json")):
+        try:
+            for v in json.load(open(f)).values():
+                if isinstance(v, dict) and v.get("winePrefix"):
+                    diretos.add(str(v["winePrefix"]).replace("~", HOME, 1))
+        except (OSError, ValueError, AttributeError):
+            continue
+    regs = set()
+    for d in diretos:
+        for r in (os.path.join(d, "system.reg"), os.path.join(d, "pfx/system.reg")):
+            if os.path.isfile(r):
+                regs.add(r)
+    for b in bases:
+        if not os.path.isdir(b):
+            continue
+        for raiz, pastas, arqs in os.walk(b):
+            nivel = raiz[len(b):].count(os.sep)
+            if "system.reg" in arqs:
+                regs.add(os.path.join(raiz, "system.reg"))
+            if nivel >= 3 or "drive_c" in pastas:
+                pastas[:] = [x for x in pastas if x == "pfx"] if nivel < 3 else []
+    return sorted(regs)
+
+
+def controle_xinput_todos():
+    if rodando("wineserver"):
+        return 0
+    n = 0
+    for reg in prefixos_heroic():
+        controle_xinput(reg)
+        n += 1
+    return n
 
 
 def controle_xinput(reg):
@@ -689,7 +735,8 @@ def diag():
                                 "ls /dev/hidraw* 2>&1 | tr '\\n' ' '"],
                                capture_output=True, text=True, timeout=60)
             for l in (r.stdout + r.stderr).strip().split("\n"):
-                p("   " + l[:200])
+                if not re.search(r"gamemode|D-Bus|dbus|backtrace|^\s*$", l, re.I):
+                    p("   " + l[:200])
         except (OSError, subprocess.SubprocessError) as e:
             p(f"   erro: {e}")
         try:
@@ -699,7 +746,17 @@ def diag():
             pass
     else:
         p("   Heroic não instalado")
-    p("-- jogos da Epic: prefixo do Wine e o ajuste do controle")
+    p("-- prefixos do Heroic e o ajuste do controle (DisableHidraw=1 é o certo)")
+    for reg in prefixos_heroic():
+        try:
+            txt = open(reg, encoding="utf-8", errors="replace").read()
+            i = txt.find("[" + WINEBUS + "]")
+            sec = txt[i:].split("\n\n")[0].split("\n", 1)[-1].replace("\n", " ") if i >= 0 else "SEM a seção winebus"
+        except OSError as e:
+            sec = str(e)
+        p(f"   {reg.replace(HOME, '~')}")
+        p(f"     {sec[:200]}")
+    p("-- jogos da Epic")
     for app, info in epic_instalados().items():
         regs = prefixos_epic(app)
         p(f"   {info.get('title', app)} ({app}): {len(regs)} prefixo(s)")
@@ -719,7 +776,7 @@ def diag():
             p("     (sem configuração própria no Heroic)")
     p("-- último log de jogo do Heroic (linhas sobre controle)")
     logs = sorted(glob.glob(os.path.join(HEROIC_CFG, "heroic/**/*.log"), recursive=True), key=os.path.getmtime)
-    logs = [l for l in logs if "lastPlay" in l or "/games/" in l] or logs
+    logs = [l for l in logs if ("lastPlay" in l or "/logs/" in l) and "Local Storage" not in l]
     if logs:
         p("   " + logs[-1])
         try:
