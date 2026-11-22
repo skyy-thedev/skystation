@@ -27,6 +27,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -197,10 +198,41 @@ def tarefa_sistema(acao, slug):
     return {"ok": False, "error": "Demorou demais. Veja em Configurações → Diagnóstico."}
 
 
+def itens_pc():
+    """13.32: sua biblioteca da Epic, GOG e Steam (aba PC), pelo sky-pc."""
+    try:
+        r = subprocess.run([os.path.join(BIN, "sky-pc"), "loja"], capture_output=True, text=True, timeout=60)
+        d = json.loads(r.stdout or "{}")
+        return d.get("itens", []), d.get("aviso", "")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return [], ""
+
+
+def tarefa_pc(slug):
+    _, loja, app = slug.split("-", 2)
+    proc = subprocess.Popen([os.path.join(BIN, "sky-pc"), "instalar", loja, app], stdout=subprocess.PIPE, text=True)
+    fim = {"ok": False, "error": "O instalador parou sem dizer o motivo."}
+    for linha in proc.stdout:
+        try:
+            d = json.loads(linha)
+        except ValueError:
+            continue
+        if "ok" in d:
+            fim = d
+        else:
+            out(d)
+    proc.wait()
+    _avisar_menu()
+    return fim
+
+
 def listar():
     sistema = itens_sistema()
     r = listar_servidor()
-    r["itens"] = r.get("itens", []) + sistema
+    pc, aviso = itens_pc()
+    r["itens"] = r.get("itens", []) + sistema + pc
+    if aviso:
+        r["aviso_pc"] = aviso
     return r
 
 
@@ -410,6 +442,9 @@ def main():
         r = listar()
         r["itens"] = [i for i in r["itens"] if i.get("atualizar")]
         out(r)
+    elif cmd == "instalar" and len(a) > 1 and re.fullmatch(r"pc-(epic|gog)-[A-Za-z0-9_-]+", a[1]):
+        out(tarefa_pc(a[1]))
+        out({"evento": "fim"})
     elif cmd in ("instalar", "reinstalar", "restaurar", "voltar") and len(a) > 1 and a[1].startswith(SISTEMA) and valido(a[1]):
         out(tarefa_sistema(cmd, a[1]))
         out({"evento": "fim"})

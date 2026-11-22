@@ -222,7 +222,7 @@ var sel_rect: Rect2 = Rect2()   # onde a capa do item selecionado foi desenhada 
 var launch_t: float = 0.0
 var splash_dormindo: bool = false
 # SkyStore em tela cheia (vitrine estilo loja de console)
-const LOJA_ABAS := ["Destaques", "Jogos", "Apps", "Emuladores", "Instalados"]   # 13.18: Emuladores
+const LOJA_ABAS := ["Destaques", "Jogos", "Apps", "Emuladores", "PC", "Instalados"]   # 13.18: Emuladores; 13.32: PC
 const LOJA_CORES := {"app": "2b6cb0", "jogo": "9b2c2c", "tema": "6b46c1", "emulador": "2f855a"}
 const LOJA_TIPOS := {"app": "App", "jogo": "Jogo", "tema": "Tema", "emulador": "Emulador"}
 var store_open: bool = false
@@ -4152,10 +4152,20 @@ func _store_lista(tab: int) -> Array:
 				if tipo != "emulador":
 					continue
 			4:
-				if _nulo(i.get("instalado")) == "":
+				if tipo != "pc":
+					continue
+			5:
+				if _nulo(i.get("instalado")) == "" or tipo == "pc":
 					continue
 		out.append(i)
-	if tab == 4:   # quem tem atualização vem primeiro
+	if tab == 4:   # 13.32: biblioteca de PC: instalados primeiro, depois em ordem alfabética
+		out.sort_custom(func(a, b):
+			var ia := _nulo(a.get("instalado")) != ""
+			var ib := _nulo(b.get("instalado")) != ""
+			if ia != ib:
+				return ia
+			return str(a.get("nome", "")).naturalnocasecmp_to(str(b.get("nome", ""))) < 0)
+	if tab == 5:   # quem tem atualização vem primeiro
 		out.sort_custom(func(a, b): return bool(a.get("atualizar", false)) and not bool(b.get("atualizar", false)))
 	return out
 
@@ -4166,6 +4176,8 @@ func _store_destaques() -> Array:
 	for i in loja.get("itens", []):
 		if bool(i.get("sistema", false)) and _nulo(i.get("instalado")) != "" and not bool(i.get("atualizar", false)):
 			continue   # 13.18: emulador já instalado e em dia não precisa de destaque
+		if str(i.get("tipo", "")) == "pc":
+			continue   # 13.32: a biblioteca de PC tem a aba própria
 		(out if bool(i.get("oficial", false)) else resto).append(i)
 	out.append_array(resto)
 	return out.slice(0, 5)
@@ -4198,6 +4210,8 @@ func _store_selo(i: Dictionary) -> Array:
 	"""[texto, destacado?] da linha de baixo do card, como o preço numa loja."""
 	if not bool(i.get("instalavel", true)):
 		return ["Em breve", false]
+	if str(i.get("tipo", "")) == "pc":   # 13.32: de qual loja é (você já tem o jogo)
+		return [str(i.get("autor", "PC")) + ("  ·  Instalado" if _nulo(i.get("instalado")) != "" else ""), false]
 	if _nulo(i.get("instalado")) == "":
 		return ["Grátis", false]
 	if bool(i.get("atualizar", false)):
@@ -4590,6 +4604,7 @@ func _draw_store_grade(w: float, h: float, a: float, oy: float) -> void:
 	if lista.is_empty():
 		var msg: String = ["", "Nenhum jogo publicado ainda.", "Nenhum app publicado ainda.",
 			"Os emuladores aparecem depois da próxima atualização do SkyStation.",
+			str(loja.get("aviso_pc", "Instale o Heroic (aba Apps) e entre na Epic e na GOG para ver sua biblioteca aqui.")),
 			"Nada da SkyStore instalado ainda. Baixe em Destaques, Jogos ou Apps."][store_tab]
 		_text(msg, Vector2(0, h * 0.48 + oy), 19, Color(MUTED, a), false, w, HORIZONTAL_ALIGNMENT_CENTER)
 		return

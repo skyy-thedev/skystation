@@ -152,6 +152,8 @@ def capa(destino, urls):
     if os.path.exists(destino):
         return
     for u in urls:
+        if not u or not u.startswith("https://"):
+            continue
         try:
             req = urllib.request.Request(u, headers={"User-Agent": "SkyStation/13.27"})
             with urllib.request.urlopen(req, timeout=15) as r:
@@ -235,8 +237,39 @@ def sincronizar():
                            "order": 51, "description": desc})
         capa(os.path.join(pasta, "cover.jpg"), capas_epic(app))
         n += 1
-    # jogo que sumiu do HD (desinstalado no Windows) sai do menu
-    for p in glob.glob(os.path.join(JOGOS, "pc-steam-*")) + glob.glob(os.path.join(JOGOS, "pc-epic-*")):
+    # 13.32: jogos instalados pelo Heroic (pela SkyStore ou pelo próprio Heroic) que não vieram do Windows
+    if heroic_ok:
+        epic_lib = {g.get("app_name"): g for g in biblioteca_heroic("epic")}
+        for app, info in epic_instalados().items():
+            if f"pc-epic-{app}" in vistos or info.get("is_dlc") or not re.fullmatch(r"[A-Za-z0-9_-]+", app):
+                continue
+            pasta = os.path.join(JOGOS, f"pc-epic-{app}")
+            vistos.add(os.path.basename(pasta))
+            grava_jogo(pasta, {"title": info.get("title") or app, "type": "windows",
+                               "exec": f"{SKY_BIN}/sky-pc jogar epic {app}", "cover": "cover.jpg", "color": "#2a2a2a",
+                               "order": 51, "description": "Epic Games · instalado pelo Heroic, roda pelo Wine/Proton."})
+            capa(os.path.join(pasta, "cover.jpg"), capas_epic(app) + [(epic_lib.get(app) or {}).get("art_square", "")])
+            n += 1
+        gog_lib = {str(g.get("app_name")): g for g in biblioteca_heroic("gog")}
+        for info in gog_instalados():
+            app = str(info.get("appName", ""))
+            if info.get("is_dlc") or not app.isdigit():
+                continue
+            g = gog_lib.get(app) or {}
+            pasta = os.path.join(JOGOS, f"pc-gog-{app}")
+            vistos.add(os.path.basename(pasta))
+            grava_jogo(pasta, {"title": g.get("title") or app, "type": "windows",
+                               "exec": f"{SKY_BIN}/sky-pc jogar gog {app}", "cover": "cover.jpg", "color": "#5c2d91",
+                               "order": 52, "description": "GOG · instalado pelo Heroic, roda pelo Wine/Proton."})
+            capa(os.path.join(pasta, "cover.jpg"), [g.get("art_square", ""), g.get("art_cover", "")])
+            if not rodando("wineserver"):
+                for reg in prefixos_epic(app, g.get("title", "")):
+                    controle_xinput(reg)
+            n += 1
+    apps_com_icone(steam_ok, heroic_ok)
+    # jogo que sumiu (desinstalado no Windows ou no Heroic) sai do menu
+    for p in glob.glob(os.path.join(JOGOS, "pc-steam-*")) + glob.glob(os.path.join(JOGOS, "pc-epic-*")) + \
+            glob.glob(os.path.join(JOGOS, "pc-gog-*")):
         if os.path.basename(p) not in vistos:
             shutil.rmtree(p, ignore_errors=True)
     return saida({"ok": True, "jogos": n, "steam": steam_ok, "heroic": heroic_ok,
@@ -244,6 +277,252 @@ def sincronizar():
 
 
 # ---------------------------------------------------------------- jogar
+
+# ---------------------------------------------------------------- 13.32: biblioteca na SkyStore
+
+GOG_INSTALADOS = os.path.join(HEROIC_CFG, "heroic/gog_store/installed.json")
+CACHE_CAPAS = os.path.join(HOME, ".cache/skystation/loja-pc")
+ICONES = "/var/lib/flatpak/exports/share/icons/hicolor"
+
+
+def biblioteca_heroic(loja):
+    """O que o Heroic já baixou da sua conta (store_cache): Epic em legendary_library.json, GOG em gog_library.json."""
+    arq, chave = {"epic": ("legendary_library.json", "library"), "gog": ("gog_library.json", "games")}[loja]
+    try:
+        d = json.load(open(os.path.join(HEROIC_CFG, "heroic/store_cache", arq)))
+        lista = d.get(chave) or []
+        return [g for g in lista if isinstance(g, dict) and g.get("app_name")]
+    except (OSError, ValueError, AttributeError):
+        return []
+
+
+def gog_instalados():
+    try:
+        d = json.load(open(GOG_INSTALADOS)).get("installed") or []
+        return [g for g in d if isinstance(g, dict)]
+    except (OSError, ValueError, AttributeError):
+        return []
+
+
+def pasta_epic_hd():
+    """Onde instalar jogo novo: a pasta Epic Games do HD do Windows (já liberada para executar), se der para gravar."""
+    for j in bibliotecas().get("epic", []):
+        if j.get("mae") and j.get("modo") != "ro" and os.access(j["mae"], os.W_OK):
+            return j["mae"]
+    return ""
+
+
+def _arq_capa(url):
+    import hashlib
+    return os.path.join(CACHE_CAPAS, hashlib.sha1(url.encode()).hexdigest()[:20] + ".jpg")
+
+
+def baixar_capas(urls):
+    """Roda separado (sky-pc capas): baixa as capas que faltam, uma por vez, sem segurar a loja."""
+    os.makedirs(CACHE_CAPAS, exist_ok=True)
+    trava = os.path.join(CACHE_CAPAS, ".baixando")
+    try:
+        if time.time() - os.path.getmtime(trava) < 600:
+            return 0
+    except OSError:
+        pass
+    open(trava, "w").close()
+    try:
+        for u in urls:
+            dest = _arq_capa(u)
+            if os.path.exists(dest):
+                continue
+            # capa pequena (a da Epic aceita ?h=, a da GOG já vem no tamanho de lista)
+            capa(dest, [u + ("&" if "?" in u else "?") + "h=480&resize=1&w=360" if "epicgames" in u else u, u])
+            os.utime(trava)
+    finally:
+        try:
+            os.remove(trava)
+        except OSError:
+            pass
+    return 0
+
+
+def loja():
+    """Itens da SkyStore (aba PC): sua biblioteca da Epic e da GOG (pelo Heroic) e os jogos da Steam no HD."""
+    itens, faltam = [], []
+    heroic_ok, steam_ok = flatpak_tem(HEROIC_ID), flatpak_tem(STEAM_ID)
+    inst_epic = epic_instalados()
+    inst_gog = {str(g.get("appName")) for g in gog_instalados() if not g.get("is_dlc")}
+    no_menu = {os.path.basename(p) for p in glob.glob(os.path.join(JOGOS, "pc-*"))}
+    destino = pasta_epic_hd()
+
+    def item(loja_, app, titulo, url, instalado, acoes, resumo, extra=""):
+        local = _arq_capa(url) if url else ""
+        if url and not os.path.exists(local):
+            faltam.append(url)
+            local = ""
+        return {"slug": f"pc-{loja_}-{app}", "nome": titulo, "tipo": "pc", "loja_pc": loja_, "resumo": resumo,
+                "descricao": resumo + extra, "autor": {"epic": "Epic Games", "gog": "GOG", "steam": "Steam"}[loja_],
+                "oficial": False, "sistema": True, "instalavel": True, "instalado": "sim" if instalado else None,
+                "atualizar": False, "versao": {"versao": "", "tamanho": 0}, "capa_local": local, "acoes": acoes,
+                "pasta_jogo": os.path.join(JOGOS, f"pc-{loja_}-{app}") if f"pc-{loja_}-{app}" in no_menu else ""}
+
+    for g in biblioteca_heroic("epic"):
+        app = str(g["app_name"])
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", app) or (g.get("install") or {}).get("is_dlc"):
+            continue
+        tem = app in inst_epic or f"pc-epic-{app}" in no_menu
+        terceiro = g.get("thirdPartyManagedApp") or ("EA app" if g.get("isEAManaged") else "")
+        if tem:
+            acoes = [["Jogar", "abrir"]]
+        elif terceiro:
+            acoes = [["Instalar pelo Heroic", "baixar"]]
+        else:
+            acoes = [["Instalar no HD", "baixar"]]
+        extra = ""
+        if not tem and not terceiro:
+            extra = ("\n\nVai para " + destino.replace("/mnt/pc/", "a pasta Epic Games do HD (") + ")."
+                     if destino else "\n\nSem pasta da Epic com gravação no HD: vai para a pasta padrão do Heroic.")
+        if terceiro:
+            extra = f"\n\nEste jogo precisa do {terceiro}: o Heroic abre para você confirmar a instalação."
+        itens.append(item("epic", app, g.get("title") or app, g.get("art_square") or g.get("art_cover", ""), tem,
+                          acoes, "Na sua biblioteca da Epic Games.", extra))
+    for g in biblioteca_heroic("gog"):
+        app = str(g["app_name"])
+        if not app.isdigit() or (g.get("install") or {}).get("is_dlc"):
+            continue
+        tem = app in inst_gog
+        acoes = [["Jogar", "abrir"]] if tem else [["Instalar pelo Heroic", "baixar"]]
+        itens.append(item("gog", app, g.get("title") or app, g.get("art_square") or g.get("art_cover", ""), tem, acoes,
+                          "Na sua biblioteca da GOG.",
+                          "" if tem else "\n\nO Heroic abre direto na instalação deste jogo: confirme a pasta lá."))
+    for p in sorted(glob.glob(os.path.join(JOGOS, "pc-steam-*"))):
+        appid = os.path.basename(p)[len("pc-steam-"):]
+        try:
+            titulo = json.load(open(os.path.join(p, "game.json"))).get("title", appid)
+        except (OSError, ValueError):
+            titulo = appid
+        it = item("steam", appid, titulo, "", True, [["Jogar", "abrir"]], "Instalado na sua biblioteca da Steam.")
+        it["capa_local"] = os.path.join(p, "cover.jpg") if os.path.exists(os.path.join(p, "cover.jpg")) else ""
+        itens.append(it)
+    if faltam:
+        subprocess.Popen([os.path.abspath(__file__), "capas"] + faltam[:400], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    aviso = ""
+    if not heroic_ok:
+        aviso = "Instale o Heroic (aba Apps) e entre na Epic e na GOG para ver sua biblioteca aqui."
+    elif not itens:
+        aviso = "Abra o Heroic, entre nas contas Epic e GOG e espere a biblioteca carregar: ela aparece aqui."
+    return {"ok": True, "itens": itens, "aviso": aviso, "steam": steam_ok, "heroic": heroic_ok}
+
+
+def _linha(d):
+    print(json.dumps(d, ensure_ascii=False), flush=True)
+
+
+def instalar_loja(loja_, app):
+    """SkyStore → instala. Epic: o legendary do Heroic baixa direto no HD (com progresso na loja).
+    GOG e Epic de terceiros (EA/Ubisoft): o Heroic abre na tela de instalação do jogo (um clique para confirmar)."""
+    if not flatpak_tem(HEROIC_ID):
+        return {"ok": False, "error": "Instale o Heroic pela SkyStore (aba Apps)."}
+    g = next((x for x in biblioteca_heroic(loja_) if str(x.get("app_name")) == app), None)
+    if g is None:
+        return {"ok": False, "error": "Esse jogo não está na biblioteca que o Heroic baixou. Abra o Heroic e atualize."}
+    terceiro = g.get("thirdPartyManagedApp") or g.get("isEAManaged")
+    if loja_ == "gog" or terceiro:
+        runner = "gog" if loja_ == "gog" else "legendary"
+        subprocess.Popen(["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", HEROIC_ID,
+                          f"heroic://launch?appName={app}&runner={runner}"],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+        return {"ok": True, "message": "O Heroic abriu: confirme a instalação lá. Quando terminar, o jogo aparece em PC."}
+    if not epic_logado():
+        return {"ok": False, "error": "Entre na conta Epic no Heroic (aba Apps) primeiro."}
+    if rodando("legendary"):
+        return {"ok": False, "error": "Já tem um download da Epic em andamento. Espere terminar."}
+    destino = pasta_epic_hd()
+    if not destino:
+        try:
+            destino = json.load(open(os.path.join(HEROIC_CFG, "heroic/config.json")))["defaultSettings"]["defaultInstallPath"]
+        except (OSError, ValueError, KeyError, TypeError):
+            destino = os.path.join(HOME, "Games/Heroic")
+    _linha({"etapa": "Preparando o download"})
+    script = ('export LEGENDARY_CONFIG_PATH="$XDG_CONFIG_HOME/heroic/legendaryConfig/legendary"; '
+              'L="$(find /app -name legendary -type f -perm -u+x 2>/dev/null | head -1)"; '
+              '[ -n "$L" ] || { echo "legendary não encontrado" >&2; exit 9; }; '
+              'exec "$L" -y install "$0" --base-path "$1" --platform Windows --skip-sdl')
+    os.makedirs(os.path.join(HOME, ".local/state/skystation"), exist_ok=True)
+    log = open(os.path.join(HOME, ".local/state/skystation/pc-epic.log"), "a")
+    log.write(f"--- instalar {app} em {destino} {time.ctime()}\n")
+    proc = subprocess.Popen(["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", "--command=sh", HEROIC_ID, "-c", script,
+                             app, destino], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, bufsize=1)
+    pr = re.compile(r"Progress:\s*([\d.]+)%.*?ETA:\s*([\d:]+)")
+    tam = re.compile(r"Download size:\s*([\d.]+ \w+)")
+    ult, total = -1.0, ""
+    for l in proc.stdout:
+        log.write(l)
+        m = tam.search(l)
+        if m:
+            total = m.group(1)
+        m = pr.search(l)
+        if m:
+            p = float(m.group(1))
+            if p - ult >= 0.5:
+                ult = p
+                _linha({"etapa": f"Baixando {total}  ·  falta {m.group(2)}".strip(), "p": round(p / 100, 3)})
+        elif "Verifying" in l or "verif" in l.lower():
+            _linha({"etapa": "Conferindo os arquivos"})
+    rc = proc.wait()
+    log.close()
+    if rc != 0 or app not in epic_instalados():
+        return {"ok": False, "error": "O download parou. Veja se o HD tem espaço e se a internet está ok; dá para "
+                                      "tentar de novo que ele continua de onde parou."}
+    sincronizar_silencioso()
+    return {"ok": True, "message": f"{g.get('title', app)} instalado! Está na categoria PC."}
+
+
+def sincronizar_silencioso():
+    import io
+    import contextlib
+    with contextlib.redirect_stdout(io.StringIO()):
+        sincronizar()
+
+
+def apps_com_icone(steam_ok, heroic_ok):
+    """Steam e Heroic no menu com o ícone oficial de cada app (o que o próprio Flatpak instala), por cima
+    da capa genérica que vem com o sistema. Sem o app instalado, fica a capa genérica."""
+    for ident, pasta_id, ok, cor in ((STEAM_ID, "steam", steam_ok, "0x1b2838"), (HEROIC_ID, "heroic", heroic_ok, "0x1d1d2b")):
+        destino = os.path.join(JOGOS, pasta_id)
+        base = os.path.join("/opt/skystation/games", pasta_id, "game.json")
+        if not ok or not os.path.exists(base) or not shutil.which("ffmpeg"):
+            if not ok and os.path.isdir(destino):
+                shutil.rmtree(destino, ignore_errors=True)
+            continue
+        icone = next((p for t in ("512x512", "256x256", "128x128")
+                      for p in [os.path.join(ICONES, t, "apps", ident + ".png")] if os.path.exists(p)), "")
+        if not icone:
+            continue
+        os.makedirs(destino, exist_ok=True)
+        capa_ = os.path.join(destino, "cover.png")
+        if not os.path.exists(capa_) or os.path.getmtime(capa_) < os.path.getmtime(icone):
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", icone, "-vf",
+                            f"scale=320:320,pad=600:900:(ow-iw)/2:(oh-ih)/2:color={cor}", capa_],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            d = json.load(open(base))
+        except (OSError, ValueError):
+            continue
+        d["cover"] = "cover.png"
+        grava_jogo(destino, d)
+
+
+def jogar_gog(app):
+    if not flatpak_tem(HEROIC_ID):
+        return falha("Instale o Heroic pela SkyStore (aba Apps).")
+    g = next((x for x in biblioteca_heroic("gog") if str(x.get("app_name")) == app), {})
+    if not rodando("wineserver"):
+        for reg in prefixos_epic(app, g.get("title", "")):
+            controle_xinput(reg)
+    os.execvp("flatpak", ["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", HEROIC_ID, "--no-gui",
+                          f"heroic://launch?appName={app}&runner=gog&gui=false"])
+
 
 def jogar_steam(appid):
     if not flatpak_tem(STEAM_ID):
@@ -315,8 +594,8 @@ WINEBUS = "System\\\\CurrentControlSet\\\\Services\\\\winebus"
 WINEBUS_VALORES = {"DisableHidraw": "dword:00000001", "Enable SDL": "dword:00000001"}
 
 
-def prefixos_epic(app):
-    """Os "Windows de mentira" (prefixos do Wine/Proton) que o Heroic usa para o jogo."""
+def prefixos_epic(app, titulo=""):
+    """Os "Windows de mentira" (prefixos do Wine/Proton) que o Heroic usa para o jogo (Epic ou GOG)."""
     cand = []
     try:
         c = json.load(open(os.path.join(HEROIC_CFG, "heroic/GamesConfig", app + ".json")))
@@ -325,7 +604,7 @@ def prefixos_epic(app):
             cand.append(pref.replace("~", HOME, 1))
     except (OSError, ValueError, AttributeError):
         pass
-    titulo = (epic_instalados().get(app) or {}).get("title", "")
+    titulo = titulo or (epic_instalados().get(app) or {}).get("title", "")
     for base in (os.path.join(HOME, "Games/Heroic/Prefixes/default"), os.path.join(HOME, "Games/Heroic/Prefixes")):
         if titulo:
             cand.append(os.path.join(base, titulo))
@@ -488,6 +767,16 @@ def main():
         if not flatpak_tem(HEROIC_ID):
             return falha("Instale o Heroic pela SkyStore (aba Apps).")
         os.execvp("flatpak", ["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", HEROIC_ID])
+    if cmd == "loja":
+        return saida(loja())
+    if cmd == "capas":
+        return baixar_capas(a[1:])
+    if cmd == "instalar" and len(a) == 3 and a[1] in ("epic", "gog") and re.fullmatch(r"[A-Za-z0-9_-]+", a[2]):
+        r = instalar_loja(a[1], a[2])
+        _linha(r)
+        return 0 if r.get("ok") else 1
+    if cmd == "jogar" and len(a) == 3 and a[1] == "gog" and a[2].isdigit():
+        return jogar_gog(a[2])
     if cmd == "diag":
         return diag()
     if cmd == "estado":
