@@ -589,8 +589,11 @@ def preparar(rom=""):
         return out({"ok": False, "error": "Nenhum controle ligado: conecte o controle antes de abrir o jogo de PS3."})
     d = os.path.join(RP, "input_configs/global")
     os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, "SkyStation.yml"), "w") as f:
-        f.write(yml)
+    # 13.19: o mesmo perfil também como "Default": se uma versão do RPCS3 não aceitar --input-config
+    # (aconteceu na atualização de 22/nov: "Unknown options"), o controle continua configurado.
+    for nome in ("SkyStation.yml", "Default.yml"):
+        with open(os.path.join(d, nome), "w") as f:
+            f.write(yml)
     if not fw_ok():
         err = install_fw()
         if err:

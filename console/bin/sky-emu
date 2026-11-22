@@ -335,7 +335,22 @@ ps3)
     ulimit -n 65536 2>/dev/null || ulimit -n "$(ulimit -Hn)" 2>/dev/null   # o RPCS3 reclama com menos de 4096 arquivos abertos
     export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland;xcb}"
     usou rpcs3
-    exec /opt/rpcs3/AppRun --no-gui --fullscreen --input-config SkyStation --user-id "$USR" "$ROM"
+    # 13.19: cada versão do RPCS3 aceita opções diferentes (a de 22/nov recusou --fullscreen e --input-config
+    # com "Unknown options" e não abriu nada). Pergunta ao próprio RPCS3 (--help, guardado por versão) e só
+    # passa o que ele conhece; tela cheia e controle também estão no config.yml / perfil Default (sky-ps3).
+    RPAJUDA="$HOME/.cache/skystation/rpcs3-opcoes.txt"
+    RPVER="$(cat /opt/rpcs3/.skystation-versao /opt/rpcs3/.skystation-url 2>/dev/null | head -1)$(stat -c %Y /opt/rpcs3/AppRun 2>/dev/null)"
+    if [ "$(head -1 "$RPAJUDA" 2>/dev/null)" != "$RPVER" ]; then
+        mkdir -p "${RPAJUDA%/*}"
+        { echo "$RPVER"; QT_QPA_PLATFORM=offscreen timeout 20 /opt/rpcs3/AppRun --help 2>&1; } >"$RPAJUDA" || true
+    fi
+    RPARGS=(--no-gui)
+    grep -q -- '--fullscreen' "$RPAJUDA" && RPARGS+=(--fullscreen)
+    grep -q -- '--input-config' "$RPAJUDA" && RPARGS+=(--input-config SkyStation)
+    grep -q -- '--user-id' "$RPAJUDA" && RPARGS+=(--user-id "$USR")
+    grep -q -- '--no-gui' "$RPAJUDA" || [ "$(wc -l <"$RPAJUDA")" -lt 3 ] || RPARGS=()   # --help falhou: arrisca o padrão
+    [ "$(wc -l <"$RPAJUDA")" -lt 3 ] && RPARGS=(--no-gui --fullscreen --input-config SkyStation --user-id "$USR")
+    exec /opt/rpcs3/AppRun "${RPARGS[@]}" "$ROM"
     ;;
 # ---------------- Fase 13: programas separados (quando não há core do RetroArch) ----------------
 wiiu-solo)
