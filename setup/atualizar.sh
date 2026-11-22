@@ -317,6 +317,20 @@ fi
 
 # Fase 13.2 (sky-security): o SKYROMS não executa nada (noexec). O HD já monta assim pelo
 # skystation-skyroms-hd; aqui a regra do pendrive SKYROMS de quem instalou antes ganha o mesmo.
+# 13.30: Steam Input (Steam em Flatpak) cria um controle de Xbox virtual pelo /dev/uinput e lê os controles
+# pelo hidraw. Sem acesso ao uinput, jogo da Steam não recebe o DualShock (o mesmo que o pacote steam-devices).
+cat >/etc/udev/rules.d/71-skystation-steam-input.rules <<'REGRA'
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"
+KERNEL=="hidraw*", ATTRS{idVendor}=="054c", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", KERNELS=="*054C:*", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="28de", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="045e", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="057e", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="2dc8", MODE="0660", TAG+="uaccess"
+REGRA
+udevadm control --reload 2>/dev/null || true
+udevadm trigger --subsystem-match=misc --subsystem-match=hidraw 2>/dev/null || true
+
 REGRA_ROMS=/etc/udev/rules.d/90-skystation-roms.rules
 if [ -f "$REGRA_ROMS" ] && ! grep -q noexec "$REGRA_ROMS"; then
     sed -i 's/--options=/--options=noexec,nosuid,nodev,/' "$REGRA_ROMS"

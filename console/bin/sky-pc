@@ -226,6 +226,9 @@ def sincronizar():
             desc = "Instale o Heroic pela SkyStore (Apps) e entre na sua conta Epic para jogar. " + desc
         elif not epic_logado():
             desc = "Abra o Heroic (Apps) e entre na sua conta Epic: depois o jogo aparece lá e abre daqui. " + desc
+        if heroic_ok and not rodando("wineserver"):
+            for reg in prefixos_epic(app):
+                controle_xinput(reg)
         titulo = (epic_instalados().get(app) or {}).get("title") or jg.get("titulo") or app
         grava_jogo(pasta, {"title": titulo, "type": "windows",
                            "exec": f"{SKY_BIN}/sky-pc jogar epic {app}", "cover": "cover.jpg", "color": "#2a2a2a",
@@ -261,6 +264,9 @@ def jogar_epic(app):
         jg = next((j for j in bibliotecas().get("epic", []) if j.get("appName") == app), None)
         if jg and not importar_epic(app, jg["ponto"]):
             return falha("Não consegui importar o jogo do HD no Heroic. Abra o Heroic (Apps) e confira a conta Epic.")
+    if not rodando("wineserver"):
+        for reg in prefixos_epic(app):
+            controle_xinput(reg)
     os.execvp("flatpak", ["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", HEROIC_ID, "--no-gui", f"heroic://launch?appName={app}&runner=legendary"])
 
 
@@ -303,6 +309,63 @@ def ajustar_heroic(epic):
         os.replace(cfg + ".tmp", cfg)
     except (OSError, ValueError, AttributeError):
         pass
+
+
+WINEBUS = "System\\\\CurrentControlSet\\\\Services\\\\winebus"
+WINEBUS_VALORES = {"DisableHidraw": "dword:00000001", "Enable SDL": "dword:00000001"}
+
+
+def prefixos_epic(app):
+    """Os "Windows de mentira" (prefixos do Wine/Proton) que o Heroic usa para o jogo."""
+    cand = []
+    try:
+        c = json.load(open(os.path.join(HEROIC_CFG, "heroic/GamesConfig", app + ".json")))
+        pref = (c.get(app) or {}).get("winePrefix")
+        if pref:
+            cand.append(pref.replace("~", HOME, 1))
+    except (OSError, ValueError, AttributeError):
+        pass
+    titulo = (epic_instalados().get(app) or {}).get("title", "")
+    for base in (os.path.join(HOME, "Games/Heroic/Prefixes/default"), os.path.join(HOME, "Games/Heroic/Prefixes")):
+        if titulo:
+            cand.append(os.path.join(base, titulo))
+    out = []
+    for c in cand:
+        for reg in (os.path.join(c, "system.reg"), os.path.join(c, "pfx/system.reg")):
+            if os.path.isfile(reg) and reg not in out:
+                out.append(reg)
+    return out
+
+
+def controle_xinput(reg):
+    """DualShock/DualSense como controle de Xbox (XInput) para o jogo.
+
+    Por padrão o Wine passa o controle da Sony "cru" (hidraw): só funciona em jogo que fala direto com o
+    DualShock. O resto (ex.: Death Stranding da Epic) não vê botão nenhum, só o touchpad (que vira mouse).
+    Com DisableHidraw o Wine usa o SDL, que traduz qualquer controle para XInput, o que todo jogo de PC entende.
+    Edita o system.reg (texto) com o jogo fechado."""
+    try:
+        txt = open(reg, encoding="utf-8", errors="surrogateescape").read()
+    except OSError:
+        return
+    sec = "[" + WINEBUS + "]"
+    linhas = txt.split("\n")
+    i = next((k for k, l in enumerate(linhas) if l.startswith(sec)), None)
+    if i is None:
+        bloco = [f"{sec} {int(time.time())}"] + [f'"{k}"={v}' for k, v in WINEBUS_VALORES.items()] + [""]
+        linhas = linhas[:-1] + [""] + bloco + linhas[-1:] if linhas and linhas[-1] == "" else linhas + [""] + bloco
+    else:
+        fim = next((k for k in range(i + 1, len(linhas)) if linhas[k].startswith("[")), len(linhas))
+        corpo = [l for l in linhas[i + 1:fim] if not any(l.startswith(f'"{k}"=') for k in WINEBUS_VALORES)]
+        while corpo and corpo[-1] == "":
+            corpo.pop()
+        corpo += [f'"{k}"={v}' for k, v in WINEBUS_VALORES.items()] + [""]
+        linhas = linhas[:i + 1] + corpo + linhas[fim:]
+    novo = "\n".join(linhas)
+    if novo != txt:
+        with open(reg + ".tmp", "w", encoding="utf-8", errors="surrogateescape") as f:
+            f.write(novo)
+        os.replace(reg + ".tmp", reg)
 
 
 def importar_epic(app, pasta):
