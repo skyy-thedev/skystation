@@ -12,7 +12,17 @@ SKY="$HOME/skystation"
 MSG="${SKY_MSG_FILE:-/dev/null}"
 PROFILE="${SKY_PROFILE:-$(/opt/skystation/bin/sky-perfil)}"
 
-fail() { echo "$1" >"$MSG"; echo "sky-emu: $1" >&2; exit "${2:-3}"; }
+fail() { echo "$1" >"$MSG"; echo "sky-emu: $1" >&2; rm -f "$ABRINDO"; exit "${2:-3}"; }
+
+# 13.16: o que está acontecendo enquanto o jogo abre, para a tela de abertura do menu mostrar com barra.
+# abrindo "Texto" [pct 0..1, ou -1 = sem porcentagem] [dica]. O menu ignora se ficar 20 s sem atualizar.
+ABRINDO="${XDG_RUNTIME_DIR:-/tmp}/skystation/abrindo.json"
+abrindo() {
+    mkdir -p "${ABRINDO%/*}" 2>/dev/null
+    printf '{"t": %s, "etapa": "%s", "pct": %s, "dica": "%s"}\n' "$(date +%s)" "$1" "${2:--1}" "${3:-}" \
+        >"$ABRINDO.tmp" 2>/dev/null && mv -f "$ABRINDO.tmp" "$ABRINDO"
+}
+abrindo "Abrindo o emulador"
 
 # Fase 5.8: "disco" = jogo direto do leitor. O 3º argumento é o código do disco (saves separados).
 DISCO=""
@@ -401,10 +411,22 @@ vita-solo)
             rm -rf "$APP"
         fi
         echo "PS Vita: instalando o jogo (só na 1ª vez; pode levar alguns minutos com a tela parada). Não feche." >"$MSG"
+        DICA="Só na primeira vez. Não feche o jogo."
+        TOTAL="$(python3 -c 'import zipfile,sys; print(sum(i.file_size for i in zipfile.ZipFile(sys.argv[1]).infolist()))' "$ROM" 2>/dev/null || echo 0)"
+        abrindo "Instalando o jogo de PS Vita" 0 "$DICA"
         rm -f "$HOME/.cache/Vita3K/vita3k.log"   # o "installed successfully" tem que ser desta vez
         (   antes=-1; parado=0
             while kill -0 $$ 2>/dev/null; do
                 sleep 3
+                VLOG="$HOME/.cache/Vita3K/vita3k.log"
+                if grep -q "\[$TID\] installed successfully" "$VLOG" 2>/dev/null; then
+                    abrindo "Abrindo o jogo" -1
+                elif grep -qi "decrypt" "$VLOG" 2>/dev/null; then
+                    abrindo "Preparando o jogo (descriptografando)" -1 "$DICA"
+                elif [ "${TOTAL:-0}" -gt 0 ]; then
+                    feito="$(du -sb "$APP" 2>/dev/null | cut -f1)"
+                    abrindo "Instalando o jogo de PS Vita" "$(awk -v a="${feito:-0}" -v b="$TOTAL" 'BEGIN{p=a/b; if(p>0.99)p=0.99; printf "%.3f", p}')" "$DICA"
+                fi
                 # 13.10: a licença (.rif) é copiada só no FIM da instalação. Antes bastava o eboot.bin com a
                 # pasta parada 12 s, mas a pasta fica parada ~3 min enquanto o Vita3K descriptografa (21/nov):
                 # a marca saía cedo e quem fechasse ali ficava com o jogo pela metade "instalado".

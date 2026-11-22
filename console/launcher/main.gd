@@ -208,6 +208,8 @@ var bg_quadro: int = 0
 # o jogo abre; ao fechar, a capa volta para o lugar dela e o menu reaparece.
 const TR_ABRIR := 0.55
 const TR_FECHAR := 0.65
+var abrindo: Dictionary = {}       # 13.16: o que o sky-emu diz que está fazendo (abrindo.json)
+var abrindo_at: float = 0.0
 const SPLASH_ANIMADO := 10.0    # segundos de abertura animada antes de o menu "dormir" atrás do jogo
 var tr_kind: String = ""        # "abrir" | "fechar"
 var tr_t: float = 0.0
@@ -444,10 +446,22 @@ func _process(delta: float) -> void:
 			bench_t = 0.0
 			bench_pior = 0.0
 	if running_pid != -1:
+		# 13.16: instalação/preparação na 1ª abertura (Vita etc.): enquanto o sky-emu der notícias, a tela de
+		# abertura fica acordada mostrando a etapa e a barra, para ninguém fechar achando que travou.
+		if t >= abrindo_at:
+			abrindo_at = t + 0.5
+			var txt := _read_text(run_dir + "/abrindo.json", "")
+			var d = JSON.parse_string(txt) if txt.begins_with("{") else null
+			var fresco := typeof(d) == TYPE_DICTIONARY and Time.get_unix_time_from_system() - float(d.get("t", 0)) < 20.0
+			abrindo = d if fresco else {}
+			if fresco and splash_dormindo:
+				splash_dormindo = false
+				OS.low_processor_usage_mode = false
+				Engine.max_fps = 30
 		if not OS.is_process_running(running_pid):
 			_on_game_closed()
 		elif not splash_dormindo:
-			if t - launch_t < SPLASH_ANIMADO:
+			if t - launch_t < SPLASH_ANIMADO or not abrindo.is_empty():
 				queue_redraw()   # abertura animada enquanto o emulador carrega
 			else:
 				splash_dormindo = true
@@ -1785,6 +1799,8 @@ func _launch_now(g: Dictionary) -> void:
 
 func _on_game_closed() -> void:
 	running_pid = -1
+	abrindo = {}
+	DirAccess.remove_absolute(run_dir + "/abrindo.json")
 	busy_msg = ""
 	tr_kind = "fechar"    # a capa volta do centro para o lugar dela
 	tr_t = 0.0
@@ -4595,6 +4611,28 @@ func _draw_splash(w: float, h: float, fundo_a: float, capa_a: float, r: Rect2 = 
 		for i in 12:
 			var ang := t * 5.0 + i * TAU / 12.0
 			draw_circle(c + Vector2(cos(ang), sin(ang)) * 13.0, 2.4, Color(WHITE, na * float(i + 1) / 12.0))
+		if not abrindo.is_empty():
+			_draw_abrindo(w, base_y + 86.0, na)
+
+
+# 13.16: etapa + barra embaixo do nome do jogo (com % quando o sky-emu sabe; senão um brilho que corre).
+func _draw_abrindo(w: float, y: float, a: float) -> void:
+	var etapa := str(abrindo.get("etapa", ""))
+	var pct := float(abrindo.get("pct", -1.0))
+	var dica := str(abrindo.get("dica", ""))
+	_text(etapa + ("  %d%%" % int(pct * 100.0) if pct >= 0.0 else "…"), Vector2(0, y), 18, Color(WHITE, 0.92 * a), false,
+		w, HORIZONTAL_ALIGNMENT_CENTER)
+	var bw := minf(520.0, w * 0.5)
+	var x0 := (w - bw) / 2.0
+	var by := y + 18.0
+	_rrect(Rect2(x0, by, bw, 6), Color(1, 1, 1, 0.16 * a), 3)
+	if pct >= 0.0:
+		_rrect(Rect2(x0, by, maxf(6.0, bw * clampf(pct, 0.0, 1.0)), 6), Color(accent, a), 3)
+	else:
+		var px := x0 + fposmod(t * 0.35, 1.0) * (bw - 90.0)
+		_rrect(Rect2(px, by, 90, 6), Color(accent, 0.9 * a), 3)
+	if dica != "":
+		_text(dica, Vector2(0, by + 36.0), 15, Color(1, 1, 1, 0.6 * a), false, w, HORIZONTAL_ALIGNMENT_CENTER)
 
 
 # ---------------------------------------------------------------- instalar jogos compactados (13.1)
