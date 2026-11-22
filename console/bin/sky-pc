@@ -248,7 +248,7 @@ def jogar_steam(appid):
     ajustar_steam(bibliotecas().get("steam", []))
     # -gamepadui: a interface de TV da Steam (a mesma do Steam Deck). Na 1ª vez ela pede o login
     # (dá para entrar pelo QR code com o app da Steam no celular). Para voltar ao SkyStation: Home → Fechar.
-    os.execvp("flatpak", ["flatpak", "run", STEAM_ID, "-gamepadui", f"steam://rungameid/{appid}"])
+    os.execvp("flatpak", ["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", STEAM_ID, "-gamepadui", f"steam://rungameid/{appid}"])
 
 
 def jogar_epic(app):
@@ -256,12 +256,12 @@ def jogar_epic(app):
         return falha("Instale o Heroic pela SkyStore (aba Apps) e entre na sua conta Epic.")
     if not epic_logado():
         # 1ª vez: abre o Heroic para entrar na conta Epic; o SkyStation importa os jogos do HD quando ele fechar
-        os.execvp("flatpak", ["flatpak", "run", HEROIC_ID])
+        os.execvp("flatpak", ["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", HEROIC_ID])
     if app not in epic_instalados():
         jg = next((j for j in bibliotecas().get("epic", []) if j.get("appName") == app), None)
         if jg and not importar_epic(app, jg["ponto"]):
             return falha("Não consegui importar o jogo do HD no Heroic. Abra o Heroic (Apps) e confira a conta Epic.")
-    os.execvp("flatpak", ["flatpak", "run", HEROIC_ID, "--no-gui", f"heroic://launch?appName={app}&runner=legendary"])
+    os.execvp("flatpak", ["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", HEROIC_ID, "--no-gui", f"heroic://launch?appName={app}&runner=legendary"])
 
 
 def epic_logado():
@@ -312,7 +312,7 @@ def importar_epic(app, pasta):
               'L="$(find /app -name legendary -type f -perm -u+x 2>/dev/null | head -1)"; '
               '[ -n "$L" ] && exec "$L" -y import --with-dlcs "$0" "$1"')
     try:
-        r = subprocess.run(["flatpak", "run", "--command=sh", HEROIC_ID, "-c", script, app, pasta],
+        r = subprocess.run(["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", "--command=sh", HEROIC_ID, "-c", script, app, pasta],
                            capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL)
         os.makedirs(os.path.join(HOME, ".local/state/skystation"), exist_ok=True)
         with open(os.path.join(HOME, ".local/state/skystation/pc-epic.log"), "a") as f:
@@ -323,6 +323,11 @@ def importar_epic(app, pasta):
 
 
 def main():
+    # A sessão do SkyStation define QT_QPA_PLATFORM=xcb (para os emuladores feitos em Qt). Um programa
+    # Windows feito em Qt, rodando pelo Wine/Proton (ex.: o REDlauncher do The Witcher 3), também lê essa
+    # variável, procura um plugin "xcb" que no Windows não existe e fecha com "no Qt platform plugin".
+    for v in ("QT_QPA_PLATFORM", "QT_PLUGIN_PATH", "QT_QPA_PLATFORMTHEME", "QT_STYLE_OVERRIDE"):
+        os.environ.pop(v, None)
     a = sys.argv[1:]
     cmd = a[0] if a else "estado"
     if cmd == "sincronizar":
@@ -335,11 +340,11 @@ def main():
         if not flatpak_tem(STEAM_ID):
             return falha("Instale a Steam pela SkyStore (aba Apps).")
         ajustar_steam(bibliotecas().get("steam", []))
-        os.execvp("flatpak", ["flatpak", "run", STEAM_ID, "-gamepadui"])
+        os.execvp("flatpak", ["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", STEAM_ID, "-gamepadui"])
     if cmd == "heroic":
         if not flatpak_tem(HEROIC_ID):
             return falha("Instale o Heroic pela SkyStore (aba Apps).")
-        os.execvp("flatpak", ["flatpak", "run", HEROIC_ID])
+        os.execvp("flatpak", ["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", HEROIC_ID])
     if cmd == "estado":
         return saida({"ok": True, **bibliotecas(), "steamInstalada": flatpak_tem(STEAM_ID),
                       "heroicInstalado": flatpak_tem(HEROIC_ID), "t": int(time.time())})

@@ -46,7 +46,16 @@ parar() {
     done
     rm -f "$STATUS"
 }
+# 13.28: os jogos de PC (skystation-pcjogos) montam as mesmas partições NTFS. Se elas já estiverem presas
+# em /mnt/pc, este script achava que o disco "já está montado em outro lugar", pulava o HD e só os jogos
+# do pendrive apareciam. Então: solta os jogos de PC primeiro e, no fim, deixa o pcjogos montar de novo.
+PCJ="/usr/local/bin/skystation-pcjogos"; PC_REFAZ=""
+if [ -x "$PCJ" ] && { [ -f /run/skystation/pcjogos.json ] || findmnt -rno TARGET | grep -q '^/mnt/pc/'; }; then
+    "$PCJ" parar >/dev/null 2>&1 || true
+    PC_REFAZ=1
+fi
 if [ "${1:-}" = "parar" ]; then parar; log "desmontado"; exit 0; fi
+trap '[ -n "$PC_REFAZ" ] && "$PCJ" >/dev/null 2>&1' EXIT
 
 parar   # recomeça do zero (ex.: rodado de novo depois de criar a pasta)
 
