@@ -12,6 +12,9 @@ Com um jogo aberto:
   - SEGURAR 1,5 s (com ou sem jogo): menu de energia — Fechar jogo, Modo de espera, Reiniciar,
     Desligar o console (Fase 7.2).
   - CONTINUAR SEGURANDO até 5 s: fecha o jogo direto (saída de emergência, mesmo se o menu falhar).
+  - 13.22: categoria Controles (e "Desligar este controle" em Energia): desliga um controle Bluetooth pelo
+    console (o DualShock/DualSense apaga a luz e desliga). Serve para arrumar a ordem dos jogadores: desligue
+    os dois e ligue de novo, primeiro o do Jogador 1.
 
 Como o menu funciona por baixo:
   1. SIGSTOP no grupo de processos do jogo: ele congela (imagem, som e lógica).
@@ -209,6 +212,45 @@ def status_info():
     return info
 
 
+def controles():
+    """13.22: controles ligados, na ordem em que os emuladores (SDL) contam: Jogador 1, Jogador 2…
+    [{"path", "nome", "mac" (Bluetooth) ou "", "bateria" ou None}]"""
+    lst = []
+    for path in sorted(evdev.list_devices(), key=lambda p: int(re.sub(r"\D", "", p) or 0)):
+        try:
+            dev = evdev.InputDevice(path)
+        except OSError:
+            continue
+        try:
+            caps = dev.capabilities()
+            keys = set(caps.get(E.EV_KEY, []))
+            # o controle de verdade (não o sensor de movimento nem o touchpad do DS4, que são outros devices)
+            if E.BTN_SOUTH not in keys or E.EV_ABS not in caps or "Motion" in dev.name or "Touchpad" in dev.name:
+                continue
+            mac = (dev.uniq or "").strip().lower()
+            mac = mac if re.fullmatch(r"([0-9a-f]{2}:){5}[0-9a-f]{2}", mac) and dev.info.bustype == 0x05 else ""
+            bat = None
+            for d in glob.glob("/sys/class/power_supply/*"):
+                if mac and mac.replace(":", "") in os.path.basename(d).lower().replace(":", "").replace("_", ""):
+                    v = read(os.path.join(d, "capacity"))
+                    bat = int(v) if v.isdigit() else None
+            lst.append({"path": path, "nome": dev.name, "mac": mac, "bateria": bat})
+        finally:
+            dev.close()
+    return lst
+
+
+def desligar_controle(mac):
+    """Desconecta do Bluetooth: o DualShock 4 / DualSense / 8BitDo desligam sozinhos ao perder a conexão."""
+    try:
+        r = subprocess.run(["bluetoothctl", "disconnect", mac], capture_output=True, text=True, timeout=10)
+        ok = r.returncode == 0 and "fail" not in (r.stdout + r.stderr).lower()
+    except (OSError, subprocess.SubprocessError):
+        ok = False
+    log(f"desligar controle {mac}: {'ok' if ok else 'falhou'}")
+    return ok
+
+
 def game_pid():
     try:
         with open(PID_FILE) as f:
@@ -270,6 +312,7 @@ class Home:
         self.amigo = None       # Fase 10: conversa aberta (id do amigo) dentro da categoria Amigos
         self.kb = None          # teclado virtual aberto (skyteclado.Teclado)
         self.fila = queue.Queue()   # resultados das threads de rede, aplicados no laço principal
+        self.origem = None      # 13.22: caminho do controle que abriu o menu ("Desligar este controle")
         marcar_menu(False)      # sobra de uma sessão anterior que caiu com o menu aberto
 
     # ---------------------------------------------------------- dispositivos
@@ -586,8 +629,11 @@ class Home:
             {"id": "ajustes", "title": "Ajustes", "icon": "gear",
              "items": [("volume", {"t": "Volume", "kind": "slider", "id": "volume"}),
                        ("brilho", {"t": "Brilho", "kind": "slider", "id": "brilho"})]},
+            {"id": "controles", "title": "Controles", "icon": "pad", "items": self.controles_items()},
             {"id": "energia", "title": "Energia", "icon": "power",
              "items": ([("close", {"t": "Fechar jogo"})] if pid and power else []) +
+                      ([("pad_off", {"t": "Desligar este controle", "sub": "Os outros continuam ligados",
+                                     "mac": self.mac_origem()})] if self.mac_origem() else []) +
                       [("suspend", {"t": "Modo de espera"}), ("reboot", {"t": "Reiniciar o console"}),
                        ("poweroff", {"t": "Desligar o console"})]},
         ]
@@ -612,6 +658,54 @@ class Home:
 
     def menu_open(self):
         return self.menu
+
+    # ---------------------------------------------------------- 13.22: controles
+    def mac_origem(self):
+        return next((c["mac"] for c in controles() if c["path"] == self.origem and c["mac"]), "")
+
+    def controles_items(self):
+        lst = controles()
+        if not lst:
+            return [("nada", {"t": "Nenhum controle ligado", "kind": "info"})]
+        items = [("nada", {"t": "A ordem dos controles é a dos jogadores", "kind": "info",
+                           "sub": "Para trocar: desligue os dois e ligue primeiro o do Jogador 1"})]
+        for k, c in enumerate(lst):
+            este = "  (este)" if c["path"] == self.origem else ""
+            bat = f"  ·  bateria {c['bateria']}%" if c["bateria"] is not None else ""
+            if c["mac"]:
+                items.append(("pad_off", {"t": f"Desligar o controle {k + 1}{este}", "mac": c["mac"],
+                                          "sub": f"Jogador {k + 1}: {c['nome']}{bat}"}))
+            else:
+                items.append(("nada", {"t": f"Controle {k + 1}{este}: {c['nome']}", "kind": "info",
+                                       "sub": f"Jogador {k + 1}  ·  ligado por cabo: para desligar, tire o cabo"}))
+        return items
+
+    def desligar(self, mac):
+        if not mac:
+            return
+        if mac == self.mac_origem():
+            # o controle que está mexendo no menu vai sumir: fecha o menu antes (o jogo continua)
+            self.choose("resume")
+            threading.Thread(target=desligar_controle, args=(mac,), daemon=True).start()
+            return
+        self.send("msg Desligando o controle…")
+
+        def run():
+            ok = desligar_controle(mac)
+            time.sleep(0.8)                  # o controle some da lista um instante depois
+
+            def depois():
+                if not self.menu_open():
+                    return
+                k = self.cat_index("controles")
+                self.cats[k]["items"] = self.controles_items()
+                if self.cat == k:
+                    self.items = self.cats[k]["items"]
+                    self.sel = min(self.sel, len(self.items) - 1)
+                self.send_cats()
+                self.send("msg " + ("Controle desligado" if ok else "Não consegui desligar esse controle"))
+            self.fila.put(depois)
+        threading.Thread(target=run, daemon=True).start()
 
     def energia(self, action, pid):
         """Modo de espera / reiniciar / desligar. Com jogo aberto, fecha o jogo do jeito certo antes."""
@@ -692,6 +786,8 @@ class Home:
             if self.retroarch("LOAD_STATE"):
                 play("carregado")
             self.choose("resume")
+        elif action == "pad_off":
+            self.desligar(self.items[self.sel][1].get("mac", ""))
         elif action == "notif":
             try:
                 import skyhist
@@ -913,6 +1009,8 @@ class Home:
 
             # toque curto -> menu do jogo | segurar 1,5 s -> menu de energia
             if active:
+                if self.since is None:
+                    self.origem = next((p for p, s in self.pressed.items() if combo(s)), None)
                 self.since = self.since or time.monotonic()
                 if not self.fired and time.monotonic() - self.since >= HOLD:
                     self.fired = True
