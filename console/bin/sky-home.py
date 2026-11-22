@@ -15,6 +15,11 @@ Com um jogo aberto:
   - 13.22: categoria Controles (e "Desligar este controle" em Energia): desliga um controle Bluetooth pelo
     console (o DualShock/DualSense apaga a luz e desliga). Serve para arrumar a ordem dos jogadores: desligue
     os dois e ligue de novo, primeiro o do Jogador 1.
+  - 13.23: o console lembra a ordem dos controles (~/.config/skystation/controles-ordem.json, pelo endereço
+    Bluetooth). Os emuladores numeram os jogadores na ordem em que os controles conectaram; se um controle
+    lembrado como Jogador 2 conectar antes do Jogador 1 (fora de jogo), o console desliga o Jogador 2 e avisa
+    para ligá-lo de novo, e a ordem volta a ser a lembrada. "Tornar este controle o Jogador 1"
+    (Home → Controles) muda a memória.
 
 Como o menu funciona por baixo:
   1. SIGSTOP no grupo de processos do jogo: ele congela (imagem, som e lógica).
@@ -240,6 +245,37 @@ def controles():
     return lst
 
 
+ORDEM = os.path.expanduser("~/.config/skystation/controles-ordem.json")
+
+
+def ordem_ler():
+    try:
+        with open(ORDEM) as f:
+            d = json.load(f)
+        return [str(m) for m in d.get("ordem", [])] if isinstance(d, dict) else []
+    except (OSError, ValueError):
+        return []
+
+
+def ordem_gravar(lst):
+    try:
+        os.makedirs(os.path.dirname(ORDEM), exist_ok=True)
+        with open(ORDEM + ".tmp", "w") as f:
+            json.dump({"ordem": lst[:8]}, f)
+        os.replace(ORDEM + ".tmp", ORDEM)
+    except OSError:
+        pass
+
+
+def aviso(texto):
+    """Mesmo caminho dos avisos do console: o menu mostra (e o sky-toast, por cima de um jogo)."""
+    try:
+        with open(os.path.join(RUN, "events.jsonl"), "a") as f:
+            f.write(json.dumps({"t": time.time(), "kind": "controle", "text": texto}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
 def desligar_controle(mac):
     """Desconecta do Bluetooth: o DualShock 4 / DualSense / 8BitDo desligam sozinhos ao perder a conexão."""
     try:
@@ -313,6 +349,8 @@ class Home:
         self.kb = None          # teclado virtual aberto (skyteclado.Teclado)
         self.fila = queue.Queue()   # resultados das threads de rede, aplicados no laço principal
         self.origem = None      # 13.22: caminho do controle que abriu o menu ("Desligar este controle")
+        self.ordem_at = 0.0     # 13.23: última conferência da ordem dos controles
+        self.reconectar = {}    # mac -> quando foi desligado para voltar na ordem (não repete em seguida)
         marcar_menu(False)      # sobra de uma sessão anterior que caiu com o menu aberto
 
     # ---------------------------------------------------------- dispositivos
@@ -660,6 +698,31 @@ class Home:
         return self.menu
 
     # ---------------------------------------------------------- 13.22: controles
+    def conferir_ordem(self):
+        bt = [c["mac"] for c in controles() if c["mac"]]
+        if not bt:
+            return
+        memoria = ordem_ler()
+        novos = [m for m in bt if m not in memoria]
+        if novos:                           # controle novo: entra no fim da fila, na ordem em que conectou
+            memoria += novos
+            ordem_gravar(memoria)
+        if len(bt) < 2 or game_pid():       # no meio de um jogo não desliga ninguém
+            return
+        # o mais prioritário dos ligados tem de ser o primeiro; quem vier antes dele desliga e volta depois
+        alvo = min(bt, key=memoria.index)
+        if bt[0] == alvo:
+            return
+        antes = bt[:bt.index(alvo)]
+        if any(time.monotonic() - self.reconectar.get(m, -999.0) < 60 for m in antes):
+            return                          # já foi desligado há pouco: não insiste
+        for m in antes:
+            self.reconectar[m] = time.monotonic()
+            log(f"ordem: {m} conectou antes do Jogador 1 ({alvo}); desligando para voltar depois")
+            threading.Thread(target=desligar_controle, args=(m,), daemon=True).start()
+        aviso("Controle do Jogador 2 desligado para manter o Jogador 1: ligue ele de novo")
+        play("controle-off")
+
     def mac_origem(self):
         return next((c["mac"] for c in controles() if c["path"] == self.origem and c["mac"]), "")
 
@@ -668,7 +731,16 @@ class Home:
         if not lst:
             return [("nada", {"t": "Nenhum controle ligado", "kind": "info"})]
         items = [("nada", {"t": "A ordem dos controles é a dos jogadores", "kind": "info",
-                           "sub": "Para trocar: desligue os dois e ligue primeiro o do Jogador 1"})]
+                           "sub": "O console lembra quem é o Jogador 1 e mantém essa ordem"})]
+        mac = self.mac_origem()
+        if mac and len(lst) > 1:
+            if ordem_ler()[:1] == [mac]:
+                items.append(("nada", {"t": "Este controle é o Jogador 1", "kind": "info",
+                                       "sub": "Lembrado pelo console"}))
+            else:
+                items.append(("pad_p1", {"t": "Tornar este controle o Jogador 1",
+                                         "sub": "O outro desliga: ligue ele de novo para ser o Jogador 2",
+                                         "mac": mac}))
         for k, c in enumerate(lst):
             este = "  (este)" if c["path"] == self.origem else ""
             bat = f"  ·  bateria {c['bateria']}%" if c["bateria"] is not None else ""
@@ -788,6 +860,24 @@ class Home:
             self.choose("resume")
         elif action == "pad_off":
             self.desligar(self.items[self.sel][1].get("mac", ""))
+        elif action == "pad_p1":
+            mac = self.items[self.sel][1].get("mac", "")
+            if mac:
+                ordem_gravar([mac] + [m for m in ordem_ler() if m != mac])
+                # quem estiver conectado antes dele desliga e volta depois (a ordem dos emuladores é a de conexão)
+                antes = []
+                for c in controles():
+                    if c["mac"] == mac:
+                        break
+                    if c["mac"]:
+                        antes.append(c["mac"])
+                for m in antes:
+                    self.reconectar[m] = time.monotonic()
+                    threading.Thread(target=desligar_controle, args=(m,), daemon=True).start()
+                play("salvo")
+                self.choose("resume")
+                aviso("Este controle agora é o Jogador 1" +
+                      (": ligue o outro de novo para ser o Jogador 2" if antes else ""))
         elif action == "notif":
             try:
                 import skyhist
@@ -989,6 +1079,14 @@ class Home:
             if self.menu_open() and time.monotonic() - self.info_at > 2.0:
                 self.info_at = time.monotonic()
                 self.send("info " + json.dumps(status_info(), ensure_ascii=False))
+
+            # 13.23: mantém a ordem lembrada dos controles (fora de jogo e de menu, a cada 3 s)
+            if not self.menu_open() and time.monotonic() - self.ordem_at > 3.0:
+                self.ordem_at = time.monotonic()
+                try:
+                    self.conferir_ordem()
+                except Exception as e:      # nunca derruba o botão Home
+                    log(f"ordem dos controles: {e!r}")
 
             # soltar os controles depois de fechar o menu
             if self.grabbed and not self.menu_open() and self.ungrab_at is not None:
