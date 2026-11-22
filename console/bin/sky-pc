@@ -385,6 +385,86 @@ def importar_epic(app, pasta):
         return False
 
 
+def diag():
+    """Relatório do controle nos jogos de PC: na tela e num arquivo no HD (dá para ler pelo Windows)."""
+    out = []
+    p = out.append
+    p("== SkyStation: diagnóstico do controle nos jogos de PC (" + time.strftime("%d/%m %H:%M") + ")")
+    p("-- controles que o Linux vê")
+    try:
+        blocos = open("/proc/bus/input/devices").read().split("\n\n")
+    except OSError:
+        blocos = []
+    for b in blocos:
+        nome = re.search(r'N: Name="([^"]*)"', b)
+        hand = re.search(r"H: Handlers=(.*)", b)
+        if nome and re.search(r"controller|gamepad|joystick|wireless|xbox|dualsense|dualshock|8bitdo", nome.group(1), re.I):
+            p(f"   {nome.group(1)}  [{hand.group(1).strip() if hand else ''}]")
+    for d in sorted(glob.glob("/dev/hidraw*")) + ["/dev/uinput"]:
+        p(f"   {d}: {'pode ler' if os.access(d, os.R_OK | os.W_OK) else 'SEM ACESSO'}")
+    p("-- dentro do Heroic (Flatpak)")
+    if flatpak_tem(HEROIC_ID):
+        try:
+            r = subprocess.run(["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", "--command=sh", HEROIC_ID, "-c",
+                                "ls /dev/input 2>&1 | tr '\\n' ' '; echo; ls -d /run/udev/data 2>&1; "
+                                "ls /dev/hidraw* 2>&1 | tr '\\n' ' '"],
+                               capture_output=True, text=True, timeout=60)
+            for l in (r.stdout + r.stderr).strip().split("\n"):
+                p("   " + l[:200])
+        except (OSError, subprocess.SubprocessError) as e:
+            p(f"   erro: {e}")
+        try:
+            p("   overrides: " + subprocess.run(["flatpak", "override", "--show", HEROIC_ID], capture_output=True,
+                                                 text=True, timeout=20).stdout.replace("\n", " ")[:300])
+        except (OSError, subprocess.SubprocessError):
+            pass
+    else:
+        p("   Heroic não instalado")
+    p("-- jogos da Epic: prefixo do Wine e o ajuste do controle")
+    for app, info in epic_instalados().items():
+        regs = prefixos_epic(app)
+        p(f"   {info.get('title', app)} ({app}): {len(regs)} prefixo(s)")
+        for reg in regs:
+            try:
+                txt = open(reg, encoding="utf-8", errors="replace").read()
+                i = txt.find("[" + WINEBUS + "]")
+                sec = txt[i:].split("\n\n")[0].replace("\n", " | ") if i >= 0 else "SEM a seção winebus"
+            except OSError as e:
+                sec = str(e)
+            p(f"     {reg}")
+            p(f"       {sec[:300]}")
+        try:
+            c = json.load(open(os.path.join(HEROIC_CFG, "heroic/GamesConfig", app + ".json"))).get(app, {})
+            p(f"     wine: {(c.get('wineVersion') or {}).get('name', '?')}  prefixo: {c.get('winePrefix', '?')}")
+        except (OSError, ValueError, AttributeError):
+            p("     (sem configuração própria no Heroic)")
+    p("-- último log de jogo do Heroic (linhas sobre controle)")
+    logs = sorted(glob.glob(os.path.join(HEROIC_CFG, "heroic/**/*.log"), recursive=True), key=os.path.getmtime)
+    logs = [l for l in logs if "lastPlay" in l or "/games/" in l] or logs
+    if logs:
+        p("   " + logs[-1])
+        try:
+            linhas = open(logs[-1], errors="replace").read().split("\n")
+        except OSError:
+            linhas = []
+        chave = re.compile(r"winebus|hidraw|sdl|xinput|dinput|joystick|controller|gamepad|steam_input|umu|proton|wine version|err:", re.I)
+        sel = [l for l in linhas if chave.search(l)][-25:]
+        for l in sel:
+            p("   " + l.strip()[:200])
+    else:
+        p("   nenhum log de jogo")
+    texto = "\n".join(out) + "\n"
+    print(texto)
+    for destino in ("/mnt/skyroms/skystation-diag-pc.txt", os.path.join(HOME, "skystation/diag-pc.txt")):
+        try:
+            with open(destino, "w") as f:
+                f.write(texto)
+            print("Salvo em " + destino)
+        except OSError:
+            pass
+    return 0
+
+
 def main():
     # A sessão do SkyStation define QT_QPA_PLATFORM=xcb (para os emuladores feitos em Qt). Um programa
     # Windows feito em Qt, rodando pelo Wine/Proton (ex.: o REDlauncher do The Witcher 3), também lê essa
@@ -408,6 +488,8 @@ def main():
         if not flatpak_tem(HEROIC_ID):
             return falha("Instale o Heroic pela SkyStore (aba Apps).")
         os.execvp("flatpak", ["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", HEROIC_ID])
+    if cmd == "diag":
+        return diag()
     if cmd == "estado":
         return saida({"ok": True, **bibliotecas(), "steamInstalada": flatpak_tem(STEAM_ID),
                       "heroicInstalado": flatpak_tem(HEROIC_ID), "t": int(time.time())})

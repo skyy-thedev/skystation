@@ -28,6 +28,18 @@ if [ "${1:-}" = "--qual" ]; then
     exit 0
 fi
 
+# sky-terminal --rodar <comando…>: roda o comando e espera um Enter (ou B/Home) antes de fechar.
+if [ "${1:-}" = "--rodar" ]; then
+    shift
+    set -- sh -c '"$@"; echo; echo "Enter para fechar"; read _' sh "$@"
+    case "$T" in
+        foot) exec foot "$@" ;;
+        alacritty) WINIT_UNIX_BACKEND=x11 exec env -u WAYLAND_DISPLAY alacritty -o 'font.size=14' \
+                       -o 'window.startup_mode="Fullscreen"' -e "$@" ;;
+        xterm) exec xterm -fullscreen -fa Monospace -fs 14 -bg black -fg white -e "$@" ;;
+    esac
+fi
+
 case "$T" in
     foot) exec foot "$@" ;;
     alacritty)

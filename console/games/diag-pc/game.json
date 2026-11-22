@@ -1,0 +1,9 @@
+{
+  "title": "Diagnóstico de jogos de PC",
+  "type": "ferramenta",
+  "exec": "/opt/skystation/bin/sky-terminal --rodar /opt/skystation/bin/sky-pc diag",
+  "cover": "cover.png",
+  "color": "#1b2838",
+  "order": 91,
+  "description": "Mostra como o controle chega na Steam, no Heroic e em cada jogo de PC. Também salva o relatório no HD (SKYROMS/skystation-diag-pc.txt), que dá para abrir pelo Windows."
+}
