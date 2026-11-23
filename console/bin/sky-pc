@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -583,12 +584,49 @@ def antes_do_jogo_heroic():
     controle_xinput_todos()
 
 
+def rodar_heroic_com_xpad(url):
+    """13.35: o jogo do Heroic recebe um controle de Xbox 360 virtual (sky-xpad) no lugar do DualShock,
+    que fica escondido do jogo (SDL_GAMECONTROLLER_IGNORE_DEVICES). O espelho vive enquanto o jogo roda."""
+    xpad = os.path.join(SKY_BIN, "sky-xpad")
+    env_args = []
+    proc_x = None
+    if os.access("/dev/uinput", os.W_OK) and os.path.exists(xpad):
+        ign = subprocess.run([xpad, "ignorar"], capture_output=True, text=True).stdout.strip()
+        os.makedirs(os.path.join(HOME, ".local/state/skystation"), exist_ok=True)
+        log = open(os.path.join(HOME, ".local/state/skystation/sky-xpad.log"), "a")
+        proc_x = subprocess.Popen([xpad], stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True,
+                                  env={**os.environ, "SKY_XPAD_PAI": str(os.getpid())})
+        # "Fechar jogo" no menu Home manda SIGTERM: sai pelo finally e desliga o espelho
+        signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
+        if ign:
+            env_args = [f"--env=SDL_GAMECONTROLLER_IGNORE_DEVICES={ign}", "--env=SDL_JOYSTICK_HIDAPI=0"]
+    # Heroic já aberto não pegaria as variáveis novas: fecha (se não estiver baixando nada)
+    if env_args and rodando("/app/bin/heroic|heroic/heroic ") and not rodando("legendary|gogdl"):
+        subprocess.run(["flatpak", "kill", HEROIC_ID], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(2)
+    inicio = time.time()
+    try:
+        r = subprocess.run(["flatpak", "run", "--unset-env=QT_QPA_PLATFORM"] + env_args + [HEROIC_ID, "--no-gui", url])
+        # o Heroic pode devolver antes do jogo acabar: espera o Wine terminar
+        while time.time() - inicio < 60 or rodando("wineserver"):
+            if time.time() - inicio >= 60 and not rodando("wineserver"):
+                break
+            time.sleep(2)
+        return r.returncode
+    finally:
+        if proc_x:
+            proc_x.terminate()
+            try:
+                proc_x.wait(5)
+            except subprocess.TimeoutExpired:
+                proc_x.kill()
+
+
 def jogar_gog(app):
     if not flatpak_tem(HEROIC_ID):
         return falha("Instale o Heroic pela SkyStore (aba Apps).")
     antes_do_jogo_heroic()
-    os.execvp("flatpak", ["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", HEROIC_ID, "--no-gui",
-                          f"heroic://launch?appName={app}&runner=gog&gui=false"])
+    return rodar_heroic_com_xpad(f"heroic://launch?appName={app}&runner=gog&gui=false")
 
 
 def jogar_steam(appid):
@@ -611,7 +649,7 @@ def jogar_epic(app):
         if jg and not importar_epic(app, jg["ponto"]):
             return falha("Não consegui importar o jogo do HD no Heroic. Abra o Heroic (Apps) e confira a conta Epic.")
     antes_do_jogo_heroic()
-    os.execvp("flatpak", ["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", HEROIC_ID, "--no-gui", f"heroic://launch?appName={app}&runner=legendary"])
+    return rodar_heroic_com_xpad(f"heroic://launch?appName={app}&runner=legendary&gui=false")
 
 
 def epic_logado():
@@ -850,16 +888,29 @@ def diag():
             p(f"     wine: {(c.get('wineVersion') or {}).get('name', '?')}  prefixo: {c.get('winePrefix', '?')}")
         except (OSError, ValueError, AttributeError):
             p("     (sem configuração própria no Heroic)")
+    p("-- controle de Xbox 360 virtual (sky-xpad)")
+    try:
+        ign = subprocess.run([os.path.join(SKY_BIN, "sky-xpad"), "ignorar"], capture_output=True, text=True,
+                             timeout=10).stdout.strip()
+        p("   controles que viram Xbox 360 no jogo: " + (ign or "nenhum"))
+    except (OSError, subprocess.SubprocessError):
+        p("   sky-xpad não encontrado")
+    try:
+        p("   " + " | ".join(open(os.path.join(HOME, ".local/state/skystation/sky-xpad.log")).read().strip().split("\n")[-3:]))
+    except OSError:
+        p("   (ainda não rodou: abra um jogo da Epic/GOG pelo menu)")
     p("-- último log de jogo do Heroic (linhas sobre controle)")
-    logs = sorted(glob.glob(os.path.join(HEROIC_CFG, "heroic/**/*.log"), recursive=True), key=os.path.getmtime)
-    logs = [l for l in logs if ("lastPlay" in l or "/logs/" in l) and "Local Storage" not in l]
+    estado = os.path.join(HOME, ".var/app", HEROIC_ID, ".local/state/Heroic/logs/games")
+    logs = glob.glob(os.path.join(estado, "*/launch*.log")) + glob.glob(os.path.join(HEROIC_CFG, "heroic/GamesConfig/*lastPlay*.log"))
+    logs = sorted(logs, key=os.path.getmtime)
     if logs:
         p("   " + logs[-1])
         try:
             linhas = open(logs[-1], errors="replace").read().split("\n")
         except OSError:
             linhas = []
-        chave = re.compile(r"winebus|hidraw|sdl|xinput|dinput|joystick|controller|gamepad|steam_input|umu|proton|wine version|err:", re.I)
+        chave = re.compile(r"winebus|hidraw|sdl|xinput|dinput|joystick|controller|gamepad|steam_input|umu|wine version|"
+                           r"launch command|err:|fixme:hid|IGNORE_DEVICES", re.I)
         sel = [l for l in linhas if chave.search(l)][-25:]
         for l in sel:
             p("   " + l.strip()[:200])

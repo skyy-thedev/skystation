@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""SkyStation 13.35: controle de Xbox 360 virtual para os jogos de PC (o que o Steam Input faz na Steam).
+
+    sky-xpad            espelha cada controle que não é de Xbox (DualShock, DualSense, genéricos)
+                        num "Microsoft X-Box 360 pad" virtual (/dev/uinput), até receber SIGTERM
+    sky-xpad ignorar    imprime a lista SDL_GAMECONTROLLER_IGNORE_DEVICES dos controles espelhados
+
+Por quê: no Wine/Proton dentro do Heroic (Flatpak), o DualShock por Bluetooth chega mas o jogo não recebe
+os botões. Controle de Xbox 360 é o caminho mais testado de todos (XInput). O controle original fica
+escondido do jogo pela variável SDL_GAMECONTROLLER_IGNORE_DEVICES (o Wine usa o SDL), e continua livre
+para o SkyStation (o botão PS abre o menu Home normalmente: não há "grab").
+Só usa ioctl do kernel (sem python-evdev).
+"""
+import fcntl
+import glob
+import os
+import select
+import signal
+import struct
+import sys
+import time
+
+EV_SYN, EV_KEY, EV_ABS = 0, 1, 3
+SYN_REPORT = 0
+BTN_SOUTH, BTN_EAST, BTN_NORTH, BTN_WEST = 0x130, 0x131, 0x133, 0x134
+BTN_TL, BTN_TR, BTN_TL2, BTN_TR2 = 0x136, 0x137, 0x138, 0x139
+BTN_SELECT, BTN_START, BTN_MODE, BTN_THUMBL, BTN_THUMBR = 0x13a, 0x13b, 0x13c, 0x13d, 0x13e
+ABS_X, ABS_Y, ABS_Z, ABS_RX, ABS_RY, ABS_RZ = 0, 1, 2, 3, 4, 5
+ABS_HAT0X, ABS_HAT0Y = 0x10, 0x11
+
+EVENTO = struct.Struct("llHHi")       # struct input_event (64 bits)
+ABSINFO = struct.Struct("6i")         # value, min, max, fuzz, flat, resolution
+
+UI_SET_EVBIT, UI_SET_KEYBIT, UI_SET_ABSBIT = 0x40045564, 0x40045565, 0x40045567
+UI_DEV_CREATE, UI_DEV_DESTROY = 0x5501, 0x5502
+UI_DEV_SETUP, UI_ABS_SETUP = 0x405C5503, 0x401C5504
+EVIOCGID = 0x80084502
+
+
+def EVIOCGNAME(n):
+    return 0x80000000 | (n << 16) | (0x45 << 8) | 0x06
+
+
+def EVIOCGBIT(ev, n):
+    return 0x80000000 | (n << 16) | (0x45 << 8) | (0x20 + ev)
+
+
+def EVIOCGABS(a):
+    return 0x80184540 + a
+
+
+XBOX_VENDOR = 0x045E
+# Sem BTN_MODE: o botão PS/Home continua só no controle de verdade, que o sky-home usa para abrir o menu
+# (repetido no virtual, o menu abriria e fecharia no mesmo aperto).
+BOTOES_X360 = [BTN_SOUTH, BTN_EAST, BTN_NORTH, BTN_WEST, BTN_TL, BTN_TR, BTN_SELECT, BTN_START,
+               BTN_THUMBL, BTN_THUMBR]
+# No xpad (driver do Xbox) o botão da esquerda (X) é 0x133 e o de cima (Y) é 0x134; nos controles da Sony
+# (hid-playstation) o quadrado (esquerda) é 0x134 e o triângulo (cima) é 0x133. Troca para ficar na posição.
+TROCA = {BTN_NORTH: BTN_WEST, BTN_WEST: BTN_NORTH}
+EIXOS = {ABS_X: (-32768, 32767), ABS_Y: (-32768, 32767), ABS_RX: (-32768, 32767), ABS_RY: (-32768, 32767),
+         ABS_Z: (0, 255), ABS_RZ: (0, 255), ABS_HAT0X: (-1, 1), ABS_HAT0Y: (-1, 1)}
+
+
+def tem_bit(buf, n):
+    return n // 8 < len(buf) and buf[n // 8] & (1 << (n % 8))
+
+
+def info(caminho):
+    """(nome, vendor, product, abs) do controle; None se não for um controle com botões e analógicos."""
+    try:
+        fd = os.open(caminho, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        nome = bytearray(256)
+        fcntl.ioctl(fd, EVIOCGNAME(256), nome)
+        nome = nome.split(b"\0", 1)[0].decode(errors="replace")
+        ident = bytearray(8)
+        fcntl.ioctl(fd, EVIOCGID, ident)
+        _, vendor, product, _ = struct.unpack("4H", ident)
+        teclas, eixos = bytearray(96), bytearray(8)
+        fcntl.ioctl(fd, EVIOCGBIT(EV_KEY, 96), teclas)
+        fcntl.ioctl(fd, EVIOCGBIT(EV_ABS, 8), eixos)
+        if not (tem_bit(teclas, BTN_SOUTH) and tem_bit(eixos, ABS_X)):
+            return None
+        faixas = {}
+        for a in EIXOS:
+            if tem_bit(eixos, a):
+                b = bytearray(ABSINFO.size)
+                fcntl.ioctl(fd, EVIOCGABS(a), b)
+                _, mn, mx, _, _, _ = ABSINFO.unpack(b)
+                if mx > mn:
+                    faixas[a] = (mn, mx)
+        return nome, vendor, product, faixas
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def candidatos():
+    out = []
+    for c in sorted(glob.glob("/dev/input/event*")):
+        i = info(c)
+        if not i:
+            continue
+        nome, vendor, product, faixas = i
+        if vendor == XBOX_VENDOR or "SkyStation" in nome:
+            continue        # Xbox de verdade (o jogo já entende) ou um virtual nosso
+        out.append((c, nome, vendor, product, faixas))
+    return out
+
+
+def criar_virtual(n):
+    fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
+    for ev in (EV_KEY, EV_ABS, EV_SYN):
+        fcntl.ioctl(fd, UI_SET_EVBIT, ev)
+    for b in BOTOES_X360:
+        fcntl.ioctl(fd, UI_SET_KEYBIT, b)
+    for a, (mn, mx) in EIXOS.items():
+        fcntl.ioctl(fd, UI_SET_ABSBIT, a)
+        fuzz, flat = (16, 128) if mx > 255 else (0, 0)
+        fcntl.ioctl(fd, UI_ABS_SETUP, struct.pack("H2x6i", a, 0, mn, mx, fuzz, flat, 0))
+    nome = f"Microsoft X-Box 360 pad (SkyStation {n})".encode()[:79]
+    setup = struct.pack("4H80sI", 0x03, XBOX_VENDOR, 0x028E, 0x0110, nome, 0)
+    fcntl.ioctl(fd, UI_DEV_SETUP, setup)
+    fcntl.ioctl(fd, UI_DEV_CREATE)
+    return fd
+
+
+def escala(v, origem, destino):
+    mn, mx = origem
+    dmn, dmx = destino
+    v = min(max(v, mn), mx)
+    return int(round(dmn + (v - mn) * (dmx - dmn) / (mx - mn)))
+
+
+def ignorar():
+    vistos = []
+    for _, _, vendor, product, _ in candidatos():
+        k = f"0x{vendor:04x}/0x{product:04x}"
+        if k not in vistos:
+            vistos.append(k)
+    print(",".join(vistos))
+    return 0
+
+
+def espelhar():
+    pares = {}        # caminho físico -> [fd_fisico, fd_virtual, faixas]
+    parar = []
+    signal.signal(signal.SIGTERM, lambda *a: parar.append(1))
+    signal.signal(signal.SIGINT, lambda *a: parar.append(1))
+    ultimo_scan = 0.0
+    pai = int(os.environ.get("SKY_XPAD_PAI", "0") or 0)   # quem abriu o jogo: se ele morrer, o espelho some junto
+    try:
+        while not parar:
+            if pai and not os.path.exists(f"/proc/{pai}"):
+                break
+            if time.time() - ultimo_scan > 2:
+                ultimo_scan = time.time()
+                atuais = {c[0]: c for c in candidatos()}
+                for caminho in [p for p in pares if p not in atuais or not os.path.exists(p)]:
+                    f, v, _ = pares.pop(caminho)
+                    for x in (f, v):
+                        try:
+                            if x is v:
+                                fcntl.ioctl(v, UI_DEV_DESTROY)
+                            os.close(x)
+                        except OSError:
+                            pass
+                for caminho, (_, nome, _, _, faixas) in atuais.items():
+                    if caminho in pares or len(pares) >= 4:
+                        continue
+                    try:
+                        f = os.open(caminho, os.O_RDONLY | os.O_NONBLOCK)
+                        v = criar_virtual(len(pares) + 1)
+                    except OSError as e:
+                        print(f"sky-xpad: {caminho} ({nome}): {e}", file=sys.stderr)
+                        continue
+                    pares[caminho] = [f, v, faixas]
+                    print(f"sky-xpad: {nome} -> Xbox 360 virtual {len(pares)}", file=sys.stderr, flush=True)
+            fds = {p[0]: p for p in pares.values()}
+            if not fds:
+                time.sleep(0.5)
+                continue
+            prontos, _, _ = select.select(list(fds), [], [], 0.5)
+            for f in prontos:
+                _, v, faixas = fds[f]
+                try:
+                    dados = os.read(f, EVENTO.size * 64)
+                except BlockingIOError:
+                    continue
+                except OSError:
+                    ultimo_scan = 0     # desconectou: o próximo scan limpa
+                    continue
+                saida = bytearray()
+                for k in range(0, len(dados) - EVENTO.size + 1, EVENTO.size):
+                    s, us, tipo, cod, val = EVENTO.unpack_from(dados, k)
+                    if tipo == EV_KEY:
+                        cod = TROCA.get(cod, cod)
+                        if cod not in BOTOES_X360:
+                            continue
+                    elif tipo == EV_ABS:
+                        if cod not in EIXOS or cod not in faixas:
+                            continue
+                        val = escala(val, faixas[cod], EIXOS[cod])
+                    elif tipo != EV_SYN:
+                        continue
+                    saida += EVENTO.pack(s, us, tipo, cod, val)
+                if saida:
+                    try:
+                        os.write(v, bytes(saida))
+                    except OSError:
+                        pass
+    finally:
+        for f, v, _ in pares.values():
+            try:
+                fcntl.ioctl(v, UI_DEV_DESTROY)
+            except OSError:
+                pass
+            for x in (f, v):
+                try:
+                    os.close(x)
+                except OSError:
+                    pass
+    return 0
+
+
+if __name__ == "__main__":
+    if sys.argv[1:2] == ["ignorar"]:
+        sys.exit(ignorar())
+    sys.exit(espelhar())
