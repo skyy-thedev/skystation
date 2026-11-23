@@ -215,6 +215,7 @@ def sincronizar():
         ajustar_heroic(epic)
     if heroic_ok:
         controle_xinput_todos()
+        trocar_cachyos()
     inst = epic_instalados()
     for jg in epic:
         app = re.sub(r"[^A-Za-z0-9_-]", "", jg.get("appName", ""))
@@ -515,11 +516,77 @@ def apps_com_icone(steam_ok, heroic_ok):
         grava_jogo(destino, d)
 
 
+def fechar_steam():
+    """A Steam aberta (mesmo minimizada) assume o DualShock pelo Steam Input: no jogo do Heroic sobra só
+    o touchpad como mouse. Antes de um jogo da Epic/GOG, a Steam é fechada do jeito certo (-shutdown)."""
+    if not rodando("steamwebhelper|ubuntu12_32/steam|/app/bin/steam"):
+        return
+    subprocess.run(["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", STEAM_ID, "-shutdown"],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+    for _ in range(20):
+        if not rodando("steamwebhelper|ubuntu12_32/steam"):
+            return
+        time.sleep(1)
+    subprocess.run(["flatpak", "kill", STEAM_ID], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def protons_ge():
+    base = os.path.join(HEROIC_CFG, "heroic/tools/proton")
+    achados = [d for d in glob.glob(os.path.join(base, "GE-Proton*")) if os.path.isfile(os.path.join(d, "proton"))]
+    def chave(d):
+        return [int(x) for x in re.findall(r"\d+", os.path.basename(d))]
+    return sorted(achados, key=chave)
+
+
+def trocar_cachyos():
+    """Proton-CachyOS quebra o controle em jogo (relatos de 2025-2026); o GE-Proton e o da Valve não.
+    Se houver um GE-Proton baixado pelo Heroic (Gerenciador de Wine), ele passa a ser o padrão no lugar
+    do CachyOS, na config global e nos jogos que estavam com o CachyOS. Só com o Heroic fechado."""
+    ge = protons_ge()
+    if not ge or rodando("heroic"):
+        return ""
+    novo = {"bin": os.path.join(ge[-1], "proton"), "name": "Proton - " + os.path.basename(ge[-1]), "type": "proton"}
+
+    def ruim(v):
+        return isinstance(v, dict) and "cachyos" in str(v.get("name", "")).lower()
+    cfg = os.path.join(HEROIC_CFG, "heroic/config.json")
+    try:
+        c = json.load(open(cfg))
+        ds = c.setdefault("defaultSettings", {})
+        if ruim(ds.get("wineVersion")) or not ds.get("wineVersion"):
+            ds["wineVersion"] = novo
+            with open(cfg + ".tmp", "w") as f:
+                json.dump(c, f, indent=2)
+            os.replace(cfg + ".tmp", cfg)
+    except (OSError, ValueError, AttributeError):
+        pass
+    for f in glob.glob(os.path.join(HEROIC_CFG, "heroic/GamesConfig/*.json")):
+        try:
+            c = json.load(open(f))
+            mudou = False
+            for v in c.values():
+                if isinstance(v, dict) and ruim(v.get("wineVersion")):
+                    v["wineVersion"] = novo
+                    mudou = True
+            if mudou:
+                with open(f + ".tmp", "w") as fh:
+                    json.dump(c, fh, indent=2)
+                os.replace(f + ".tmp", f)
+        except (OSError, ValueError, AttributeError):
+            continue
+    return novo["name"]
+
+
+def antes_do_jogo_heroic():
+    fechar_steam()
+    trocar_cachyos()
+    controle_xinput_todos()
+
+
 def jogar_gog(app):
     if not flatpak_tem(HEROIC_ID):
         return falha("Instale o Heroic pela SkyStore (aba Apps).")
-    g = next((x for x in biblioteca_heroic("gog") if str(x.get("app_name")) == app), {})
-    controle_xinput_todos()
+    antes_do_jogo_heroic()
     os.execvp("flatpak", ["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", HEROIC_ID, "--no-gui",
                           f"heroic://launch?appName={app}&runner=gog&gui=false"])
 
@@ -543,7 +610,7 @@ def jogar_epic(app):
         jg = next((j for j in bibliotecas().get("epic", []) if j.get("appName") == app), None)
         if jg and not importar_epic(app, jg["ponto"]):
             return falha("Não consegui importar o jogo do HD no Heroic. Abra o Heroic (Apps) e confira a conta Epic.")
-    controle_xinput_todos()
+    antes_do_jogo_heroic()
     os.execvp("flatpak", ["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", HEROIC_ID, "--no-gui", f"heroic://launch?appName={app}&runner=legendary"])
 
 
@@ -746,6 +813,15 @@ def diag():
             pass
     else:
         p("   Heroic não instalado")
+    p("-- Proton do Heroic e Steam")
+    try:
+        wv = json.load(open(os.path.join(HEROIC_CFG, "heroic/config.json"))).get("defaultSettings", {}).get("wineVersion", {})
+        p(f"   padrão do Heroic: {wv.get('name', '?')}" + ("   <- CachyOS quebra o controle" if "cachyos" in str(wv).lower() else ""))
+    except (OSError, ValueError, AttributeError):
+        p("   padrão do Heroic: ?")
+    ge = protons_ge()
+    p("   GE-Proton baixado: " + (", ".join(os.path.basename(x) for x in ge) if ge else "nenhum (baixe no Gerenciador de Wine do Heroic)"))
+    p("   Steam aberta agora: " + ("SIM (assume o controle; o SkyStation fecha antes do jogo)" if rodando("steamwebhelper|ubuntu12_32/steam") else "não"))
     p("-- prefixos do Heroic e o ajuste do controle (DisableHidraw=1 é o certo)")
     for reg in prefixos_heroic():
         try:
