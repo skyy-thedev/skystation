@@ -601,12 +601,13 @@ def rodar_heroic_com_xpad(url):
         if ign:
             env_args = [f"--env=SDL_GAMECONTROLLER_IGNORE_DEVICES={ign}", "--env=SDL_JOYSTICK_HIDAPI=0"]
     # Heroic já aberto não pegaria as variáveis novas: fecha (se não estiver baixando nada)
-    if env_args and rodando("/app/bin/heroic|heroic/heroic ") and not rodando("legendary|gogdl"):
+    if rodando("/app/bin/heroic|heroic/heroic ") and not rodando("legendary|gogdl"):
         subprocess.run(["flatpak", "kill", HEROIC_ID], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(2)
     inicio = time.time()
     try:
-        r = subprocess.run(["flatpak", "run", "--unset-env=QT_QPA_PLATFORM"] + env_args + [HEROIC_ID, "--no-gui", url])
+        r = subprocess.run(["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", "--unset-env=SDL_VIDEODRIVER"] + env_args +
+                           [HEROIC_ID, "--no-gui", url])
         # o Heroic pode devolver antes do jogo acabar: espera o Wine terminar
         while time.time() - inicio < 60 or rodando("wineserver"):
             if time.time() - inicio >= 60 and not rodando("wineserver"):
@@ -918,6 +919,17 @@ def diag():
         p("   nenhum log de jogo")
     texto = "\n".join(out) + "\n"
     print(texto)
+    if logs:   # no arquivo vai o fim inteiro do log do jogo (para ler pelo Windows)
+        try:
+            ult = open(logs[-1], errors="replace").read().split("\n")[-250:]
+            texto += "\n== fim do log do jogo: " + logs[-1] + "\n" + "\n".join(ult) + "\n"
+        except OSError:
+            pass
+    try:
+        texto += "\n== sky-xpad.log\n" + "\n".join(
+            open(os.path.join(HOME, ".local/state/skystation/sky-xpad.log")).read().split("\n")[-30:]) + "\n"
+    except OSError:
+        pass
     for destino in ("/mnt/skyroms/skystation-diag-pc.txt", os.path.join(HOME, "skystation/diag-pc.txt")):
         try:
             with open(destino, "w") as f:
