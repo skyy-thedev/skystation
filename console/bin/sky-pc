@@ -216,7 +216,7 @@ def sincronizar():
         ajustar_heroic(epic)
     if heroic_ok:
         controle_xinput_todos()
-        trocar_cachyos()
+        restaurar_proton()
     inst = epic_instalados()
     for jg in epic:
         app = re.sub(r"[^A-Za-z0-9_-]", "", jg.get("appName", ""))
@@ -578,9 +578,64 @@ def trocar_cachyos():
     return novo["name"]
 
 
+def restaurar_proton():
+    """13.37: desfaz a troca da 13.34. Com o GE-Proton no lugar do CachyOS os jogos ficaram presos no
+    "carregando" do Heroic (o prefixo 'shared' foi criado pelo CachyOS). Volta, uma vez só, para o Proton
+    CachyOS que o Heroic tem baixado, no padrão e nos jogos; depois disso a escolha no Heroic é respeitada."""
+    marca = os.path.join(HOME, ".local/state/skystation/proton-restaurado")
+    if os.path.exists(marca) or rodando("heroic"):
+        return ""
+    bases = [os.path.join(HEROIC_CFG, "heroic/tools/proton"),
+             os.path.join(HOME, ".var/app", STEAM_ID, ".local/share/Steam/compatibilitytools.d"),
+             os.path.join(HOME, ".local/share/Steam/compatibilitytools.d"), os.path.join(HOME, ".steam/root/compatibilitytools.d"),
+             "/usr/share/steam/compatibilitytools.d"]
+    cachy = sorted(d for b in bases for d in glob.glob(os.path.join(b, "*"))
+                   if "cachy" in os.path.basename(d).lower() and os.path.isfile(os.path.join(d, "proton")))
+    if not cachy:
+        return ""
+    # o "latest" tem preferência (é o que estava configurado antes)
+    escolhido = next((d for d in cachy if "latest" in os.path.basename(d).lower()), cachy[-1])
+    volta = {"bin": os.path.join(escolhido, "proton"), "name": "Proton - " + os.path.basename(escolhido), "type": "proton"}
+
+    def foi_trocado(v):
+        return isinstance(v, dict) and str(v.get("name", "")).startswith("Proton - GE-Proton")
+    cfg = os.path.join(HEROIC_CFG, "heroic/config.json")
+    try:
+        c = json.load(open(cfg))
+        ds = c.setdefault("defaultSettings", {})
+        if foi_trocado(ds.get("wineVersion")):
+            ds["wineVersion"] = volta
+            with open(cfg + ".tmp", "w") as f:
+                json.dump(c, f, indent=2)
+            os.replace(cfg + ".tmp", cfg)
+    except (OSError, ValueError, AttributeError):
+        return ""
+    for f in glob.glob(os.path.join(HEROIC_CFG, "heroic/GamesConfig/*.json")):
+        try:
+            c = json.load(open(f))
+            mudou = False
+            for v in c.values():
+                if isinstance(v, dict) and foi_trocado(v.get("wineVersion")):
+                    v["wineVersion"] = volta
+                    mudou = True
+            if mudou:
+                with open(f + ".tmp", "w") as fh:
+                    json.dump(c, fh, indent=2)
+                os.replace(f + ".tmp", f)
+        except (OSError, ValueError, AttributeError):
+            continue
+    os.makedirs(os.path.dirname(marca), exist_ok=True)
+    open(marca, "w").write(volta["name"] + "\n")
+    return volta["name"]
+
+
 def antes_do_jogo_heroic():
     fechar_steam()
-    trocar_cachyos()
+    # Heroic aberto regravaria a config por cima: fecha antes (se não estiver baixando nada)
+    if rodando("/app/bin/heroic|heroic/heroic ") and not rodando("legendary|gogdl"):
+        subprocess.run(["flatpak", "kill", HEROIC_ID], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(2)
+    restaurar_proton()
     controle_xinput_todos()
 
 
