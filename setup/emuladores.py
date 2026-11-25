@@ -82,7 +82,14 @@ CATALOGO = [
     {"id": "heroic", "nome": "Heroic (Epic e GOG)", "tipo": "app", "jeito": "flatpak", "jogo": "heroic", "remoto": "flathub",
      "flatpak": "com.heroicgameslauncher.hgl", "acesso": ["/mnt/pc"],
      "resumo": "Seus jogos da Epic Games e da GOG"},
+    # 13.38: a geração de quadros do Lossless Scaling no Linux (lsfg-vk), como camada Vulkan dos Flatpaks
+    # (Steam e Heroic). Usa o Lossless.dll do SEU Lossless Scaling comprado na Steam: nada dele vem daqui.
+    {"id": "lsfg", "nome": "Geração de quadros (Lossless Scaling)", "tipo": "app", "jeito": "flatpak",
+     "remoto": "flathub", "flatpak": "org.freedesktop.Platform.VulkanLayer.lsfgvk//25.08",
+     "ramos": ["24.08", "25.08"],
+     "resumo": "Frame generation 2x a 4x nos jogos de PC (precisa do Lossless Scaling na sua Steam)"},
 ]
+LSFG_APPS = ["com.valvesoftware.Steam", "com.heroicgameslauncher.hgl"]
 POR_ID = {e["id"]: e for e in CATALOGO}
 
 
@@ -548,6 +555,8 @@ def fazer_pacman(e, t, forcar):
 
 
 def fazer_flatpak(e, t, forcar):
+    if e["id"] == "lsfg":
+        return fazer_lsfg(e, t, forcar)
     if e.get("remoto") == "flathub":
         return fazer_flathub(e, t, forcar)
     t.marca("Baixando pela NVIDIA (alguns minutos)", -1.0)
@@ -559,6 +568,50 @@ def fazer_flatpak(e, t, forcar):
     if r is None or r.returncode != 0 or not versao_instalada(e):
         return t.fim(False, "Não consegui instalar o app agora (veja espaço livre e internet). A versão web continua.")
     return t.fim(True, f"{e['nome']} pronto")
+
+
+def lsfg_acessos(log):
+    """Steam e Heroic enxergam a config do lsfg-vk (que o SkyStation escreve) e o Lossless.dll.
+    Só leitura: o jogo nunca altera nem copia o arquivo do Lossless Scaling."""
+    casa = casa_usuario()
+    conf = os.path.join(casa, ".config/lsfg-vk")
+    os.makedirs(conf, exist_ok=True)
+    try:
+        u = pwd.getpwnam(USUARIO)
+        os.chown(conf, u.pw_uid, u.pw_gid)
+    except (KeyError, OSError):
+        pass
+    steam_common = os.path.join(casa, ".var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/common/Lossless Scaling")
+    for app in LSFG_APPS:
+        if subprocess.run(["flatpak", "info", app], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
+            continue
+        subprocess.run(["flatpak", "override", "--system", f"--filesystem={conf}:ro", f"--filesystem={steam_common}:ro",
+                        f"--env=LSFGVK_CONFIG={conf}/conf.toml", app], stdout=log, stderr=log)
+
+
+def fazer_lsfg(e, t, forcar):
+    """Instala a camada do lsfg-vk do Flathub nos dois runtimes que a Steam e o Heroic usam (24.08 e 25.08)."""
+    with open(LOG, "a") as log:
+        if not shutil.which("flatpak"):
+            return t.fim(False, "Instale a Steam ou o Heroic primeiro (aba Apps)")
+        subprocess.run(["flatpak", "remote-add", "--system", "--if-not-exists", "flathub",
+                        "https://dl.flathub.org/repo/flathub.flatpakrepo"], stdout=log, stderr=log, timeout=300)
+        base = e["flatpak"].split("//")[0]
+        ok = True
+        for i, ramo in enumerate(e["ramos"]):
+            ref = f"{base}//{ramo}"
+            t.marca(f"Baixando a camada ({ramo})", 0.1 + 0.4 * i)
+            if forcar:
+                subprocess.run(["flatpak", "uninstall", "--system", "-y", "--noninteractive", ref], stdout=log, stderr=log)
+            tem = subprocess.run(["flatpak", "info", ref], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+            r = subprocess.run(["flatpak", "update" if tem else "install", "--system", "-y", "--noninteractive"] +
+                               ([] if tem else ["flathub"]) + [ref], stdout=log, stderr=log, timeout=1800)
+            ok = ok and r.returncode == 0
+        t.marca("Liberando a Steam e o Heroic", 0.9)
+        lsfg_acessos(log)
+    if not ok or not versao_instalada(e):
+        return t.fim(False, "Não consegui baixar a camada agora (internet ou espaço). Tente de novo.")
+    return t.fim(True, "Pronto: ligue a Geração de quadros nas opções de cada jogo de PC (botão Y)")
 
 
 def fazer_flathub(e, t, forcar):
@@ -583,6 +636,8 @@ def fazer_flathub(e, t, forcar):
         r = subprocess.run(cmd, stdout=log, stderr=log, timeout=5400)
         for pasta in e.get("acesso", []):    # a Steam/Heroic enxergam os jogos do HD do Windows
             subprocess.run(["flatpak", "override", "--system", "--filesystem=" + pasta, e["flatpak"]], stdout=log, stderr=log)
+        if e["flatpak"] in LSFG_APPS and versao_instalada(POR_ID["lsfg"]):
+            lsfg_acessos(log)              # instalou a Steam/Heroic depois da geração de quadros
     if r.returncode != 0 or not versao_instalada(e):
         return t.fim(False, "Não consegui instalar agora (internet ou espaço). Tente de novo.")
     # depois de instalar, procura de novo as bibliotecas do HD (o skystation-pcjogos cria os jogos no menu)

@@ -1307,6 +1307,8 @@ func _game_item(g: Dictionary) -> Dictionary:
 		sub = ROM_SYSTEMS[g["sys"]]["name"]
 	if g["sys"] == "ps2" and _ps2_speed(g["id"]) != "auto":
 		sub += "  ·  Desempenho: " + SPEED_NAMES[_ps2_speed(g["id"])]
+	if _fg_pode(g) and _fg_mult(str(g["id"])) >= 2:
+		sub += "  ·  Geração de quadros " + str(_fg_mult(str(g["id"]))) + "x"
 	var pt: Dictionary = playtime.get(g["id"], {})
 	if not pt.is_empty():
 		sub += "  ·  " + _fmt_time(int(pt.get("seconds", 0))) + " jogados  ·  " + _fmt_when(int(pt.get("last", 0)))
@@ -2155,6 +2157,8 @@ func _toggle_panel() -> void:
 				panel_items.append(["Ejetar disco", "eject"])
 			if it["game"].get("sys", "") == "ps2":
 				panel_items.append(["Desempenho: " + SPEED_NAMES[_ps2_speed(it["game"]["id"])], "ps2_speed"])
+			if _fg_pode(it["game"]):   # 13.38: Lossless Scaling (lsfg-vk) nos jogos de PC
+				panel_items.append(["Geração de quadros: " + _fg_nome(_fg_mult(str(it["game"]["id"]))), "fg"])
 			var gpath := str(it["game"].get("path", ""))
 			if gpath != "":
 				if gpath.begins_with("/mnt/skyroms/"):
@@ -2222,6 +2226,9 @@ func _panel_choose() -> void:
 		return
 	if a == "ps2_speed":
 		_cycle_ps2_speed(str(_cur()["game"]["id"]))
+		return
+	if a == "fg":
+		_cycle_fg(str(_cur()["game"]["id"]))
 		return
 	if a.begins_with("move:"):
 		var it := _cur()
@@ -2704,6 +2711,48 @@ func _cycle_ps2_speed(game_id: String) -> void:
 		"maximo": "o máximo de FPS; alguns jogos engasgam ou falham"}
 	_toast("Desempenho: %s (%s)" % [SPEED_NAMES[nxt], why[nxt]], 3.5, "gauge")
 	_reload_games()
+
+
+# 13.38: geração de quadros (lsfg-vk / Lossless Scaling) por jogo de PC. Quem grava é o sky-pc (escreve
+# também o ~/.config/lsfg-vk/conf.toml com um perfil por jogo); aqui só se lê e se pede a troca.
+const FG_ORDEM := [0, 2, 3, 4]
+
+
+func _fg_pode(g: Dictionary) -> bool:
+	var gid := str(g.get("id", ""))
+	return str(g.get("type", "")) == "windows" and (gid.begins_with("pc-steam-") or gid.begins_with("pc-epic-") or gid.begins_with("pc-gog-"))
+
+
+func _fg_mult(game_id: String) -> int:
+	var txt := _read_text(conf_dir + "/geracao-quadros.json", "{}")
+	var d = JSON.parse_string(txt) if txt.begins_with("{") else {}
+	if typeof(d) != TYPE_DICTIONARY or typeof(d.get(game_id)) != TYPE_DICTIONARY:
+		return 0
+	return int(d[game_id].get("mult", 0))
+
+
+func _fg_nome(m: int) -> String:
+	return "desligada" if m < 2 else str(m) + "x"
+
+
+func _cycle_fg(game_id: String) -> void:
+	var nxt: int = FG_ORDEM[(FG_ORDEM.find(_fg_mult(game_id)) + 1) % FG_ORDEM.size()]
+	_bg(func():
+		var out := []
+		OS.execute(SKY_BIN + "/sky-pc", ["fg", game_id, str(nxt)], out, true)
+		return "".join(out),
+		func(r):
+			var j = JSON.parse_string(str(r).strip_edges().get_slice("\n", 0))
+			var aviso := ""
+			if typeof(j) == TYPE_DICTIONARY:
+				aviso = str(j.get("aviso", ""))
+			var why := {0: "o jogo roda só com os quadros reais", 2: "1 quadro criado entre 2 reais: o mais estável",
+				3: "2 quadros criados: mais fluido, mais atraso", 4: "3 quadros criados: só se o jogo já passa de 40 FPS"}
+			if aviso != "":
+				_toast("Geração de quadros: %s. %s" % [_fg_nome(nxt), aviso], 6.0, "gauge")
+			else:
+				_toast("Geração de quadros: %s (%s)" % [_fg_nome(nxt), why[nxt]], 3.5, "gauge")
+			_reload_games())
 
 
 func _hw_txt() -> String:

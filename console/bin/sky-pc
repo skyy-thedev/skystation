@@ -271,6 +271,11 @@ def sincronizar():
                     controle_xinput(reg)
             n += 1
     apps_com_icone(steam_ok, heroic_ok)
+    if fg_ler():
+        try:
+            gerar_conf_lsfg()
+        except OSError:
+            pass
     # jogo que sumiu (desinstalado no Windows ou no Heroic) sai do menu
     for p in glob.glob(os.path.join(JOGOS, "pc-steam-*")) + glob.glob(os.path.join(JOGOS, "pc-epic-*")) + \
             glob.glob(os.path.join(JOGOS, "pc-gog-*")):
@@ -944,6 +949,11 @@ def diag():
             p(f"     wine: {(c.get('wineVersion') or {}).get('name', '?')}  prefixo: {c.get('winePrefix', '?')}")
         except (OSError, ValueError, AttributeError):
             p("     (sem configuração própria no Heroic)")
+    p("-- geração de quadros (lsfg-vk / Lossless Scaling)")
+    p("   camada instalada: " + ("sim" if lsfg_instalado() else "não (SkyStore, aba Apps)"))
+    p("   Lossless.dll: " + (lossless_dll() or "não achado (baixe o Lossless Scaling na Steam)"))
+    for gid, c in sorted(fg_ler().items()):
+        p(f"   {c.get('titulo', gid)}: {c.get('mult')}x  exes: {', '.join(exes_do_jogo(gid)[:5]) or 'NENHUM'}")
     p("-- controle de Xbox 360 virtual (sky-xpad)")
     try:
         ign = subprocess.run([os.path.join(SKY_BIN, "sky-xpad"), "ignorar"], capture_output=True, text=True,
@@ -995,6 +1005,157 @@ def diag():
     return 0
 
 
+# ---------------------------------------------------------------- 13.38: geração de quadros (Lossless Scaling)
+
+FG_JSON = os.path.join(HOME, ".config/skystation/geracao-quadros.json")
+LSFG_CONF = os.path.join(HOME, ".config/lsfg-vk/conf.toml")
+LSFG_ID = "org.freedesktop.Platform.VulkanLayer.lsfgvk"
+FG_PREFIXO = "SkyStation: "
+NAO_EXE = re.compile(r"unins|redist|vcredist|directx|dxsetup|crashhandler|crashreport|unitycrash|"
+                     r"easyanticheat|eac_|battleye|be_service|setup|installer|dotnet|ue4prereq|prereq|"
+                     r"cefprocess|webhelper|launcherhelper|eossdk", re.I)
+
+
+def lossless_dll():
+    """O Lossless.dll do seu Lossless Scaling (comprado e baixado pela Steam): na pasta da Steam do
+    Flatpak ou numa biblioteca do HD do Windows."""
+    cands = [os.path.join(STEAM_DIR, "steamapps/common/Lossless Scaling/Lossless.dll")]
+    for lib in bibliotecas().get("steam", []):
+        cands.append(os.path.join(lib["ponto"], "steamapps/common/Lossless Scaling/Lossless.dll"))
+    return next((c for c in cands if os.path.isfile(c)), "")
+
+
+def lsfg_instalado():
+    return bool(shutil.which("flatpak")) and subprocess.run(
+        ["flatpak", "info", LSFG_ID + "//25.08"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+
+def fg_ler():
+    try:
+        d = json.load(open(FG_JSON))
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def exes_do_jogo(gid):
+    """Os .exe do jogo (o lsfg-vk liga o perfil quando um deles abre). Exclui instaladores, anti-cheat etc."""
+    pastas = []
+    if gid.startswith("pc-steam-"):
+        appid = gid[len("pc-steam-"):]
+        for lib in bibliotecas().get("steam", []) + [{"ponto": STEAM_DIR.rsplit("/steamapps", 1)[0]}]:
+            a = acf(os.path.join(lib["ponto"], "steamapps", f"appmanifest_{appid}.acf"))
+            if a.get("installdir"):
+                pastas.append(os.path.join(lib["ponto"], "steamapps/common", a["installdir"]))
+    elif gid.startswith("pc-epic-"):
+        info = epic_instalados().get(gid[len("pc-epic-"):]) or {}
+        if info.get("install_path"):
+            pastas.append(info["install_path"])
+        if info.get("executable"):
+            pastas.append(("exe", os.path.basename(info["executable"].replace("\\", "/"))))
+    elif gid.startswith("pc-gog-"):
+        for g in gog_instalados():
+            if str(g.get("appName")) == gid[len("pc-gog-"):] and g.get("install_path"):
+                pastas.append(g["install_path"])
+    nomes = []
+    for p in pastas:
+        if isinstance(p, tuple):
+            nomes.append(p[1])
+            continue
+        base = p.rstrip("/").count("/")
+        for raiz, dirs, arqs in os.walk(p):
+            if raiz.count("/") - base >= 4:
+                dirs[:] = []
+            dirs[:] = [d for d in dirs if not NAO_EXE.search(d) and d.lower() not in ("_commonredist", "redist")]
+            for a in arqs:
+                if a.lower().endswith(".exe") and not NAO_EXE.search(a):
+                    nomes.append(a)
+    vistos = []
+    for n in nomes:
+        if n and n not in vistos:
+            vistos.append(n)
+    return vistos[:24]
+
+
+def _toml_str(v):
+    return "'" + str(v).replace("'", "") + "'"
+
+
+def gerar_conf_lsfg():
+    """Reescreve ~/.config/lsfg-vk/conf.toml (versão 2): perfis do SkyStation (um por jogo com geração de
+    quadros ligada) + os perfis que você criou à mão, que ficam como estavam."""
+    outros, global_ = [], {}
+    try:
+        import tomllib
+        with open(LSFG_CONF, "rb") as f:
+            atual = tomllib.load(f)
+        global_ = atual.get("global", {}) or {}
+        outros = [pf for pf in atual.get("profile", []) if not str(pf.get("name", "")).startswith(FG_PREFIXO)]
+    except (OSError, ValueError, ImportError):
+        pass
+    dll = lossless_dll() or global_.get("dll", "")
+    linhas = ["# Gerado pelo SkyStation (perfis 'SkyStation: ...'). Perfis com outro nome são mantidos.",
+              "version = 2", "", "[global]"]
+    if dll:
+        linhas.append(f"dll = {_toml_str(dll)}")
+    linhas.append(f"allow_fp16 = {'false' if global_.get('allow_fp16') is False else 'true'}")
+    perfis = []
+    for gid, cfg in sorted(fg_ler().items()):
+        mult = int(cfg.get("mult", 0) or 0)
+        if mult < 2:
+            continue
+        exes = exes_do_jogo(gid)
+        if not exes:
+            continue
+        perfis.append({"name": FG_PREFIXO + str(cfg.get("titulo") or gid), "active_in": exes, "multiplier": mult,
+                       "flow_scale": float(cfg.get("flow", 0.8)), "performance_mode": bool(cfg.get("perf", True)),
+                       "pacing": "none"})
+    for pf in perfis + outros:
+        linhas += ["", "[[profile]]"]
+        for k, v in pf.items():
+            if isinstance(v, bool):
+                linhas.append(f"{k} = {'true' if v else 'false'}")
+            elif isinstance(v, (int, float)):
+                linhas.append(f"{k} = {v}")
+            elif isinstance(v, list):
+                linhas.append(f"{k} = [" + ", ".join(_toml_str(x) for x in v) + "]")
+            else:
+                linhas.append(f"{k} = {_toml_str(v)}")
+    os.makedirs(os.path.dirname(LSFG_CONF), exist_ok=True)
+    with open(LSFG_CONF + ".tmp", "w") as f:
+        f.write("\n".join(linhas) + "\n")
+    os.replace(LSFG_CONF + ".tmp", LSFG_CONF)
+    return len(perfis), dll
+
+
+def fg(gid, mult):
+    """Liga (2x, 3x, 4x) ou desliga (0) a geração de quadros de um jogo de PC."""
+    d = fg_ler()
+    titulo = gid
+    try:
+        titulo = json.load(open(os.path.join(JOGOS, gid, "game.json"))).get("title", gid)
+    except (OSError, ValueError):
+        pass
+    if mult >= 2:
+        d[gid] = {**d.get(gid, {}), "mult": mult, "titulo": titulo}
+    else:
+        d.pop(gid, None)
+    os.makedirs(os.path.dirname(FG_JSON), exist_ok=True)
+    with open(FG_JSON + ".tmp", "w") as f:
+        json.dump(d, f, ensure_ascii=False, indent=1)
+    os.replace(FG_JSON + ".tmp", FG_JSON)
+    n, dll = gerar_conf_lsfg()
+    aviso = ""
+    if mult >= 2:
+        if not lsfg_instalado():
+            aviso = "Instale a Geração de quadros (Lossless Scaling) na SkyStore, aba Apps."
+        elif not dll:
+            aviso = "Baixe o Lossless Scaling na Steam (não precisa abrir): o SkyStation usa o arquivo dele."
+        elif not exes_do_jogo(gid):
+            aviso = "Não achei o executável deste jogo: confira se ele está instalado."
+    return {"ok": True, "jogo": gid, "mult": mult, "perfis": n, "dll": dll, "aviso": aviso}
+
+
 def main():
     # A sessão do SkyStation define QT_QPA_PLATFORM=xcb (para os emuladores feitos em Qt). Um programa
     # Windows feito em Qt, rodando pelo Wine/Proton (ex.: o REDlauncher do The Witcher 3), também lê essa
@@ -1028,6 +1189,11 @@ def main():
         return 0 if r.get("ok") else 1
     if cmd == "jogar" and len(a) == 3 and a[1] == "gog" and a[2].isdigit():
         return jogar_gog(a[2])
+    if cmd == "fg" and len(a) == 3 and re.fullmatch(r"pc-(steam|epic|gog)-[A-Za-z0-9_-]+", a[1]) and a[2] in ("0", "2", "3", "4"):
+        return saida(fg(a[1], int(a[2])))
+    if cmd == "fg-estado" and len(a) == 2:
+        c = fg_ler().get(a[1], {})
+        return saida({"ok": True, "mult": int(c.get("mult", 0) or 0), "lsfg": lsfg_instalado(), "dll": lossless_dll()})
     if cmd == "diag":
         return diag()
     if cmd == "estado":
