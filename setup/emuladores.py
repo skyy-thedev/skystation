@@ -89,6 +89,12 @@ CATALOGO = [
      "ramos": ["24.08", "25.08"],
      "resumo": "Frame generation 2x a 4x nos jogos de PC (precisa do Lossless Scaling na sua Steam)"},
 ]
+CATALOGO.append(
+    # 13.44: o contador de FPS (Medição de desempenho) dentro da Steam e do Heroic
+    {"id": "mangohud", "nome": "Contador de FPS nos jogos de PC", "tipo": "app", "jeito": "flatpak",
+     "remoto": "flathub", "flatpak": "org.freedesktop.Platform.VulkanLayer.MangoHud//25.08",
+     "ramos": ["24.08", "25.08"],
+     "resumo": "A Medição de desempenho (MangoHud) também nos jogos da Steam, Epic e GOG"})
 LSFG_APPS = ["com.valvesoftware.Steam", "com.heroicgameslauncher.hgl"]
 POR_ID = {e["id"]: e for e in CATALOGO}
 
@@ -556,7 +562,7 @@ def fazer_pacman(e, t, forcar):
 
 
 def fazer_flatpak(e, t, forcar):
-    if e["id"] == "lsfg":
+    if e["id"] in ("lsfg", "mangohud"):
         return fazer_lsfg(e, t, forcar)
     if e.get("remoto") == "flathub":
         return fazer_flathub(e, t, forcar)
@@ -583,10 +589,12 @@ def lsfg_acessos(log):
     except (KeyError, OSError):
         pass
     steam_common = os.path.join(casa, ".var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/common/Lossless Scaling")
+    bench = "/mnt/skyroms/benchmarks"     # o log do MangoHud (Medição) vai para o HD, como nos emuladores
     for app in LSFG_APPS:
         if subprocess.run(["flatpak", "info", app], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
             continue
         subprocess.run(["flatpak", "override", "--system", f"--filesystem={conf}:ro", f"--filesystem={steam_common}:ro",
+                        f"--filesystem={bench}:create",
                         f"--env=LSFGVK_CONFIG={conf}/conf.toml", app], stdout=log, stderr=log)
 
 
@@ -612,6 +620,8 @@ def fazer_lsfg(e, t, forcar):
         lsfg_acessos(log)
     if not ok or not versao_instalada(e):
         return t.fim(False, "Não consegui baixar a camada agora (internet ou espaço). Tente de novo.")
+    if e["id"] == "mangohud":
+        return t.fim(True, "Pronto: ligue a Medição de desempenho (com contador) no menu e abra um jogo de PC")
     return t.fim(True, "Pronto: ligue a Geração de quadros nas opções de cada jogo de PC (botão Y)")
 
 
@@ -637,7 +647,7 @@ def fazer_flathub(e, t, forcar):
         r = subprocess.run(cmd, stdout=log, stderr=log, timeout=5400)
         for pasta in e.get("acesso", []):    # a Steam/Heroic enxergam os jogos do HD do Windows
             subprocess.run(["flatpak", "override", "--system", "--filesystem=" + pasta, e["flatpak"]], stdout=log, stderr=log)
-        if e["flatpak"] in LSFG_APPS and versao_instalada(POR_ID["lsfg"]):
+        if e["flatpak"] in LSFG_APPS and (versao_instalada(POR_ID["lsfg"]) or versao_instalada(POR_ID["mangohud"])):
             lsfg_acessos(log)              # instalou a Steam/Heroic depois da geração de quadros
     if r.returncode != 0 or not versao_instalada(e):
         return t.fim(False, "Não consegui instalar agora (internet ou espaço). Tente de novo.")

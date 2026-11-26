@@ -63,7 +63,13 @@ if [ -z "$SEM_MANGO" ] && { [ -f "$CONF/mangohud.on" ] || [ -f "$CONF/bench.on" 
     mkdir -p "$BENCH"
     export MANGOHUD_CONFIG="fps,frametime,frame_timing,cpu_stats,cpu_temp,cpu_mhz,core_load,core_bars,gpu_stats,ram,position=top-left,font_size=20,autostart_log=1,log_duration=0,output_folder=$BENCH"
     [ -f "$CONF/mangohud.on" ] || MANGOHUD_CONFIG="no_display,$MANGOHUD_CONFIG"
-    PREFIX="$PREFIX mangohud"
+    case "$ID" in
+        pc-*)
+            # 13.44: jogos de PC rodam dentro do Flatpak da Steam/Heroic, que não enxerga o MangoHud do sistema
+            # (por isso o contador não aparecia). O sky-pc liga o MangoHud do Flathub lá dentro com esta config.
+            export SKY_MANGOHUD=1 SKY_BENCH="$BENCH" ;;
+        *) PREFIX="$PREFIX mangohud" ;;
+    esac
 fi
 
 LOG="$STATE/$ID.log"

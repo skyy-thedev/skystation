@@ -796,6 +796,14 @@ def antes_do_jogo_heroic():
     controle_xinput_todos()
 
 
+def mangohud_env():
+    """13.44: o MangoHud dentro do Flatpak (extensão do Flathub). O sky-run manda SKY_MANGOHUD=1 quando a
+    Medição de desempenho está ligada; o MANGOHUD_CONFIG é o mesmo dos emuladores (contador + log no HD)."""
+    if os.environ.get("SKY_MANGOHUD") != "1":
+        return ["--env=MANGOHUD=0", "--env=DISABLE_MANGOHUD=1"]
+    return ["--env=MANGOHUD=1", "--env=MANGOHUD_CONFIG=" + os.environ.get("MANGOHUD_CONFIG", "fps,position=top-left")]
+
+
 def rodar_heroic_com_xpad(url, gid=""):
     """13.35: o jogo do Heroic recebe um controle de Xbox 360 virtual (sky-xpad) no lugar do DualShock,
     que fica escondido do jogo (SDL_GAMECONTROLLER_IGNORE_DEVICES). O espelho vive enquanto o jogo roda."""
@@ -816,6 +824,7 @@ def rodar_heroic_com_xpad(url, gid=""):
     lim = limite_fps(gid)
     if lim:
         env_args += [f"--env=DXVK_FRAME_RATE={lim}", f"--env=VKD3D_FRAME_RATE={lim}"]
+    env_args += mangohud_env()
     # Heroic já aberto não pegaria as variáveis novas: fecha (se não estiver baixando nada)
     if rodando("/app/bin/heroic|heroic/heroic ") and not rodando("legendary|gogdl"):
         subprocess.run(["flatpak", "kill", HEROIC_ID], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -852,7 +861,19 @@ def jogar_steam(appid):
     ajustar_steam(bibliotecas().get("steam", []))
     # -gamepadui: a interface de TV da Steam (a mesma do Steam Deck). Na 1ª vez ela pede o login
     # (dá para entrar pelo QR code com o app da Steam no celular). Para voltar ao SkyStation: Home → Fechar.
-    os.execvp("flatpak", ["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", STEAM_ID, "-gamepadui", f"steam://rungameid/{appid}"])
+    # 13.44: o contador vai pelo ambiente da Steam: Steam aberta no modo errado (com/sem contador) é reaberta.
+    quer = os.environ.get("SKY_MANGOHUD") == "1"
+    marca = os.path.join(HOME, ".local/state/skystation/steam-mangohud")
+    if rodando("steamwebhelper|ubuntu12_32/steam") and os.path.exists(marca) != quer:
+        fechar_steam()
+    if not rodando("steamwebhelper|ubuntu12_32/steam"):
+        os.makedirs(os.path.dirname(marca), exist_ok=True)
+        if quer:
+            open(marca, "w").close()
+        elif os.path.exists(marca):
+            os.remove(marca)
+    os.execvp("flatpak", ["flatpak", "run", "--unset-env=QT_QPA_PLATFORM"] + mangohud_env() +
+              [STEAM_ID, "-gamepadui", f"steam://rungameid/{appid}"])
 
 
 def jogar_epic(app):
