@@ -205,6 +205,9 @@ var palette: Array = []
 var accent: Color = Color("4fd1ff")
 var sounds_on: bool = true
 var low_gfx: bool = false
+# 13.45: modo leve — ondas paradas, sem brilhos, sem sons/música, papel de parede animado parado, 30 FPS
+# e as texturas da SkyStore soltas durante o jogo: mais CPU, GPU e RAM para o jogo.
+var modo_leve: bool = false
 
 var bg: TextureRect        # o fundo de ondas, já ampliado para a tela
 var bg_vp: SubViewport     # onde as ondas são desenhadas, em resolução reduzida (desempenho)
@@ -361,8 +364,9 @@ func _ready() -> void:
 	font_bold = fv
 
 	var adapter := RenderingServer.get_video_adapter_name().to_lower()
+	modo_leve = FileAccess.file_exists(conf_dir + "/modo-leve")
 	low_gfx = OS.get_environment("LIBGL_ALWAYS_SOFTWARE") == "1" or adapter.contains("llvmpipe") \
-		or adapter.contains("softpipe") or FileAccess.file_exists(conf_dir + "/visual.leve")
+		or adapter.contains("softpipe") or FileAccess.file_exists(conf_dir + "/visual.leve") or modo_leve
 	if OS.get_environment("SKY_VISUAL") == "alto":
 		low_gfx = false
 	if low_gfx:
@@ -496,7 +500,7 @@ func _process(delta: float) -> void:
 	# As ondas andam devagar: recalculadas em quadros alternados (30 vezes por segundo), enquanto o menu
 	# segue a 60. Quadro sem recálculo reaproveita a imagem anterior da tela interna.
 	bg_quadro += 1
-	var modo := SubViewport.UPDATE_ONCE if bg_quadro % 2 == 0 and store_t < 1.0 and fundo.is_empty() \
+	var modo := SubViewport.UPDATE_ONCE if bg_quadro % 2 == 0 and store_t < 1.0 and fundo.is_empty() and not modo_leve \
 		else SubViewport.UPDATE_DISABLED   # com a SkyStore cobrindo a tela (ou papel de parede), as ondas param
 	if modo != SubViewport.UPDATE_DISABLED or bg_vp.render_target_update_mode != modo:
 		bg_vp.render_target_update_mode = modo   # reatribuir o mesmo valor também pede um quadro novo
@@ -1581,6 +1585,7 @@ func _build_cats() -> void:
 		_act("Brilho da tela", "Ajuste com ◀ ▶", "slider:brilho", "sun"),
 		_act("Tema de cores", _theme_name(), "theme", "palette"),
 		_act("Papel de parede", _fundo_txt(), "wallpaper", "palette"),
+		_act("Modo leve", "Ligado: sem animações nem sons, mais memória para os jogos" if modo_leve else "Desligado", "modo_leve", "gauge"),
 		_act("Música ambiente", "Ligada" if music_on else "Desligada", "music", "note"),
 		_act("Sons da interface", "Ligados" if sounds_on else "Desligados", "sounds", "note"),
 		_act("Bateria e temperatura", _power_txt(), "power_info", "battery"),
@@ -1691,6 +1696,8 @@ func _refresh_sys_items() -> void:
 					it["sub"] = _theme_name()
 				"wallpaper":
 					it["sub"] = _fundo_txt()
+				"modo_leve":
+					it["sub"] = "Ligado: sem animações nem sons, mais memória para os jogos" if modo_leve else "Desligado"
 				"sounds":
 					it["sub"] = "Ligados" if sounds_on else "Desligados"
 				"fps":
@@ -1765,7 +1772,7 @@ func _activate() -> void:
 		_open_slider(action.split(":")[1])
 		return
 	match action:
-		"theme", "fps", "hwprofile", "sounds", "music", "boot_sound", "tv", "touchpad", "wake_pad":
+		"theme", "fps", "hwprofile", "sounds", "music", "boot_sound", "tv", "touchpad", "wake_pad", "modo_leve":
 			_abrir_seletor(action, false)
 			return
 		"wallpaper":
@@ -1887,6 +1894,8 @@ func _launch_now(g: Dictionary) -> void:
 	if fundo_video != null:
 		fundo_video.paused = true
 		fundo_video.visible = false
+	if modo_leve:
+		store_tex.clear()     # capas da SkyStore (recarregam ao abrir a loja de novo)
 	if music != null:
 		music.stop()
 
@@ -1902,7 +1911,7 @@ func _on_game_closed() -> void:
 	bg_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS if fundo.is_empty() else SubViewport.UPDATE_DISABLED
 	if fundo_video != null:
 		fundo_video.visible = true
-		fundo_video.paused = false
+		fundo_video.paused = modo_leve
 	OS.low_processor_usage_mode = false
 	_apply_power_mode()
 	_report_exit()
@@ -2382,6 +2391,18 @@ func _abrir_seletor(a: String, do_painel: bool) -> void:
 				else:
 					_write_text(conf_dir + "/musica.off", "1")
 				_refresh_sys_items())
+		"modo_leve":
+			_picker_open("Modo leve", [["Ligado (mais desempenho nos jogos)", true], ["Desligado (animações e sons)", false]],
+				modo_leve, func(v):
+					modo_leve = bool(v)
+					if modo_leve:
+						_write_text(conf_dir + "/modo-leve", "1")
+					else:
+						DirAccess.remove_absolute(conf_dir + "/modo-leve")
+					var ad := RenderingServer.get_video_adapter_name().to_lower()
+					low_gfx = modo_leve or ad.contains("llvmpipe") or ad.contains("softpipe") or FileAccess.file_exists(conf_dir + "/visual.leve")
+					_apply_power_mode()
+					_toast("Modo leve ligado: ondas paradas, sem brilho, sons e música" if modo_leve else "Modo leve desligado", 3.0, "gauge"))
 		"boot_sound", "tv", "touchpad", "wake_pad":
 			var arq: String = {"boot_sound": "/ligar.off", "tv": "/tv-grande.off", "touchpad": "/touchpad.off", "wake_pad": "/acordar.off"}[a]
 			var nome: String = {"boot_sound": "Som ao ligar", "tv": "Interface maior na TV", "touchpad": "Touchpad do controle", "wake_pad": "Ligar pelo controle"}[a]
@@ -2767,8 +2788,10 @@ func _apply_power_mode() -> void:
 	# pelo próprio sistema; ver skystation-energia). Na tomada: tudo no máximo.
 	if running_pid != -1:
 		return
-	var eco := low_gfx or on_battery
+	var eco := low_gfx or on_battery or modo_leve
 	Engine.max_fps = 30 if eco else 0
+	if fundo_video != null:
+		fundo_video.paused = modo_leve
 	bg_mat.set_shader_parameter("strands", 5 if low_gfx else (7 if on_battery else 11))
 
 
@@ -3333,7 +3356,7 @@ func _make_music() -> void:
 func _tick_music(delta: float) -> void:
 	if music == null:
 		return
-	var want := music_on and running_pid == -1 and intro_t > 2.0 and not dimmed
+	var want := music_on and not modo_leve and running_pid == -1 and intro_t > 2.0 and not dimmed
 	var target := -17.0 if want else -60.0
 	music.volume_db = move_toward(music.volume_db, target, delta * (12.0 if want else 30.0))
 	if want and not music.playing:
@@ -3487,7 +3510,7 @@ func _make_sounds() -> void:
 
 
 func _play(key: String) -> void:
-	if not sounds_on or not players.has(key):
+	if not sounds_on or modo_leve or not players.has(key):
 		return
 	var p: AudioStreamPlayer = players[key]
 	p.play()
@@ -3613,6 +3636,8 @@ func _make_glow() -> void:
 
 
 func _glow(c: Vector2, radius: float, col: Color) -> void:
+	if modo_leve:
+		return
 	draw_texture_rect(glow_tex, Rect2(c - Vector2(radius, radius), Vector2(radius, radius) * 2.0), false, col)
 
 
