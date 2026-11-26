@@ -1661,9 +1661,14 @@ func _build_cats() -> void:
 		tl.sort_custom(func(x, y): return int(x["ganho"]) > int(y["ganho"]))
 		for tr in tl:
 			var got := int(tr["ganho"]) > 0
-			var when := ("Conquistado " + _fmt_when(int(tr["ganho"]))) if got else "Bloqueado"
-			var it := _act(str(tr["nome"]), "%s  ·  %s  ·  %s" % [str(tr["desc"]), str(tr["nivel"]).capitalize(), when], "", "trophy",
+			var when := ("Conquistado em " + _data_hora(int(tr["ganho"]))) if got else "Bloqueado"
+			if got and str(tr.get("jogo", "")) != "":
+				when += " em " + str(tr["jogo"])
+			var foto := str(tr.get("foto", ""))
+			var it := _act(str(tr["nome"]), "%s  ·  %s  ·  %s%s" % [str(tr["desc"]), str(tr["nivel"]).capitalize(), when,
+				"  ·  X: ver a foto" if foto != "" else ""], "trofeu_foto" if foto != "" else "", "trophy",
 				tier.get(str(tr["nivel"]), WHITE) if got else Color(1, 1, 1, 0.25))
+			it["path"] = foto
 			c_tro["items"].append(it)
 		cats.append(c_tro)
 	cats.append(_build_net_cat())
@@ -1772,6 +1777,13 @@ func _activate() -> void:
 		_open_slider(action.split(":")[1])
 		return
 	match action:
+		"trofeu_foto":
+			var img := Image.load_from_file(str(_cur().get("path", "")))
+			if img != null and not img.is_empty():
+				viewer_idx = -1
+				viewer_tex = ImageTexture.create_from_image(img)
+				viewer_open = true
+			return
 		"theme", "fps", "hwprofile", "sounds", "music", "boot_sound", "tv", "touchpad", "wake_pad", "modo_leve":
 			_abrir_seletor(action, false)
 			return
@@ -2696,6 +2708,13 @@ func _fmt_time(secs: int) -> String:
 	return ("%d h %02d min" % [h, m]) if h > 0 else ("%d min" % m)
 
 
+func _data_hora(epoch: int) -> String:
+	# 13.46: como no PS — "26/11/2026 às 09:14" no fuso do console
+	var bias := int(Time.get_time_zone_from_system()["bias"]) * 60
+	var d := Time.get_datetime_dict_from_unix_time(epoch + bias)
+	return "%02d/%02d/%d às %02d:%02d" % [d["day"], d["month"], d["year"], d["hour"], d["minute"]]
+
+
 func _fmt_when(epoch: int) -> String:
 	if epoch <= 0:
 		return ""
@@ -3483,7 +3502,7 @@ func _viewer_input() -> void:
 	var d := _nav_dir()
 	if d != hold_dir:
 		hold_dir = d
-		if d.x != 0 and shots.size() > 1:
+		if d.x != 0 and shots.size() > 1 and viewer_idx >= 0:   # -1 = foto de troféu (sozinha)
 			viewer_idx = wrapi(viewer_idx + d.x, 0, shots.size())
 			_viewer_load()
 			_play("tick")

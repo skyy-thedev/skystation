@@ -125,9 +125,55 @@ def ganhos():
         return {}
 
 
+FOTOS = os.path.join(SAVES, "trofeus-fotos")
+
+
+def fotos():
+    try:
+        with open(os.path.join(FOTOS, "fotos.json")) as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def tirar_foto(ids):
+    """13.46: como no PS, a tela do momento em que o troféu veio (durante o jogo). grim captura a tela do
+    compositor (cage); com o jogo fechado ou sem grim, o troféu fica sem foto. Guarda o jogo e a hora."""
+    pid_f = os.path.join(RUN, "game.pid")
+    try:
+        pid = int(open(pid_f).read().strip())
+        os.kill(pid, 0)
+    except (OSError, ValueError):
+        return
+    if not shutil.which("grim"):
+        return
+    os.makedirs(FOTOS, exist_ok=True)
+    base = os.path.join(FOTOS, f"{ids[0]}-{int(time.time())}")
+    try:
+        subprocess.run(["grim", "-t", "jpeg", "-q", "85", base + ".jpg"], timeout=5, capture_output=True)
+    except (OSError, subprocess.SubprocessError):
+        return
+    if not os.path.exists(base + ".jpg"):
+        return
+    try:
+        jogo = open(os.path.join(RUN, "game.title")).read().strip()
+    except OSError:
+        jogo = ""
+    d = fotos()
+    for i in ids:
+        d[i] = {"foto": base + ".jpg", "jogo": jogo, "t": int(time.time())}
+    with open(os.path.join(FOTOS, "fotos.json.tmp"), "w") as f:
+        json.dump(d, f, ensure_ascii=False)
+    os.replace(os.path.join(FOTOS, "fotos.json.tmp"), os.path.join(FOTOS, "fotos.json"))
+
+
 def listar():
     g = ganhos()
-    lst = [{"id": i, "nome": n, "desc": d, "nivel": lv, "ganho": int(g.get(i, 0))} for i, n, d, lv, _ in TROFEUS]
+    fs = fotos()
+    lst = [{"id": i, "nome": n, "desc": d, "nivel": lv, "ganho": int(g.get(i, 0)),
+            "foto": (fs.get(i) or {}).get("foto", "") if os.path.exists((fs.get(i) or {}).get("foto", "") or "/-") else "",
+            "jogo": (fs.get(i) or {}).get("jogo", "")} for i, n, d, lv, _ in TROFEUS]
     return {"ok": True, "ganhos": sum(1 for x in lst if x["ganho"]), "total": len(lst), "trofeus": lst,
             "convidado": CONVIDADO}
 
@@ -142,6 +188,11 @@ def conferir():
             novos.append((nome, nivel))
     if not novos:
         return []
+    ids_novos = [i for i, *_ in TROFEUS if i in g and g[i] >= int(time.time()) - 5]
+    try:
+        tirar_foto(ids_novos)
+    except Exception:
+        pass
     os.makedirs(SAVES, exist_ok=True)
     with open(os.path.join(SAVES, "trofeus.json.tmp"), "w") as f:
         json.dump(g, f)
