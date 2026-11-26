@@ -239,7 +239,8 @@ def sincronizar():
         grava_jogo(pasta, {"title": titulo, "type": "windows",
                            "exec": f"{SKY_BIN}/sky-pc jogar epic {app}", "cover": "cover.jpg", "color": "#2a2a2a",
                            "order": 51, "description": desc})
-        capa(os.path.join(pasta, "cover.jpg"), capas_epic(app))
+        lib = next((g for g in biblioteca_heroic("epic") if g.get("app_name") == app), {}) if heroic_ok else {}
+        capa(os.path.join(pasta, "cover.jpg"), capas_epic(app) + [lib.get("art_square", ""), lib.get("art_cover", "")])
         n += 1
     # 13.32: jogos instalados pelo Heroic (pela SkyStore ou pelo próprio Heroic) que não vieram do Windows
     if heroic_ok:

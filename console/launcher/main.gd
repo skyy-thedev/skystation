@@ -230,8 +230,8 @@ var launch_t: float = 0.0
 var splash_dormindo: bool = false
 # SkyStore em tela cheia (vitrine estilo loja de console)
 const LOJA_ABAS := ["Destaques", "Jogos", "Apps", "Emuladores", "PC", "Instalados"]   # 13.18: Emuladores; 13.32: PC
-const LOJA_CORES := {"app": "2b6cb0", "jogo": "9b2c2c", "tema": "6b46c1", "emulador": "2f855a"}
-const LOJA_TIPOS := {"app": "App", "jogo": "Jogo", "tema": "Tema", "emulador": "Emulador"}
+const LOJA_CORES := {"app": "2b6cb0", "jogo": "9b2c2c", "tema": "6b46c1", "emulador": "2f855a", "pc": "1f3b57"}
+const LOJA_TIPOS := {"app": "App", "jogo": "Jogo", "tema": "Tema", "emulador": "Emulador", "pc": "PC"}
 var store_open: bool = false
 var store_t: float = 0.0
 var store_tab: int = 0
@@ -3888,13 +3888,8 @@ func _draw_item(it: Dictionary, c: Vector2, sel: float, a: float, is_cur: bool) 
 			_draw_cover(cover, r, a)
 			_rrect(r, Color(0, 0, 0, 0), 9, Color(1, 1, 1, 0.22 * a + 0.4 * sel * a), 2 if sel > 0.5 else 1)
 		else:
-			_rrect(r, Color(col.darkened(0.45), 0.92 * a), 10, Color(col.lightened(0.2), 0.7 * a), 2)
-			var ini := ""
-			for word in str(it["title"]).split(" ", false).slice(0, 2):
-				ini += word.substr(0, 1).to_upper()
-			var fs := int(ih * 0.32)
-			_text(ini, Vector2(r.position.x, c.y + fs * 0.35), fs, Color(col.lightened(0.45), a), true, iw,
-				HORIZONTAL_ALIGNMENT_CENTER)
+			_capa_gerada(r, str(it["title"]), _rotulo_jogo(it.get("game", {})), col, a)
+			_rrect(r, Color(0, 0, 0, 0), 9, Color(1, 1, 1, 0.22 * a + 0.4 * sel * a), 2 if sel > 0.5 else 1)
 	else:
 		var gcol: Color = it["color"] if it.get("kind", "") == "action" and it["color"].a > 0.0 else WHITE
 		_icon(str(it["glyph"]), c, ih * 0.72, Color(gcol, a * (gcol.a if gcol != WHITE else 1.0)))
@@ -4683,6 +4678,43 @@ func _store_input_item(passo: Vector2i) -> void:
 
 # ---- desenho
 
+func _capa_gerada(r: Rect2, titulo: String, rotulo: String, col: Color, a: float, icone: Texture2D = null, glyph: String = "") -> void:
+	# 13.41: item sem capa (jogo do HD, emulador, app) vira uma "caixa" no estilo do PS: faixa de cima com a
+	# plataforma, gradiente da cor do item, ícone do app (quando houver) e o título em até 3 linhas.
+	if col.get_luminance() < 0.25:   # capas de jogo de PC vêm com cores quase pretas: clareia para ter volume
+		col = col.lightened(0.22)
+	_rrect(r, Color(col.darkened(0.55), a), 10)
+	_grad(r.grow(-1), Color(col.darkened(0.15), 0.95 * a), Color(col.darkened(0.75), 0.95 * a), false)
+	var fh := clampf(r.size.y * 0.13, 12.0, 34.0)
+	_rrect(Rect2(r.position, Vector2(r.size.x, fh)), Color(0, 0, 0, 0.45 * a), 10)
+	var fs_r := int(clampf(fh * 0.55, 8.0, 18.0))
+	_text(_fit(rotulo.to_upper(), fs_r, r.size.x - 10.0, true), Vector2(r.position.x, r.position.y + fh * 0.5 + fs_r * 0.38),
+		fs_r, Color(WHITE, 0.85 * a), true, r.size.x, HORIZONTAL_ALIGNMENT_CENTER)
+	var meio := r.position.y + fh + (r.size.y - fh) * 0.36
+	var lado := minf(r.size.x * 0.5, (r.size.y - fh) * 0.4)
+	if icone != null:
+		draw_texture_rect(icone, Rect2(r.get_center().x - lado / 2.0, meio - lado / 2.0, lado, lado), false, Color(1, 1, 1, a))
+	elif glyph != "":
+		_icon(glyph, Vector2(r.get_center().x, meio), lado * 0.9, Color(WHITE, 0.85 * a))
+	var fs := int(clampf(r.size.x * 0.13 * (0.72 if titulo.length() > 28 else (0.85 if titulo.length() > 16 else 1.0)), 8.0, 26.0))
+	var ty := r.position.y + fh + (r.size.y - fh) * 0.68 if (icone != null or glyph != "") else r.get_center().y - fs * 0.4
+	draw_multiline_string(font_bold, Vector2(r.position.x + 6.0, ty), titulo, HORIZONTAL_ALIGNMENT_CENTER,
+		r.size.x - 12.0, fs, 3, Color(WHITE, 0.95 * a))
+
+
+func _rotulo_jogo(g: Dictionary) -> String:
+	var gid := str(g.get("id", ""))
+	if gid.begins_with("pc-steam-"):
+		return "Steam"
+	if gid.begins_with("pc-epic-"):
+		return "Epic Games"
+	if gid.begins_with("pc-gog-"):
+		return "GOG"
+	if str(g.get("sys", "")) != "" and ROM_SYSTEMS.has(str(g["sys"])):
+		return str(ROM_SYSTEMS[str(g["sys"])]["name"])
+	return str(TYPE_NAMES.get(str(g.get("type", "")), "SkyStation"))
+
+
 func _grad(r: Rect2, c1: Color, c2: Color, horizontal: bool = true) -> void:
 	var pts := PackedVector2Array([r.position, r.position + Vector2(r.size.x, 0), r.end, r.position + Vector2(0, r.size.y)])
 	var cs := PackedColorArray([c1, c2, c2, c1]) if horizontal else PackedColorArray([c1, c1, c2, c2])
@@ -4709,15 +4741,20 @@ func _store_arte(i: Dictionary, r: Rect2, a: float, raio: int = 10) -> void:
 		_draw_cover(tex, r, a)
 		return
 	var col := _store_cor(i)
-	_rrect(r, Color(col.darkened(0.35), a), raio)
-	_grad(r.grow(-2), Color(col.lightened(0.15), 0.0), Color(0, 0, 0, 0.35 * a), false)
-	var ini := ""
-	for p in str(i.get("nome", "?")).split(" ", false).slice(0, 2):
-		ini += p.substr(0, 1).to_upper()
-	var fs := int(r.size.y * 0.26)
-	_text(ini, Vector2(r.position.x, r.get_center().y + fs * 0.35), fs, Color(WHITE, 0.92 * a), true,
-		r.size.x, HORIZONTAL_ALIGNMENT_CENTER)
-	_icon("download", Vector2(r.end.x - 22, r.end.y - 22), 18.0, Color(WHITE, 0.5 * a))
+	var tipo := str(i.get("tipo", "jogo"))
+	var rot := str(i.get("sistema_curto", ""))
+	if rot == "":
+		rot = str(i.get("autor", "")) if tipo == "pc" else str(LOJA_TIPOS.get(tipo, "SkyStore"))
+	var ic: Texture2D = null
+	var ip := str(i.get("icone", ""))
+	if ip != "":
+		if not store_tex.has(ip):
+			store_tex[ip] = _load_tex(ip)
+		ic = store_tex[ip]
+	var gl := ""
+	if ic == null:
+		gl = {"emulador": "pad", "app": "apps", "pc": "monitor", "jogo": "pad", "tema": "palette"}.get(tipo, "apps")
+	_capa_gerada(r, str(i.get("nome", "?")), rot, col, a, ic, gl)
 
 
 func _store_chip(txt: String, pos: Vector2, col: Color, a: float, cheio: bool = true) -> float:

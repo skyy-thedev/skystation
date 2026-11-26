@@ -272,6 +272,7 @@ def estado(rede=True):
             anterior = versao_instalada(dict(e, pasta=e["pasta"] + ".anterior"))
         itens.append({
             "id": e["id"], "nome": e["nome"], "tipo": e.get("tipo", "emulador"), "sistema": e.get("sistema", ""),
+            "flatpak": e.get("flatpak", "").split("//")[0],
             "resumo": e["resumo"], "jeito": e["jeito"], "instalado": tem, "nova": nova,
             "atualizar": bool(tem and nova and tem != nova),
             "verificado": v.get("versao", "") if arq and os.path.exists(arq) else "",

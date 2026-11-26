@@ -110,6 +110,28 @@ def _data(ts):
     return time.strftime("%d/%m/%Y", time.localtime(ts)) if ts else ""
 
 
+FLATPAK_ICONES = ["/var/lib/flatpak/exports/share/icons/hicolor/{t}/apps/{i}.png",
+                  "/var/lib/flatpak/appstream/flathub/x86_64/active/icons/{t}/{i}.png"]
+
+
+def icone_flatpak(app_id):
+    """13.41: o ícone que o próprio app publica (instalado) ou o do catálogo do Flathub (antes de instalar)."""
+    if not app_id:
+        return ""
+    for t in ("256x256", "128x128", "64x64"):
+        for modelo in FLATPAK_ICONES:
+            c = modelo.format(t=t, i=app_id)
+            if os.path.isfile(c):
+                return c
+    return ""
+
+
+def curto(sistema, nome):
+    if not sistema:
+        return ""
+    return "RetroArch" if "," in sistema else sistema
+
+
 def itens_sistema():
     """13.18: emuladores e apps do sistema, no mesmo formato dos itens do servidor."""
     if not os.access(EMULADORES, os.X_OK):
@@ -152,6 +174,7 @@ def itens_sistema():
         if t.get("fim") and t.get("ok") is False and time.time() - t.get("t", 0) < 86400:
             desc += f"\n\nÚltima tentativa: {t.get('message', '')}"
         itens.append({
+            "icone": icone_flatpak(e.get("flatpak", "")), "sistema_curto": curto(e.get("sistema", ""), e["nome"]),
             "slug": SISTEMA + e["id"], "nome": e["nome"], "tipo": tipo, "resumo": e.get("resumo", ""),
             "descricao": desc, "autor": "Projeto oficial" if tipo == "emulador" else "SkyStation",
             "oficial": True, "sistema": True, "instalavel": True, "instalado": tem,
