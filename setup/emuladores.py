@@ -17,6 +17,7 @@ pendrive do sistema (~/skystation/emuladores/verificados.json), fora do alcance 
 restaurar, um arquivo trocado no HD é recusado.
 """
 import hashlib
+import glob
 import json
 import os
 import pwd
@@ -290,6 +291,32 @@ def estado(rede=True):
 
 # ---------------------------------------------------------------- pedidos (jogador -> serviço root)
 
+def limpar_sistema():
+    """Root: pacotes baixados antigos (fica 1 versão), registros acima de 50 MB, coredumps e bases Flatpak que
+    nenhum app usa mais. Nada que um app instalado precise."""
+    antes = shutil.disk_usage("/").free
+    with open(LOG, "a") as log:
+        log.write(f"--- limpar sistema {time.ctime()}\n")
+        if shutil.which("paccache"):
+            subprocess.run(["paccache", "-rk1"], stdout=log, stderr=log, timeout=600)
+            subprocess.run(["paccache", "-ruk0"], stdout=log, stderr=log, timeout=600)
+        elif shutil.which("pacman"):
+            subprocess.run(["pacman", "-Sc", "--noconfirm"], stdout=log, stderr=log, timeout=600)
+        if shutil.which("journalctl"):
+            subprocess.run(["journalctl", "--vacuum-size=50M"], stdout=log, stderr=log, timeout=300)
+        for f in glob.glob("/var/lib/systemd/coredump/*"):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        if shutil.which("flatpak"):
+            subprocess.run(["flatpak", "uninstall", "--system", "--unused", "-y", "--noninteractive"],
+                           stdout=log, stderr=log, timeout=1800)
+    os.makedirs(VAR, exist_ok=True)
+    with open(os.path.join(VAR, "limpeza.json"), "w") as f:
+        json.dump({"t": int(time.time()), "liberado": max(0, shutil.disk_usage("/").free - antes)}, f)
+
+
 def pedir(acao, i):
     if acao not in ACOES or (i != "todos" and i not in POR_ID):
         return {"ok": False, "error": "pedido inválido"}
@@ -321,6 +348,8 @@ def pedidos():
             alvo = n[len("emuladores-"):]
             if acao == "semanal":                       # o atualizar.sh: só o que não foi conferido há 7 dias
                 fazer("atualizar", "todos", semanal=True)
+            elif acao == "limpar" and alvo == "sistema":   # 13.47: Liberar espaço (tela Armazenamento)
+                limpar_sistema()
             elif acao in ACOES and (alvo == "todos" or alvo in POR_ID):
                 fazer(acao, alvo)
             feitos += 1

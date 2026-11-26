@@ -683,6 +683,57 @@ def _du(path):
     return total
 
 
+def _du_rapido(path):
+    """du -sxb (mais rápido que os.walk em pastas com milhares de arquivos, como o Flatpak); 0 se faltar."""
+    if not os.path.exists(path):
+        return 0
+    try:
+        r = subprocess.run(["du", "-sxb", path], capture_output=True, text=True, timeout=25)
+        return int(r.stdout.split()[0]) if r.stdout.strip() else 0
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return 0
+
+
+def limpar():
+    """13.47: Liberar espaço. Só o que se recria sozinho: caches de apps e do sistema, downloads pela metade
+    da Steam, logs. NÃO apaga saves, jogos, prefixos do Proton, shaders compilados dos jogos (recompilar
+    dá engasgo) nem as cópias verificadas dos emuladores. A parte do sistema (root) vai por pedido."""
+    antes = shutil.disk_usage("/").free
+    apagar = []
+    cache = os.path.join(HOME, ".cache")
+    for n in os.listdir(cache) if os.path.isdir(cache) else []:
+        if n in ("skystation", "mesa_shader_cache", "mesa_shader_cache_db", "radv_builtin_shaders", "nvidia", "fontconfig"):
+            continue
+        apagar.append(os.path.join(cache, n))
+    var_app = os.path.join(HOME, ".var/app")
+    for app in os.listdir(var_app) if os.path.isdir(var_app) else []:
+        apagar.append(os.path.join(var_app, app, "cache"))
+    steam = os.path.join(var_app, "com.valvesoftware.Steam/.local/share/Steam")
+    for sub in ("steamapps/downloading", "steamapps/temp", "logs", "dumps", "appcache/httpcache", "config/htmlcache"):
+        apagar.append(os.path.join(steam, sub))
+    apagar.append(os.path.join(var_app, "com.heroicgameslauncher.hgl/.local/state/Heroic/logs"))
+    for p in apagar:
+        if os.path.islink(p) or not os.path.exists(p):
+            continue
+        if os.path.isdir(p):
+            shutil.rmtree(p, ignore_errors=True)
+        else:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+    pedido = ""
+    if os.path.isdir("/var/lib/skystation/pedidos"):
+        try:
+            with open("/var/lib/skystation/pedidos/emuladores-sistema.tmp", "w") as f:
+                f.write(f"limpar {time.time():.3f}\n")
+            os.replace("/var/lib/skystation/pedidos/emuladores-sistema.tmp", "/var/lib/skystation/pedidos/emuladores-sistema")
+            pedido = "pacotes antigos, registros e bases Flatpak sem uso"
+        except OSError:
+            pass
+    out({"ok": True, "liberado": max(0, shutil.disk_usage("/").free - antes), "sistema": pedido})
+
+
 def uso():
     """Quanto cada coisa ocupa (tela Armazenamento, Fase 6.2)."""
     sky = os.path.join(HOME, "skystation")
@@ -699,9 +750,21 @@ def uso():
             itens[-1][1] += b
         else:
             itens.append([nome, b])
+    # 13.47: o resto não é mais um bloco só — o que mais cresce são os apps de PC e os caches
+    var_app = os.path.join(HOME, ".var/app")
+    for nome, caminho in (("Steam (app, Proton e jogos no pendrive)", os.path.join(var_app, "com.valvesoftware.Steam")),
+                          ("Heroic (app e Proton)", os.path.join(var_app, "com.heroicgameslauncher.hgl")),
+                          ("Jogos e prefixos do Heroic", os.path.join(HOME, "Games")),
+                          ("Prefixos dos jogos da Steam (HD)", os.path.join(HOME, ".local/share/skystation/pc")),
+                          ("Apps Flatpak (bases)", "/var/lib/flatpak"),
+                          ("Caches (recriáveis)", os.path.join(HOME, ".cache")),
+                          ("Pacotes baixados do sistema", "/var/cache/pacman/pkg"),
+                          ("Registros do sistema", "/var/log/journal")):
+        itens.append([nome, _du_rapido(caminho)])
     itens = [i for i in itens if i[1] > 0]
     usado = u.total - u.free
     itens.append(["Sistema e emuladores", max(0, usado - sum(i[1] for i in itens))])
+    itens.sort(key=lambda i: -i[1])
     res = {"ok": True, "total": u.total, "livre": u.free, "itens": itens, "skyroms": None}
     if mounted(SKYROMS):
         s = shutil.disk_usage(SKYROMS)
@@ -719,6 +782,8 @@ def main():
         conferir(a[1])
     elif a[0] == "uso":
         uso()
+    elif a[0] == "limpar":
+        limpar()
     elif a[0] == "mover" and len(a) == 3:
         mover(a[1], a[2])
     elif a[0] == "apagar" and len(a) == 2:

@@ -677,7 +677,9 @@ func _handle_input(delta: float) -> void:
 			_close_receive()
 		return
 	if not storage_data.is_empty():
-		if Input.is_action_just_pressed("sky_back") or Input.is_action_just_pressed("sky_accept"):
+		if Input.is_action_just_pressed("sky_accept") and not bool(storage_data.get("limpando", false)):
+			_liberar_espaco()   # 13.47
+		elif Input.is_action_just_pressed("sky_back"):
 			storage_data = {}
 			_play("back")
 		return
@@ -3296,16 +3298,27 @@ const STORAGE_COLORS := ["#8b7cf6", "#4f8cff", "#b06cf0", "#3fbf6b", "#ffb347", 
 
 
 func _open_storage() -> void:
-	var out: Array = []
-	if FileAccess.file_exists(SKY_BIN + "/sky-jogos"):
-		OS.execute(SKY_BIN + "/sky-jogos", ["uso"], out)
-	var d = JSON.parse_string(str(out[0]).strip_edges()) if not out.is_empty() and str(out[0]).begins_with("{") else null
-	if typeof(d) != TYPE_DICTIONARY or not d.get("ok", false):
-		_refresh_status()
-		_toast(disk_detail, 4.0, "drive")
-		return
-	storage_data = d
+	# 13.47: medir as pastas grandes (Flatpak, Steam) leva alguns segundos: em segundo plano, sem travar o menu
+	busy_msg = "Medindo o espaço…"
+	_bg(_run_json.bind(SKY_BIN + "/sky-jogos", ["uso"]), func(d):
+		busy_msg = ""
+		if typeof(d) != TYPE_DICTIONARY or not d.get("ok", false):
+			_refresh_status()
+			_toast(disk_detail, 4.0, "drive")
+			return
+		storage_data = d
+		_play("accept"))
+
+
+func _liberar_espaco() -> void:
+	storage_data["limpando"] = true
 	_play("accept")
+	_bg(_run_json.bind(SKY_BIN + "/sky-jogos", ["limpar"]), func(r):
+		var lib := float(r.get("liberado", 0)) if typeof(r) == TYPE_DICTIONARY else 0.0
+		var sis := str(r.get("sistema", "")) if typeof(r) == TYPE_DICTIONARY else ""
+		_toast("Liberados %s agora%s" % [_gb(lib), ("; o sistema limpa " + sis + " em segundo plano") if sis != "" else ""], 6.0, "drive")
+		storage_data = {}
+		_open_storage())
 
 
 func _gb(b: float) -> String:
@@ -3352,7 +3365,10 @@ func _draw_storage(w: float, h: float) -> void:
 		y += 18.0
 		_rrect(Rect2(x, y, bw, 18), Color(1, 1, 1, 0.08), 6)
 		draw_rect(Rect2(x, y, bw * (st - sf) / st, 18), accent)
-	_text("B  fechar", Vector2(x, r.end.y - 28), 15, DIM)
+	if bool(storage_data.get("limpando", false)):
+		_text("Liberando espaço…", Vector2(x, r.end.y - 28), 15, accent.lightened(0.3))
+	else:
+		_text("A  liberar espaço (caches, downloads pela metade, registros)      B  fechar", Vector2(x, r.end.y - 28), 15, DIM)
 
 
 # ---------------------------------------------------------------- música ambiente
