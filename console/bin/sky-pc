@@ -117,6 +117,10 @@ def ajustar_steam(libs):
     (ela reescreve esses arquivos ao sair). Na 1ª vez a Steam ainda não criou nada: fica para depois."""
     if not os.path.isdir(os.path.join(STEAM_DIR, "steamapps")) or rodando("steamwebhelper|/app/bin/steam|ubuntu12_32/steam"):
         return False
+    try:
+        steam_limites()
+    except (OSError, ValueError, IndexError):
+        pass
     mudou = False
     lf = os.path.join(STEAM_DIR, "steamapps/libraryfolders.vdf")
     try:
@@ -792,7 +796,7 @@ def antes_do_jogo_heroic():
     controle_xinput_todos()
 
 
-def rodar_heroic_com_xpad(url):
+def rodar_heroic_com_xpad(url, gid=""):
     """13.35: o jogo do Heroic recebe um controle de Xbox 360 virtual (sky-xpad) no lugar do DualShock,
     que fica escondido do jogo (SDL_GAMECONTROLLER_IGNORE_DEVICES). O espelho vive enquanto o jogo roda."""
     xpad = os.path.join(SKY_BIN, "sky-xpad")
@@ -808,6 +812,10 @@ def rodar_heroic_com_xpad(url):
         signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
         if ign:
             env_args = [f"--env=SDL_GAMECONTROLLER_IGNORE_DEVICES={ign}", "--env=SDL_JOYSTICK_HIDAPI=0"]
+    # 13.43: geração de quadros ligada → o jogo fica preso em tela ÷ multiplicador (DXVK = DX9-11, vkd3d = DX12)
+    lim = limite_fps(gid)
+    if lim:
+        env_args += [f"--env=DXVK_FRAME_RATE={lim}", f"--env=VKD3D_FRAME_RATE={lim}"]
     # Heroic já aberto não pegaria as variáveis novas: fecha (se não estiver baixando nada)
     if rodando("/app/bin/heroic|heroic/heroic ") and not rodando("legendary|gogdl"):
         subprocess.run(["flatpak", "kill", HEROIC_ID], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -835,7 +843,7 @@ def jogar_gog(app):
     if not flatpak_tem(HEROIC_ID):
         return falha("Instale o Heroic pela SkyStore (aba Apps).")
     antes_do_jogo_heroic()
-    return rodar_heroic_com_xpad(f"heroic://launch?appName={app}&runner=gog&gui=false")
+    return rodar_heroic_com_xpad(f"heroic://launch?appName={app}&runner=gog&gui=false", f"pc-gog-{app}")
 
 
 def jogar_steam(appid):
@@ -858,7 +866,7 @@ def jogar_epic(app):
         if jg and not importar_epic(app, jg["ponto"]):
             return falha("Não consegui importar o jogo do HD no Heroic. Abra o Heroic (Apps) e confira a conta Epic.")
     antes_do_jogo_heroic()
-    return rodar_heroic_com_xpad(f"heroic://launch?appName={app}&runner=legendary&gui=false")
+    return rodar_heroic_com_xpad(f"heroic://launch?appName={app}&runner=legendary&gui=false", f"pc-epic-{app}")
 
 
 def epic_logado():
@@ -1276,6 +1284,88 @@ def gerar_conf_lsfg():
     return len(perfis), dll
 
 
+def taxa_tela():
+    """Hz da tela (xrandr do Xwayland/X11); 60 se não der para saber."""
+    try:
+        r = subprocess.run(["xrandr", "--current"], capture_output=True, text=True, timeout=5).stdout
+        m = re.search(r"(\d+(?:\.\d+)?)\*", r)
+        if m:
+            return max(30, int(round(float(m.group(1)))))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    return 60
+
+
+def limite_fps(gid):
+    """13.43: com geração de quadros, o jogo é limitado a tela ÷ multiplicador (60 Hz e 2x → 30). Sem isso o
+    jogo roda solto (ex.: 38 FPS → 76 gerados) e a tela de 60 Hz descarta quadros de forma irregular: engasgo.
+    0 = sem limite (geração desligada ou limite desligado no SkyStation)."""
+    if not gid:
+        return 0
+    c = fg_ler().get(gid, {})
+    mult = int(c.get("mult", 0) or 0)
+    if mult < 2 or c.get("limite") is False:
+        return 0
+    return max(15, taxa_tela() // mult)
+
+
+MARCA_LO = re.compile(r"^DXVK_FRAME_RATE=\d+ VKD3D_FRAME_RATE=\d+ (?:%command%\s*)?")
+
+
+def steam_limites():
+    """Opções de inicialização da Steam (localconfig.vdf de cada conta): o SkyStation põe/tira só o prefixo
+    dele ('DXVK_FRAME_RATE=N VKD3D_FRAME_RATE=N %command%'); o que você escreveu na Steam fica igual.
+    Antes de mudar, guarda uma cópia em ~/.local/state/skystation/backups (Project Previne, regra 3)."""
+    regras = {}
+    for gid in list(fg_ler()) + [f"pc-steam-{x}" for x in steam_com_marca()]:
+        if gid.startswith("pc-steam-"):
+            regras[gid[len("pc-steam-"):]] = limite_fps(gid)
+    if not regras:
+        return
+    for lc in glob.glob(os.path.join(STEAM_DIR, "userdata/*/config/localconfig.vdf")):
+        txt = open(lc, encoding="utf-8", errors="surrogateescape").read()
+        d = vdf_ler(txt)
+        apps = d.setdefault("UserLocalConfigStore", {}).setdefault("Software", {}).setdefault("Valve", {}) \
+            .setdefault("Steam", {}).setdefault("apps", {})
+        mudou = False
+        for appid, lim in regras.items():
+            app = apps.setdefault(appid, {}) if lim else apps.get(appid)
+            if app is None:
+                continue
+            atual = str(app.get("LaunchOptions", ""))
+            resto = MARCA_LO.sub("", atual).strip()
+            if lim:
+                novo = f"DXVK_FRAME_RATE={lim} VKD3D_FRAME_RATE={lim} %command%" + (" " + resto if resto and "%command%" not in resto else "")
+                if "%command%" in resto:
+                    novo = f"DXVK_FRAME_RATE={lim} VKD3D_FRAME_RATE={lim} " + resto
+            else:
+                novo = resto
+            if novo != atual:
+                if novo:
+                    app["LaunchOptions"] = novo
+                else:
+                    app.pop("LaunchOptions", None)
+                mudou = True
+        if mudou:
+            bk = os.path.join(HOME, ".local/state/skystation/backups")
+            os.makedirs(bk, exist_ok=True)
+            copia = os.path.join(bk, "localconfig-" + lc.split("/userdata/")[1].split("/")[0] + time.strftime("-%Y%m%d.vdf"))
+            if not os.path.exists(copia):
+                shutil.copy2(lc, copia)
+            with open(lc + ".tmp", "w", encoding="utf-8", errors="surrogateescape") as f:
+                f.write(vdf_escrever(d))
+            os.replace(lc + ".tmp", lc)
+
+
+def steam_com_marca():
+    """appids da Steam que ainda têm o prefixo do SkyStation (para tirar quando a geração for desligada)."""
+    ids = set()
+    for lc in glob.glob(os.path.join(STEAM_DIR, "userdata/*/config/localconfig.vdf")):
+        for m in re.finditer(r'"(\d+)"\s*\{[^{}]*"LaunchOptions"\s*"DXVK_FRAME_RATE=', open(lc, errors="replace").read()):
+            ids.add(m.group(1))
+    return ids
+
+
 def fg(gid, mult):
     """Liga (2x, 3x, 4x) ou desliga (0) a geração de quadros de um jogo de PC."""
     d = fg_ler()
@@ -1293,6 +1383,8 @@ def fg(gid, mult):
         json.dump(d, f, ensure_ascii=False, indent=1)
     os.replace(FG_JSON + ".tmp", FG_JSON)
     n, dll = gerar_conf_lsfg()
+    if gid.startswith("pc-steam-"):
+        ajustar_steam(bibliotecas().get("steam", []))   # com a Steam aberta, fica para quando ela fechar
     aviso = ""
     if mult >= 2:
         if not lsfg_instalado():
@@ -1301,7 +1393,7 @@ def fg(gid, mult):
             aviso = "Baixe o Lossless Scaling na Steam (não precisa abrir): o SkyStation usa o arquivo dele."
         elif not exes_do_jogo(gid):
             aviso = "Não achei o executável deste jogo: confira se ele está instalado."
-    return {"ok": True, "jogo": gid, "mult": mult, "perfis": n, "dll": dll, "aviso": aviso}
+    return {"ok": True, "jogo": gid, "mult": mult, "perfis": n, "dll": dll, "aviso": aviso, "limite": limite_fps(gid)}
 
 
 def main():

@@ -2989,8 +2989,13 @@ func _set_fg(game_id: String, nxt: int) -> void:
 				aviso = str(j.get("aviso", ""))
 			var why := {0: "o jogo roda só com os quadros reais", 2: "1 quadro criado entre 2 reais: o mais estável",
 				3: "2 quadros criados: mais fluido, mais atraso", 4: "3 quadros criados: só se o jogo já passa de 40 FPS"}
+			var lim := int(j.get("limite", 0)) if typeof(j) == TYPE_DICTIONARY else 0
 			if aviso != "":
 				_toast("Geração de quadros: %s. %s" % [_fg_nome(nxt), aviso], 6.0, "gauge")
+			elif lim > 0 and lim < 30:
+				_toast("Geração %dx: nesta tela o jogo fica preso em %d FPS reais e responde devagar. Prefira 2x." % [nxt, lim], 6.0, "gauge")
+			elif lim > 0:
+				_toast("Geração %dx: jogo limitado a %d FPS reais → %d na tela, sem engasgo" % [nxt, lim, lim * nxt], 4.5, "gauge")
 			else:
 				_toast("Geração de quadros: %s (%s)" % [_fg_nome(nxt), why[nxt]], 3.5, "gauge")
 			_reload_games())
