@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import time
@@ -353,6 +354,126 @@ def baixar_capas(urls):
     return 0
 
 
+# ---------------------------------------------------------------- 13.42: biblioteca da Steam
+
+def _kv_binario(buf, pos, chaves):
+    """KeyValues binário da Steam. chaves = tabela de strings (appinfo v29) ou None (chave inline)."""
+    d = {}
+    n = len(buf)
+    while pos < n:
+        t = buf[pos]
+        pos += 1
+        if t in (0x08, 0x0B):
+            return d, pos
+        if chaves is not None:
+            k = chaves[struct.unpack_from("<i", buf, pos)[0]]
+            pos += 4
+        else:
+            fim = buf.index(b"\0", pos)
+            k = buf[pos:fim].decode("utf-8", "replace")
+            pos = fim + 1
+        if t == 0x00:
+            v, pos = _kv_binario(buf, pos, chaves)
+        elif t == 0x01:
+            fim = buf.index(b"\0", pos)
+            v = buf[pos:fim].decode("utf-8", "replace")
+            pos = fim + 1
+        elif t in (0x02, 0x04, 0x06):
+            v = struct.unpack_from("<i", buf, pos)[0]
+            pos += 4
+        elif t == 0x03:
+            v = struct.unpack_from("<f", buf, pos)[0]
+            pos += 4
+        elif t in (0x07, 0x0A):
+            v = struct.unpack_from("<q", buf, pos)[0]
+            pos += 8
+        else:
+            raise ValueError(f"tipo {t}")
+        d[k] = v
+    return d, pos
+
+
+def appinfo_jogos(caminho, queremos=None):
+    """{appid: {"nome", "tipo"}} do appinfo.vdf da Steam (versões 27, 28 e 29 do formato).
+    queremos = conjunto de appids para ler só esses (o arquivo tem dezenas de milhares de apps)."""
+    try:
+        buf = open(caminho, "rb").read()
+    except OSError:
+        return {}
+    if len(buf) < 8:
+        return {}
+    magic = struct.unpack_from("<I", buf, 0)[0]
+    if magic not in (0x07564427, 0x07564428, 0x07564429):
+        return {}
+    pos, chaves = 8, None
+    if magic == 0x07564429:
+        off = struct.unpack_from("<q", buf, 8)[0]
+        pos = 16
+        qtd = struct.unpack_from("<I", buf, off)[0]
+        chaves, p = [], off + 4
+        for _ in range(qtd):
+            fim = buf.index(b"\0", p)
+            chaves.append(buf[p:fim].decode("utf-8", "replace"))
+            p = fim + 1
+    cab = 4 + 4 + 8 + 20 + 4 + (0 if magic == 0x07564427 else 20)
+    out = {}
+    while pos + 8 <= len(buf):
+        appid, tam = struct.unpack_from("<II", buf, pos)
+        if appid == 0:
+            break
+        ini = pos + 8
+        pos = ini + tam
+        if queremos is not None and appid not in queremos:
+            continue
+        try:
+            kv, _ = _kv_binario(buf, ini + cab, chaves)
+        except (ValueError, IndexError, struct.error):
+            continue
+        comum = (kv.get("appinfo") or {}).get("common") or {}
+        if comum.get("name"):
+            out[appid] = {"nome": comum["name"], "tipo": str(comum.get("type", "")).lower()}
+    return out
+
+
+def steam_capa_local(appid):
+    base = os.path.join(STEAM_DIR, "appcache/librarycache")
+    for padrao in (f"{appid}/library_600x900*.jpg", f"{appid}/*/library_600x900*.jpg", f"{appid}_library_600x900*.jpg"):
+        achados = glob.glob(os.path.join(base, padrao))
+        if achados:
+            return sorted(achados)[0]
+    return ""
+
+
+def steam_biblioteca():
+    """Os jogos da sua conta Steam: os que a Steam guardou na librarycache (biblioteca) + os instalados,
+    com nome e tipo pelo appinfo.vdf. Precisa ter aberto a Steam logado ao menos uma vez."""
+    ids = set()
+    base = os.path.join(STEAM_DIR, "appcache/librarycache")
+    for n in os.listdir(base) if os.path.isdir(base) else []:
+        m = re.match(r"^(\d+)", n)
+        if m:
+            ids.add(int(m.group(1)))
+    inst = {}
+    for lib in bibliotecas().get("steam", []) + [{"ponto": STEAM_DIR}]:
+        for mf in glob.glob(os.path.join(lib["ponto"], "steamapps/appmanifest_*.acf")):
+            a = acf(mf)
+            if str(a.get("appid", "")).isdigit():
+                inst[int(a["appid"])] = a.get("name", "")
+                ids.add(int(a["appid"]))
+    info = appinfo_jogos(os.path.join(STEAM_DIR, "appcache/appinfo.vdf"), ids)
+    jogos = []
+    for i in sorted(ids):
+        dado = info.get(i, {})
+        nome = dado.get("nome") or inst.get(i, "")
+        tipo = dado.get("tipo", "game" if i in inst else "")
+        if not nome or (tipo and tipo not in ("game", "demo")) or NAO_JOGO.search(nome):
+            continue
+        if not tipo and i not in inst:
+            continue
+        jogos.append({"appid": i, "nome": nome, "instalado": i in inst, "capa": steam_capa_local(i)})
+    return jogos
+
+
 def loja():
     """Itens da SkyStore (aba PC): sua biblioteca da Epic e da GOG (pelo Heroic) e os jogos da Steam no HD."""
     itens, faltam = [], []
@@ -402,8 +523,24 @@ def loja():
         itens.append(item("gog", app, g.get("title") or app, g.get("art_square") or g.get("art_cover", ""), tem, acoes,
                           "Na sua biblioteca da GOG.",
                           "" if tem else "\n\nO Heroic abre direto na instalação deste jogo: confirme a pasta lá."))
-    for p in sorted(glob.glob(os.path.join(JOGOS, "pc-steam-*"))):
+    vistos_steam = set()
+    for jg in steam_biblioteca() if steam_ok else []:
+        appid = str(jg["appid"])
+        vistos_steam.add(appid)
+        tem = jg["instalado"] or f"pc-steam-{appid}" in no_menu
+        cdn = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/library_600x900.jpg"
+        it = item("steam", appid, jg["nome"], "" if jg["capa"] else cdn, tem,
+                  [["Jogar", "abrir"]] if tem else [["Instalar pela Steam", "baixar"]],
+                  "Na sua biblioteca da Steam." if not tem else "Instalado na sua biblioteca da Steam.",
+                  "" if tem else "\n\nA Steam abre a tela de instalação: escolha a biblioteca do HD (Windows) para "
+                                 "o jogo também aparecer lá.")
+        if jg["capa"]:
+            it["capa_local"] = jg["capa"]
+        itens.append(it)
+    for p in sorted(glob.glob(os.path.join(JOGOS, "pc-steam-*"))):   # instalados que a biblioteca não listou
         appid = os.path.basename(p)[len("pc-steam-"):]
+        if appid in vistos_steam:
+            continue
         try:
             titulo = json.load(open(os.path.join(p, "game.json"))).get("title", appid)
         except (OSError, ValueError):
@@ -415,8 +552,10 @@ def loja():
         subprocess.Popen([os.path.abspath(__file__), "capas"] + faltam[:400], stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     aviso = ""
-    if not heroic_ok:
-        aviso = "Instale o Heroic (aba Apps) e entre na Epic e na GOG para ver sua biblioteca aqui."
+    if steam_ok and not any(i["loja_pc"] == "steam" for i in itens):
+        aviso = "Abra a Steam pelo menu e entre na sua conta: a biblioteca aparece aqui depois."
+    if not heroic_ok and not steam_ok:
+        aviso = "Instale a Steam ou o Heroic (aba Apps) para ver sua biblioteca de PC aqui."
     elif not itens:
         aviso = "Abra o Heroic, entre nas contas Epic e GOG e espere a biblioteca carregar: ela aparece aqui."
     return {"ok": True, "itens": itens, "aviso": aviso, "steam": steam_ok, "heroic": heroic_ok}
@@ -429,6 +568,14 @@ def _linha(d):
 def instalar_loja(loja_, app):
     """SkyStore → instala. Epic: o legendary do Heroic baixa direto no HD (com progresso na loja).
     GOG e Epic de terceiros (EA/Ubisoft): o Heroic abre na tela de instalação do jogo (um clique para confirmar)."""
+    if loja_ == "steam":
+        if not flatpak_tem(STEAM_ID):
+            return {"ok": False, "error": "Instale a Steam pela SkyStore (aba Apps)."}
+        ajustar_steam(bibliotecas().get("steam", []))
+        subprocess.Popen(["flatpak", "run", "--unset-env=QT_QPA_PLATFORM", STEAM_ID, "-gamepadui",
+                          f"steam://install/{app}"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        return {"ok": True, "message": "A Steam abriu na instalação: confirme lá. Quando terminar, o jogo aparece em PC."}
     if not flatpak_tem(HEROIC_ID):
         return {"ok": False, "error": "Instale o Heroic pela SkyStore (aba Apps)."}
     g = next((x for x in biblioteca_heroic(loja_) if str(x.get("app_name")) == app), None)
@@ -1184,7 +1331,8 @@ def main():
         return saida(loja())
     if cmd == "capas":
         return baixar_capas(a[1:])
-    if cmd == "instalar" and len(a) == 3 and a[1] in ("epic", "gog") and re.fullmatch(r"[A-Za-z0-9_-]+", a[2]):
+    if cmd == "instalar" and len(a) == 3 and (a[1] in ("epic", "gog") and re.fullmatch(r"[A-Za-z0-9_-]+", a[2])
+                                              or a[1] == "steam" and a[2].isdigit()):
         r = instalar_loja(a[1], a[2])
         _linha(r)
         return 0 if r.get("ok") else 1

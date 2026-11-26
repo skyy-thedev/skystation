@@ -465,7 +465,7 @@ def main():
         r = listar()
         r["itens"] = [i for i in r["itens"] if i.get("atualizar")]
         out(r)
-    elif cmd == "instalar" and len(a) > 1 and re.fullmatch(r"pc-(epic|gog)-[A-Za-z0-9_-]+", a[1]):
+    elif cmd == "instalar" and len(a) > 1 and re.fullmatch(r"pc-(epic|gog|steam)-[A-Za-z0-9_-]+", a[1]):
         out(tarefa_pc(a[1]))
         out({"evento": "fim"})
     elif cmd in ("instalar", "reinstalar", "restaurar", "voltar") and len(a) > 1 and a[1].startswith(SISTEMA) and valido(a[1]):
