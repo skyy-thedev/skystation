@@ -159,6 +159,10 @@ var panel_open: bool = false
 var panel_t: float = 0.0
 var panel_sel: int = 0
 var panel_items: Array = []
+# 13.39: seletor estilo PlayStation — uma opção com vários valores abre uma lista (▲▼ escolhe, X confirma,
+# O volta) em vez de trocar a cada aperto. {title, opts: [[rótulo, valor]], sel, cur, cb}
+var picker: Dictionary = {}
+var picker_t: float = 0.0
 
 var settings: Control = null
 var home_dir: String = OS.get_environment("HOME")
@@ -559,6 +563,7 @@ func _process(delta: float) -> void:
 	cat_smooth = lerp(cat_smooth, float(cat), k)
 	item_smooth = lerp(item_smooth, float(_cur_item()), k)
 	panel_t = move_toward(panel_t, 1.0 if panel_open else 0.0, delta * 6.0)
+	picker_t = move_toward(picker_t, 0.0 if picker.is_empty() else 1.0, delta * 8.0)
 	notif_t = move_toward(notif_t, 1.0 if notif_open else 0.0, delta * 6.5)
 	_tick_store(delta)
 	notif_scroll = lerp(notif_scroll, float(notif_sel), 1.0 - exp(-delta * 12.0))
@@ -666,6 +671,14 @@ func _handle_input(delta: float) -> void:
 			storage_data = {}
 			_play("back")
 		return
+	if not picker.is_empty():
+		if Input.is_action_just_pressed("sky_accept"):
+			_picker_pick()
+			return
+		if Input.is_action_just_pressed("sky_back") or Input.is_action_just_pressed("sky_menu"):
+			picker = {}
+			_play("back")
+			return
 	var d := _nav_dir()
 	if d != hold_dir:
 		hold_dir = d
@@ -691,6 +704,11 @@ func _handle_input(delta: float) -> void:
 
 
 func _move(d: Vector2i) -> void:
+	if not picker.is_empty():
+		if d.y != 0:
+			picker["sel"] = wrapi(int(picker["sel"]) + d.y, 0, picker["opts"].size())
+			_play("tick")
+		return
 	if panel_open:
 		if d.y != 0 and not panel_items.is_empty():
 			panel_sel = wrapi(panel_sel + d.y, 0, panel_items.size())
@@ -1738,6 +1756,9 @@ func _activate() -> void:
 		_open_slider(action.split(":")[1])
 		return
 	match action:
+		"theme", "fps", "hwprofile", "sounds", "music", "boot_sound", "tv", "touchpad", "wake_pad":
+			_abrir_seletor(action, false)
+			return
 		"storage":
 			_open_storage()
 		"power_info":
@@ -1766,7 +1787,7 @@ func _activate() -> void:
 		"touchpad":
 			_toggle_file(conf_dir + "/touchpad.off")
 			_refresh_sys_items()
-		"hwprofile":
+		"hwprofile_antigo":
 			# Automático -> Leve -> Potente -> Automático (vale para o próximo jogo aberto)
 			var cur := _read_text(conf_dir + "/perfil", "")
 			if cur == "":
@@ -1786,12 +1807,7 @@ func _activate() -> void:
 				DirAccess.remove_absolute(conf_dir + "/musica.off")
 			else:
 				_write_text(conf_dir + "/musica.off", "1")
-		"theme":
-			var i := THEME_ORDER.find(theme_key)
-			theme_key = THEME_ORDER[(i + 1) % THEME_ORDER.size()]
-			_write_text(conf_dir + "/tema", theme_key)
-			_apply_theme(false)
-		"sounds":
+		"sounds_antigo":
 			sounds_on = not sounds_on
 			if sounds_on:
 				DirAccess.remove_absolute(conf_dir + "/sons.off")
@@ -2036,6 +2052,22 @@ func _toggle_gamescope() -> void:
 	quit_at = t + 1.2   # a sessão reabre sozinha com o compositor novo (e volta ao cage se ele falhar)
 
 
+func _set_bench(m: int) -> void:
+	DirAccess.remove_absolute(conf_dir + "/bench.on")
+	DirAccess.remove_absolute(conf_dir + "/mangohud.on")
+	match m:
+		1:
+			_write_text(conf_dir + "/bench.on", "1")
+			_toast("Medição ligada: grava jogos e sistema em SKYROMS/benchmarks, sem contador na tela", 4.0)
+		2:
+			_write_text(conf_dir + "/mangohud.on", "1")
+			_toast("Medição com contador de FPS na tela + gravação")
+		_:
+			DirAccess.remove_absolute(run_dir + "/menu.fps")
+			_toast("Medição de desempenho desligada")
+	bench_menu = _fps_on()
+
+
 func _toggle_fps() -> void:
 	# desligada → só gravação → contador na tela → desligada
 	match _bench_modo():
@@ -2203,6 +2235,9 @@ func _toggle_panel() -> void:
 
 func _panel_choose() -> void:
 	var a: String = panel_items[panel_sel][1]
+	if a in ["ps2_speed", "fg", "fps", "theme"]:
+		_abrir_seletor(a, true)
+		return
 	panel_open = false
 	if a != "delete_game" and a != "loja_do:remover":
 		confirm_delete = false
@@ -2276,6 +2311,114 @@ func _panel_choose() -> void:
 
 
 # ---------------------------------------------------------------- tema, status, estado
+
+func _abrir_seletor(a: String, do_painel: bool) -> void:
+	var gid := ""
+	if do_painel and _cur().get("kind", "") == "game":
+		gid = str(_cur()["game"]["id"])
+	var liga := [["Ligado", true], ["Desligado", false]]
+	match a:
+		"ps2_speed":
+			var o := []
+			for k in SPEED_ORDER:
+				o.append([SPEED_NAMES[k], k])
+			_picker_open("Desempenho (PS2)", o, _ps2_speed(gid), func(v): _set_ps2_speed(gid, str(v)))
+		"fg":
+			var o := []
+			for m in FG_ORDEM:
+				o.append([_fg_nome(m).capitalize() if m < 2 else str(m) + "x", m])
+			_picker_open("Geração de quadros", o, _fg_mult(gid), func(v): _set_fg(gid, int(v)))
+		"fps":
+			_picker_open("Medição de desempenho", [["Desligada", 0], ["Só gravação", 1], ["Com contador na tela", 2]],
+				_bench_modo(), func(v): _set_bench(int(v)))
+		"theme":
+			var o := []
+			for k in THEME_ORDER:
+				o.append(["Automático (muda com a hora)" if k == "auto" else str(THEMES[k][0]), k])
+			_picker_open("Tema", o, theme_key, func(v):
+				theme_key = str(v)
+				_write_text(conf_dir + "/tema", theme_key)
+				_apply_theme(false)
+				_refresh_sys_items())
+		"hwprofile":
+			_picker_open("Perfil de desempenho", [["Automático", ""], ["Leve (bateria)", "leve"], ["Potente (na tomada)", "potente"]],
+				_read_text(conf_dir + "/perfil", "").strip_edges(), func(v):
+					if str(v) == "":
+						DirAccess.remove_absolute(conf_dir + "/perfil")
+					else:
+						_write_text(conf_dir + "/perfil", str(v))
+					_refresh_sys_items())
+		"sounds":
+			_picker_open("Sons do menu", liga, sounds_on, func(v):
+				sounds_on = bool(v)
+				if sounds_on:
+					DirAccess.remove_absolute(conf_dir + "/sons.off")
+				else:
+					_write_text(conf_dir + "/sons.off", "1")
+				_refresh_sys_items())
+		"music":
+			_picker_open("Música do menu", liga, music_on, func(v):
+				music_on = bool(v)
+				if music_on:
+					DirAccess.remove_absolute(conf_dir + "/musica.off")
+				else:
+					_write_text(conf_dir + "/musica.off", "1")
+				_refresh_sys_items())
+		"boot_sound", "tv", "touchpad", "wake_pad":
+			var arq: String = {"boot_sound": "/ligar.off", "tv": "/tv-grande.off", "touchpad": "/touchpad.off", "wake_pad": "/acordar.off"}[a]
+			var nome: String = {"boot_sound": "Som ao ligar", "tv": "Interface maior na TV", "touchpad": "Touchpad do controle", "wake_pad": "Ligar pelo controle"}[a]
+			_picker_open(nome, liga, not FileAccess.file_exists(conf_dir + arq), func(v):
+				if bool(v):
+					DirAccess.remove_absolute(conf_dir + arq)
+				else:
+					_write_text(conf_dir + arq, "1")
+				if a == "tv":
+					_apply_tv_scale()
+				if a == "boot_sound" and bool(v):
+					_play_file("ligar")
+				_refresh_sys_items())
+
+
+func _picker_open(title: String, opts: Array, cur, cb: Callable) -> void:
+	var sel := 0
+	for i in opts.size():
+		if opts[i][1] == cur:
+			sel = i
+	picker = {"title": title, "opts": opts, "sel": sel, "cur": cur, "cb": cb}
+	_play("accept")
+
+
+func _picker_pick() -> void:
+	var v = picker["opts"][int(picker["sel"])][1]
+	var cb: Callable = picker["cb"]
+	picker = {}
+	panel_open = false
+	_play("accept")
+	cb.call(v)
+	_refresh_sys_items()
+
+
+func _draw_picker(w: float, h: float) -> void:
+	# Lista por cima do painel/menu, como no PS4: o valor atual marcado com ●, a escolha com o destaque.
+	var e := picker_t * picker_t * (3.0 - 2.0 * picker_t)
+	var opts: Array = picker["opts"]
+	var bw := 440.0
+	var step := 52.0
+	var bh := 86.0 + step * opts.size()
+	var x := w * 0.5 - bw * 0.5
+	var y := clampf(h * 0.5 - bh * 0.5, 40.0, h - bh - 40.0) + (1.0 - e) * 24.0
+	draw_rect(Rect2(0, 0, w, h), Color(0, 0, 0, 0.45 * e))
+	_rrect(Rect2(x, y, bw, bh), Color(palette[1].darkened(0.45), 0.97 * e), 16, Color(accent, 0.45 * e), 1)
+	_text(str(picker["title"]), Vector2(x + 32, y + 46), 22, Color(WHITE, e), true)
+	for i in opts.size():
+		var yy := y + 76.0 + i * step
+		var on := i == int(picker["sel"])
+		var atual: bool = opts[i][1] == picker["cur"]
+		if on:
+			_rrect(Rect2(x + 16, yy, bw - 32, step - 8), Color(accent, 0.22 * e), 10, Color(accent, 0.6 * e), 1)
+		draw_circle(Vector2(x + 40, yy + (step - 8) * 0.5), 6.0, Color(accent if atual else MUTED, (1.0 if atual else 0.35) * e))
+		_text(str(opts[i][0]), Vector2(x + 62, yy + 30), 19, Color(WHITE if on else MUTED, e), on)
+
 
 func _theme_name() -> String:
 	if theme_key == "auto":
@@ -2696,12 +2839,15 @@ func _ps2_speed(game_id: String) -> String:
 
 
 func _cycle_ps2_speed(game_id: String) -> void:
+	var cur := _ps2_speed(game_id)
+	_set_ps2_speed(game_id, SPEED_ORDER[(SPEED_ORDER.find(cur) + 1) % SPEED_ORDER.size()])
+
+
+func _set_ps2_speed(game_id: String, nxt: String) -> void:
 	var txt := _read_text(conf_dir + "/ps2-desempenho.json", "{}")
 	var d = JSON.parse_string(txt) if txt.begins_with("{") else {}
 	if typeof(d) != TYPE_DICTIONARY:
 		d = {}
-	var cur := str(d.get(game_id, "auto"))
-	var nxt: String = SPEED_ORDER[(SPEED_ORDER.find(cur) + 1) % SPEED_ORDER.size()]
 	if nxt == "auto":
 		d.erase(game_id)
 	else:
@@ -2736,7 +2882,10 @@ func _fg_nome(m: int) -> String:
 
 
 func _cycle_fg(game_id: String) -> void:
-	var nxt: int = FG_ORDEM[(FG_ORDEM.find(_fg_mult(game_id)) + 1) % FG_ORDEM.size()]
+	_set_fg(game_id, FG_ORDEM[(FG_ORDEM.find(_fg_mult(game_id)) + 1) % FG_ORDEM.size()])
+
+
+func _set_fg(game_id: String, nxt: int) -> void:
 	_bg(func():
 		var out := []
 		OS.execute(SKY_BIN + "/sky-pc", ["fg", game_id, str(nxt)], out, true)
@@ -3435,6 +3584,8 @@ func _draw() -> void:
 				_draw_panel(w, h)
 			if slider_t > 0.0:
 				_draw_slider(w, h)
+			if picker_t > 0.0 and not picker.is_empty():
+				_draw_picker(w, h)
 		if store_t > 0.0:
 			_draw_store(w, h, a)
 	if notif_t > 0.0:
