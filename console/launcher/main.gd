@@ -208,6 +208,9 @@ var low_gfx: bool = false
 
 var bg: TextureRect        # o fundo de ondas, já ampliado para a tela
 var bg_vp: SubViewport     # onde as ondas são desenhadas, em resolução reduzida (desempenho)
+# 13.40: papel de parede (imagem ou vídeo das pastas "wallpapers" do HD) no lugar das ondas
+var fundo: Dictionary = {}            # {arquivo, pronto, tipo: imagem|video}; vazio = ondas
+var fundo_video: VideoStreamPlayer = null
 var bg_escala: float = 0.5
 var bg_quadro: int = 0
 # Transição de abrir/fechar jogo (estilo PS5): a capa cresce até o centro, a tela escurece com a arte do jogo,
@@ -395,6 +398,9 @@ func _ready() -> void:
 	add_child(bg)
 	_ajusta_fundo()
 	get_viewport().size_changed.connect(_ajusta_fundo)
+	var fj = JSON.parse_string(_read_text(conf_dir + "/fundo", "{}"))
+	if typeof(fj) == TYPE_DICTIONARY and str(fj.get("pronto", "")) != "":
+		_fundo_aplicar(fj)
 	bg_mat.set_shader_parameter("strands", 5 if low_gfx else 11)
 	bg_mat.set_shader_parameter("sparkle", 0.0 if low_gfx else 1.0)
 
@@ -490,8 +496,8 @@ func _process(delta: float) -> void:
 	# As ondas andam devagar: recalculadas em quadros alternados (30 vezes por segundo), enquanto o menu
 	# segue a 60. Quadro sem recálculo reaproveita a imagem anterior da tela interna.
 	bg_quadro += 1
-	var modo := SubViewport.UPDATE_ONCE if bg_quadro % 2 == 0 and store_t < 1.0 \
-		else SubViewport.UPDATE_DISABLED   # com a SkyStore cobrindo a tela, as ondas param
+	var modo := SubViewport.UPDATE_ONCE if bg_quadro % 2 == 0 and store_t < 1.0 and fundo.is_empty() \
+		else SubViewport.UPDATE_DISABLED   # com a SkyStore cobrindo a tela (ou papel de parede), as ondas param
 	if modo != SubViewport.UPDATE_DISABLED or bg_vp.render_target_update_mode != modo:
 		bg_vp.render_target_update_mode = modo   # reatribuir o mesmo valor também pede um quadro novo
 
@@ -1574,6 +1580,7 @@ func _build_cats() -> void:
 		_act("Saída de som", audio_out_txt, "audio_out", "speaker"),
 		_act("Brilho da tela", "Ajuste com ◀ ▶", "slider:brilho", "sun"),
 		_act("Tema de cores", _theme_name(), "theme", "palette"),
+		_act("Papel de parede", _fundo_txt(), "wallpaper", "palette"),
 		_act("Música ambiente", "Ligada" if music_on else "Desligada", "music", "note"),
 		_act("Sons da interface", "Ligados" if sounds_on else "Desligados", "sounds", "note"),
 		_act("Bateria e temperatura", _power_txt(), "power_info", "battery"),
@@ -1682,6 +1689,8 @@ func _refresh_sys_items() -> void:
 					it["sub"] = disk_txt
 				"theme":
 					it["sub"] = _theme_name()
+				"wallpaper":
+					it["sub"] = _fundo_txt()
 				"sounds":
 					it["sub"] = "Ligados" if sounds_on else "Desligados"
 				"fps":
@@ -1758,6 +1767,9 @@ func _activate() -> void:
 	match action:
 		"theme", "fps", "hwprofile", "sounds", "music", "boot_sound", "tv", "touchpad", "wake_pad":
 			_abrir_seletor(action, false)
+			return
+		"wallpaper":
+			_fundo_escolher()
 			return
 		"storage":
 			_open_storage()
@@ -1872,6 +1884,9 @@ func _launch_now(g: Dictionary) -> void:
 	Engine.max_fps = 30
 	bg.visible = false
 	bg_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED   # ondas paradas: o jogo fica com a GPU
+	if fundo_video != null:
+		fundo_video.paused = true
+		fundo_video.visible = false
 	if music != null:
 		music.stop()
 
@@ -1884,7 +1899,10 @@ func _on_game_closed() -> void:
 	tr_kind = "fechar"    # a capa volta do centro para o lugar dela
 	tr_t = 0.0
 	bg.visible = true
-	bg_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	bg_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS if fundo.is_empty() else SubViewport.UPDATE_DISABLED
+	if fundo_video != null:
+		fundo_video.visible = true
+		fundo_video.paused = false
 	OS.low_processor_usage_mode = false
 	_apply_power_mode()
 	_report_exit()
@@ -2377,6 +2395,80 @@ func _abrir_seletor(a: String, do_painel: bool) -> void:
 				if a == "boot_sound" and bool(v):
 					_play_file("ligar")
 				_refresh_sys_items())
+
+
+func _fundo_txt() -> String:
+	if fundo.is_empty():
+		return "Ondas do SkyStation"
+	return str(fundo.get("arquivo", "")).get_file().get_basename() + ("  ·  animado" if str(fundo.get("tipo", "")) == "video" else "")
+
+
+func _fundo_escolher() -> void:
+	_toast("Procurando papéis de parede no HD…", 2.0, "palette")
+	_bg(_run_json.bind(SKY_BIN + "/sky-fundo", ["listar"]), func(r):
+		var opts := [["Ondas do SkyStation (padrão)", ""]]
+		if typeof(r) == TYPE_DICTIONARY:
+			for i in r.get("itens", []):
+				opts.append([str(i["nome"]) + ("  (animado)" if str(i["tipo"]) == "video" else ""), str(i["arquivo"])])
+		if opts.size() == 1:
+			_toast("Nenhum papel de parede achado: crie a pasta \"wallpapers\" no HD e coloque imagens ou vídeos nela", 6.0, "palette")
+			return
+		_picker_open("Papel de parede", opts, str(fundo.get("arquivo", "")), func(v): _fundo_definir(str(v))))
+
+
+func _fundo_definir(arq: String) -> void:
+	if arq == "":
+		_fundo_aplicar({})
+		_write_text(conf_dir + "/fundo", "{}")
+		_refresh_sys_items()
+		return
+	busy_msg = "Preparando o papel de parede…"
+	_bg(_run_json.bind(SKY_BIN + "/sky-fundo", ["preparar", arq]), func(r):
+		busy_msg = ""
+		if typeof(r) != TYPE_DICTIONARY or not bool(r.get("ok", false)):
+			_toast("Papel de parede: " + (str(r.get("error", "falhou")) if typeof(r) == TYPE_DICTIONARY else "falhou"), 5.0, "palette")
+			return
+		var f := {"arquivo": arq, "pronto": str(r["pronto"]), "tipo": str(r["tipo"])}
+		_write_text(conf_dir + "/fundo", JSON.stringify(f))
+		_fundo_aplicar(f)
+		_refresh_sys_items())
+
+
+func _fundo_aplicar(f: Dictionary) -> void:
+	# Imagem: vira a textura do fundo (cobrindo a tela sem distorcer). Vídeo: um VideoStreamPlayer em loop
+	# atrás do menu. Vazio: volta às ondas. Arquivo sumido (HD desconectado): fica nas ondas.
+	if fundo_video != null:
+		fundo_video.queue_free()
+		fundo_video = null
+	fundo = {}
+	bg.texture = bg_vp.get_texture()
+	bg.stretch_mode = TextureRect.STRETCH_SCALE
+	var pronto := str(f.get("pronto", ""))
+	if pronto == "" or not FileAccess.file_exists(pronto):
+		bg_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		return
+	if str(f.get("tipo", "")) == "imagem":
+		var img := Image.load_from_file(pronto)
+		if img == null or img.is_empty():
+			return
+		bg.texture = ImageTexture.create_from_image(img)
+		bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	else:
+		var st := VideoStreamTheora.new()
+		st.file = pronto
+		fundo_video = VideoStreamPlayer.new()
+		fundo_video.stream = st
+		fundo_video.expand = true
+		fundo_video.volume_db = -80.0
+		fundo_video.set_anchors_preset(Control.PRESET_FULL_RECT)
+		fundo_video.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		fundo_video.show_behind_parent = true
+		fundo_video.finished.connect(func(): fundo_video.play())   # loop
+		add_child(fundo_video)
+		move_child(fundo_video, bg.get_index() + 1)
+		fundo_video.play()
+	fundo = f
+	bg_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 
 
 func _picker_open(title: String, opts: Array, cur, cb: Callable) -> void:
@@ -3567,6 +3659,8 @@ func _draw() -> void:
 	if (settings != null and settings.visible) or (hub != null and hub.visible):
 		return  # Configurações / SkyNetwork abertas: só o fundo de ondas fica atrás delas
 	var a := ui_alpha
+	if not fundo.is_empty():
+		draw_rect(Rect2(0, 0, w, h), Color(0, 0, 0, 0.32 * a))
 	if viewer_open:
 		_draw_viewer(w, h)
 	elif recv_open:

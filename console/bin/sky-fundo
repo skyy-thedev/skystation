@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""SkyStation 13.40: papéis de parede do menu (estáticos e animados).
+
+    sky-fundo listar            JSON: imagens e vídeos achados nas pastas "wallpapers"
+    sky-fundo preparar <arq>    deixa pronto para o menu: imagem → caminho dela; vídeo/GIF → .ogv no cache
+    sky-fundo atual             JSON: o fundo escolhido (vazio = ondas do SkyStation)
+
+Pastas procuradas (qualquer maiúscula/minúscula): "wallpapers" ou "papeis de parede" no HD do Windows
+(na raiz, em SkyStation\\ ou dentro do SKYROMS), no pendrive de jogos e em ~/skystation/wallpapers.
+O menu (Godot) só toca vídeo Ogg Theora: MP4, WebM, MKV, MOV e GIF são convertidos uma vez com o ffmpeg
+(sem som, até 1280 px de largura) e guardados em ~/.cache/skystation/fundos.
+"""
+import glob
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+HOME = os.path.expanduser("~")
+CACHE = os.path.join(HOME, ".cache/skystation/fundos")
+CONF = os.path.join(HOME, ".config/skystation/fundo")
+IMAGEM = (".jpg", ".jpeg", ".png", ".webp")
+VIDEO = (".mp4", ".webm", ".mkv", ".mov", ".avi", ".gif", ".ogv")
+NOME_PASTA = re.compile(r"^(wallpapers?|papeis[ _-]de[ _-]parede|papéis[ _-]de[ _-]parede|fundos?)$", re.I)
+
+
+def pastas():
+    raizes = ["/mnt/skyroms", os.path.join(HOME, "skystation")]
+    raizes += sorted(glob.glob("/run/skystation/discos/*"))     # o HD do Windows (montado pelo SkyStation)
+    raizes += sorted(glob.glob("/run/media/*/*")) + sorted(glob.glob("/media/*"))
+    achadas = []
+    for r in raizes:
+        if not os.path.isdir(r):
+            continue
+        base = r.rstrip("/").count("/")
+        try:
+            for raiz, dirs, _ in os.walk(r):
+                if raiz.count("/") - base >= 3:
+                    dirs[:] = []
+                    continue
+                dirs[:] = [d for d in dirs if not d.startswith(("$", ".")) and d.lower() not in
+                           ("windows", "program files", "program files (x86)", "programdata", "appdata", "steamapps")]
+                for d in dirs:
+                    if NOME_PASTA.match(d):
+                        p = os.path.realpath(os.path.join(raiz, d))
+                        if p not in achadas:
+                            achadas.append(p)
+        except OSError:
+            continue
+    return achadas
+
+
+def cache_de(arq):
+    try:
+        st = os.stat(arq)
+        chave = f"{arq}|{st.st_size}|{int(st.st_mtime)}"
+    except OSError:
+        chave = arq
+    return os.path.join(CACHE, hashlib.sha1(chave.encode()).hexdigest()[:16] + ".ogv")
+
+
+def listar():
+    itens = []
+    for p in pastas():
+        for a in sorted(os.listdir(p), key=str.lower):
+            c = os.path.join(p, a)
+            ext = os.path.splitext(a)[1].lower()
+            if not os.path.isfile(c) or ext not in IMAGEM + VIDEO:
+                continue
+            tipo = "imagem" if ext in IMAGEM else "video"
+            pronto = c if tipo == "imagem" or ext == ".ogv" else (cache_de(c) if os.path.exists(cache_de(c)) else "")
+            itens.append({"nome": os.path.splitext(a)[0], "arquivo": c, "tipo": tipo, "pronto": pronto})
+    return {"ok": True, "pastas": pastas(), "itens": itens, "ffmpeg": bool(shutil.which("ffmpeg"))}
+
+
+def preparar(arq):
+    if not os.path.isfile(arq):
+        return {"ok": False, "error": "Arquivo não encontrado (o HD está conectado?)"}
+    ext = os.path.splitext(arq)[1].lower()
+    if ext in IMAGEM or ext == ".ogv":
+        return {"ok": True, "tipo": "imagem" if ext in IMAGEM else "video", "pronto": arq}
+    if ext not in VIDEO:
+        return {"ok": False, "error": "Formato não suportado"}
+    destino = cache_de(arq)
+    if os.path.exists(destino):
+        return {"ok": True, "tipo": "video", "pronto": destino}
+    if not shutil.which("ffmpeg"):
+        return {"ok": False, "error": "Precisa do ffmpeg para vídeos (Atualizar o SkyStation)"}
+    os.makedirs(CACHE, exist_ok=True)
+    tmp = destino + ".tmp.ogv"
+    # 30 FPS, sem som, até 1280 px: um fundo leve para a Vega 7 tocar em loop atrás do menu
+    r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", arq, "-an", "-vf",
+                        "fps=30,scale='min(1280,iw)':-2:flags=bicubic", "-c:v", "libtheora", "-q:v", "7", tmp],
+                       stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=1800)
+    if r.returncode != 0 or not os.path.exists(tmp) or os.path.getsize(tmp) < 1000:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return {"ok": False, "error": "Não consegui converter este vídeo: " + (r.stderr.strip().split("\n")[-1:] or [""])[0][:120]}
+    os.replace(tmp, destino)
+    return {"ok": True, "tipo": "video", "pronto": destino}
+
+
+def main():
+    a = sys.argv[1:]
+    cmd = a[0] if a else "listar"
+    if cmd == "listar":
+        r = listar()
+    elif cmd == "preparar" and len(a) == 2:
+        r = preparar(a[1])
+    elif cmd == "atual":
+        try:
+            r = {"ok": True, **json.load(open(CONF))}
+        except (OSError, ValueError):
+            r = {"ok": True, "arquivo": ""}
+    else:
+        print(__doc__)
+        return 2
+    print(json.dumps(r, ensure_ascii=False))
+    return 0 if r.get("ok") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
