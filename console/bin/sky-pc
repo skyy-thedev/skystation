@@ -801,7 +801,24 @@ def mangohud_env():
     Medição de desempenho está ligada; o MANGOHUD_CONFIG é o mesmo dos emuladores (contador + log no HD)."""
     if os.environ.get("SKY_MANGOHUD") != "1":
         return ["--env=MANGOHUD=0", "--env=DISABLE_MANGOHUD=1"]
+    if not mangohud_flatpak():
+        # 13.48: sem a extensão o contador some calado. Pede a instalação (root, em segundo plano) e avisa.
+        try:
+            subprocess.run(["skystation-emuladores", "pedir", "instalar", "mangohud"], capture_output=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        if MSG:
+            try:
+                with open(MSG, "w") as f:
+                    f.write("Instalando o contador de FPS para jogos de PC: ele aparece a partir do próximo jogo.")
+            except OSError:
+                pass
     return ["--env=MANGOHUD=1", "--env=MANGOHUD_CONFIG=" + os.environ.get("MANGOHUD_CONFIG", "fps,position=top-left")]
+
+
+def mangohud_flatpak():
+    return all(subprocess.run(["flatpak", "info", f"org.freedesktop.Platform.VulkanLayer.MangoHud//{r}"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0 for r in ("24.08", "25.08"))
 
 
 def rodar_heroic_com_xpad(url, gid=""):
@@ -1126,6 +1143,12 @@ def diag():
             p(f"     wine: {(c.get('wineVersion') or {}).get('name', '?')}  prefixo: {c.get('winePrefix', '?')}")
         except (OSError, ValueError, AttributeError):
             p("     (sem configuração própria no Heroic)")
+    p("-- contador de FPS (MangoHud) nos jogos de PC")
+    p("   extensão do Flathub (24.08 e 25.08): " + ("instalada" if mangohud_flatpak() else "FALTANDO (SkyStore, aba Apps)"))
+    conf = os.path.join(HOME, ".config/skystation")
+    modo = "com contador" if os.path.exists(os.path.join(conf, "mangohud.on")) else \
+        ("só gravação (sem nada na tela)" if os.path.exists(os.path.join(conf, "bench.on")) else "desligada")
+    p("   Medição de desempenho no menu: " + modo)
     p("-- geração de quadros (lsfg-vk / Lossless Scaling)")
     p("   camada instalada: " + ("sim" if lsfg_instalado() else "não (SkyStore, aba Apps)"))
     p("   Lossless.dll: " + (lossless_dll() or "não achado (baixe o Lossless Scaling na Steam)"))
