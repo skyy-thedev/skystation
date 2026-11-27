@@ -42,7 +42,7 @@ export SKY_PROFILE="$(/opt/skystation/bin/sky-perfil)"
 
 # Fase 7.5: processador em potência máxima enquanto o jogo roda (volta ao normal ao fechar).
 potencia() { [ -d /var/lib/skystation/pedidos ] && echo "$1" >/var/lib/skystation/pedidos/potencia 2>/dev/null; }
-potencia jogo
+case "$ID" in pc-*) potencia pc ;; *) potencia jogo ;; esac   # 13.49: jogo de PC = GPU primeiro
 
 PREFIX=""
 command -v gamemoderun >/dev/null 2>&1 && PREFIX="gamemoderun"

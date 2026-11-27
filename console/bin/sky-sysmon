@@ -30,6 +30,7 @@ quanto tempo o menu levou para ficar pronto (primeiro FPS anotado pelo launcher)
                                 separado por estado: menu e jogo)
 """
 import csv
+import json
 import glob
 import os
 import re
@@ -422,10 +423,15 @@ def laco():
     boot_feito = False
     relogio_em = time.time() + 120     # depois do NTP ter tido tempo de acertar
     pesado_em = 0.0
+    vigia = VigiaTermica()
     while True:
+        try:
+            vigia.conferir()      # 13.49: vale com a Medição desligada também
+        except Exception as e:
+            sys.stderr.write(f"sky-sysmon: vigia: {e}\n")
         if not ligado():
             m.antes = None
-            time.sleep(30)
+            time.sleep(20)
             continue
         base = pasta()
         if not boot_feito:
@@ -448,6 +454,39 @@ def laco():
         except Exception as e:      # medir nunca pode derrubar nada
             sys.stderr.write(f"sky-sysmon: {e}\n")
         time.sleep(INTERVALO)
+
+
+class VigiaTermica:
+    """13.49: o notebook (Lenovo IdeaPad 3) trava CPU e GPU no mínimo quando o chip passa de ~93 °C e não
+    solta mais, mesmo frio (26/11: GPU 400 MHz a 99% de uso e 55 °C por 10 minutos). Se o jogo estiver
+    nesse estado por 40 s seguidos, avisa uma vez por partida e anota em eventos.log."""
+
+    def __init__(self):
+        self.desde = 0.0
+        self.avisado_pid = None
+
+    def conferir(self):
+        if estado() == "menu":
+            self.desde = 0.0
+            return
+        gp, gm, _ = gpu()
+        cm, tc = mhz_cpu(), temp_cpu()
+        travado = gp != "" and gm != "" and cm != "" and gp >= 90 and gm <= 400 and cm <= 1500
+        if not travado:
+            self.desde = 0.0
+            return
+        self.desde = self.desde or time.time()
+        pid = ler(os.path.join(RUN, "game.pid"))
+        if time.time() - self.desde >= 40 and pid != self.avisado_pid:   # 40 s seguidos no mínimo
+            self.avisado_pid = pid
+            os.makedirs(RUN, exist_ok=True)
+            frio = tc != "" and tc < 80
+            texto = ("Notebook em proteção térmica: CPU e GPU no mínimo" + (f" (já esfriou para {tc} °C)" if frio else
+                     f" ({tc} °C)") + ". Desempenho baixo até reiniciar o jogo; confira a ventilação.")
+            with open(os.path.join(RUN, "events.jsonl"), "a") as f:
+                f.write(json.dumps({"t": time.time(), "kind": "aviso", "text": texto}, ensure_ascii=False) + "\n")
+            with open(os.path.join(RUN, "eventos.log"), "a") as f:
+                f.write(f"{int(time.time())} protecao-termica\n")
 
 
 def main():

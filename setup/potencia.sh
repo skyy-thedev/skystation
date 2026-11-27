@@ -12,15 +12,30 @@ set_all() { for f in $1; do [ -w "$f" ] && echo "$2" >"$f" 2>/dev/null; done; }
 GOV="/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor"
 EPP="/sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference"
 PROF=/sys/firmware/acpi/platform_profile
+# 13.49: "pc" = jogo de PC (Steam/Epic/GOG), que depende da GPU. Na APU (Ryzen 5500U + Vega 7) CPU e GPU
+# dividem a mesma energia e o mesmo limite de calor: com o CPU em turbo (3,6 GHz) o chip chegava a 93 °C em
+# 4 minutos e o notebook travava CPU em 1,4 GHz e GPU em 200-400 MHz pelo resto da partida (benchmarks de
+# 26 e 27/11, Death Stranding). Aqui o CPU fica sem turbo e em energia equilibrada: sobra para a GPU.
+BOOST="/sys/devices/system/cpu/cpufreq/boost /sys/devices/system/cpu/cpufreq/policy*/boost"
+guardar() {
+    [ -f "$ORIG" ] && return
+    {
+        echo "gov=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null)"
+        echo "epp=$(cat /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference 2>/dev/null)"
+        echo "prof=$(cat "$PROF" 2>/dev/null)"
+        echo "boost=$(cat /sys/devices/system/cpu/cpufreq/boost /sys/devices/system/cpu/cpufreq/policy0/boost 2>/dev/null | head -1)"
+    } >"$ORIG"
+}
 case "$modo" in
+pc)
+    guardar
+    set_all "$GOV" powersave            # amd-pstate-epp: quem decide é a preferência de energia abaixo
+    set_all "$EPP" balance_performance
+    set_all "$BOOST" 0
+    [ -w "$PROF" ] && grep -qw balanced /sys/firmware/acpi/platform_profile_choices 2>/dev/null && echo balanced >"$PROF" 2>/dev/null
+    ;;
 jogo)
-    if [ ! -f "$ORIG" ]; then
-        {
-            echo "gov=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null)"
-            echo "epp=$(cat /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference 2>/dev/null)"
-            echo "prof=$(cat "$PROF" 2>/dev/null)"
-        } >"$ORIG"
-    fi
+    guardar
     set_all "$GOV" performance
     set_all "$EPP" performance
     [ -w "$PROF" ] && grep -qw performance /sys/firmware/acpi/platform_profile_choices 2>/dev/null && echo performance >"$PROF" 2>/dev/null
@@ -31,6 +46,7 @@ normal)
     [ -n "$gov" ] && set_all "$GOV" "$gov"
     [ -n "$epp" ] && set_all "$EPP" "$epp"
     [ -n "$prof" ] && [ -w "$PROF" ] && echo "$prof" >"$PROF" 2>/dev/null
+    set_all "$BOOST" "${boost:-1}"
     rm -f "$ORIG"
     ;;
 esac
