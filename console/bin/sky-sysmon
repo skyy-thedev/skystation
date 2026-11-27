@@ -57,7 +57,8 @@ CAB = (["hora", "estado", "fps_menu", "ms_pior_menu", "cpu_pct", "cpu_mhz", "cpu
         "vram_mb", "ram_mb", "ram_livre_mb", "swap_mb", "bateria_pct", "bateria_w",
         "disco_le_mb", "disco_grava_mb", "iowait_pct", "espera_io_ms", "espera_cpu_ms", "espera_mem_ms", "eventos",
         "jogo_le_kb", "jogo_grava_kb"]
-       + [f"cpu_{g}" for g in list(GRUPOS) + ["jogo"]] + [f"mb_{g}" for g in list(GRUPOS) + ["jogo"]])
+       + [f"cpu_{g}" for g in list(GRUPOS) + ["jogo"]] + [f"mb_{g}" for g in list(GRUPOS) + ["jogo"]]
+       + ["jogo_id", "jogo_nome"])   # 13.50: qual jogo era (antes dava para adivinhar só pelo horário)
 TICKS = os.sysconf("SC_CLK_TCK")
 PAGINA = os.sysconf("SC_PAGE_SIZE")
 EU = str(os.getpid())
@@ -280,6 +281,9 @@ class Medidor:
                          espera_cpu_ms=d(pcpu, pcpu0), espera_mem_ms=d(pmem, pmem0), eventos=eventos_desde(quando0),
                          jogo_le_kb=round(jle / 1024), jogo_grava_kb=round(jgr / 1024))
         self.antes = (agora, total, ocioso, procs, extra)
+        if linha:
+            linha["jogo_id"] = ler(os.path.join(RUN, "game.id")) if estado() != "menu" else ""
+            linha["jogo_nome"] = ler(os.path.join(RUN, "game.title")) if estado() != "menu" else ""
         return linha
 
 
